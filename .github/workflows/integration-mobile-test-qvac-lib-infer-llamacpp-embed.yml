@@ -1,5 +1,4 @@
-name: Run Mobile Integration Tests (Monorepo)
-
+name: Run Mobile Integration Tests (Qvac-lib-infer-llamacpp-embed)
 on:
   workflow_call:
     inputs:
