@@ -22,10 +22,6 @@ jobs:
       - name: Install git for windows with WinGet
         shell: powershell
         run: winget install --id Git.Git -e --source winget --disable-interactivity --accept-package-agreements --custom '/o:PathOption=CmdTools'
-            
-      - name: Verify the newly installed Git version
-        shell: powershell
-        run: git --version
 
       - name: Enable Windows 11 Developer Mode via Registry
         shell: powershell
@@ -104,6 +100,11 @@ jobs:
   # run-vulkaninfo:
   #   runs-on: ai-run-windows11-gpu 
   #   steps:
+              
+      # - name: Verify the newly installed Git version
+      #   shell: powershell
+      #   run: git --version
+
       - name: GPU detection via nvidia-smi and vulkaninfo
         continue-on-error: true
         shell: powershell
