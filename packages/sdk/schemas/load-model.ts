@@ -31,7 +31,7 @@ import {
   ModelType,
   ModelTypeAliases,
 } from "./model-types";
-import { sdcppConfigSchema, type SdcppConfig } from "./sdcpp-config";
+import { sdcppConfigSchema } from "./sdcpp-config";
 
 // Set of all built-in model types (canonical + aliases) for catch-all exclusion
 const builtInModelTypes = new Set([
@@ -265,7 +265,7 @@ const loadModelOptionsToRequestBaseSchema = z.union([
       modelType: ModelType.sdcppGeneration,
       modelSrc: modelInputToSrcSchema.parse(data.modelSrc),
       modelName: modelInputToNameSchema.parse(data.modelSrc),
-      modelConfig: (data.modelConfig ?? {}) as SdcppConfig,
+      modelConfig: data.modelConfig ?? {},
       seed: data.seed ?? false,
       withProgress: data.withProgress ?? !!data.onProgress,
       delegate: data.delegate,

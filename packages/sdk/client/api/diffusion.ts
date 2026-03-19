@@ -156,7 +156,7 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
       if (progressQueue.length > 0) {
         yield progressQueue.shift()!;
       } else if (progressDone) {
-        if (streamError) throw streamError;
+        if (streamError) throw streamError as Error;
         return;
       } else {
         await new Promise<void>((resolve) => { progressResolve = resolve; });
@@ -170,7 +170,7 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
         if (outputQueue.length > 0) {
           yield outputQueue.shift()!;
         } else if (outputDone) {
-          if (streamError) throw streamError;
+          if (streamError) throw streamError as Error;
           return;
         } else {
           await new Promise<void>((resolve) => { outputResolve = resolve; });
