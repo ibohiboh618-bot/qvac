@@ -3,7 +3,7 @@
  * Used by operation wrappers to capture handler-specific profiling events.
  */
 
-import type { CompletionStats, TranslationStats, OCRStats } from "@/schemas";
+import type { CompletionStats, TranslationStats, OCRStats, DiffusionStats } from "@/schemas";
 import type { ProfilingEvent, ProfilingEventKind } from "@/profiling/types";
 import type { LoadModelProfilingMeta, DownloadStats } from "@/server/rpc/handlers/load-model/types";
 
@@ -193,6 +193,25 @@ registerOperationMetrics<{ modelId?: string }, { stats?: OCRStats }>({
       gauges["recognitionTime"] = res.stats.recognitionTime;
     if (res.stats.totalTime !== undefined)
       gauges["totalTime"] = res.stats.totalTime;
+    return Object.keys(gauges).length > 0 ? gauges : undefined;
+  },
+});
+
+registerOperationMetrics<{ modelId?: string }, { stats?: DiffusionStats }>({
+  op: "diffusionStream",
+  kind: "handler",
+  getTags: (req) => (req.modelId ? { modelId: req.modelId } : {}),
+  fromFinalChunk: (res) => {
+    if (!res.stats) return undefined;
+    const gauges: Record<string, number> = {};
+    if (res.stats.generationMs !== undefined)
+      gauges["generationMs"] = res.stats.generationMs;
+    if (res.stats.totalSteps !== undefined)
+      gauges["totalSteps"] = res.stats.totalSteps;
+    if (res.stats.totalImages !== undefined)
+      gauges["totalImages"] = res.stats.totalImages;
+    if (res.stats.totalPixels !== undefined)
+      gauges["totalPixels"] = res.stats.totalPixels;
     return Object.keys(gauges).length > 0 ? gauges : undefined;
   },
 });
