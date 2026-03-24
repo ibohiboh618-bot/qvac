@@ -13,41 +13,42 @@ export interface DiffusionProgressTick {
 }
 
 interface DiffusionResult {
-  outputStream: AsyncGenerator<{ data: string; outputIndex: number }>;
   progressStream: AsyncGenerator<DiffusionProgressTick>;
   outputs: Promise<Buffer[]>;
   stats: Promise<DiffusionStats | undefined>;
 }
 
 /**
- * Generate outputs using a loaded diffusion model.
+ * Generate images using a loaded diffusion model.
+ *
+ * Step-progress ticks stream in real time during inference via `progressStream`.
+ * Images are delivered only after the full generation completes — the C++
+ * `generate_image()` call is synchronous. With `batch_count > 1`, multiple
+ * images arrive in sequence and are collected into the `outputs` promise.
  *
  * @param params - Generation parameters
  * @param params.modelId - The identifier of the loaded diffusion model
  * @param params.prompt - Text prompt describing the desired output
- * @param params.stream - Whether to stream outputs as they arrive (true) or return all at once (false). Defaults to false.
- * @returns Object with outputStream generator, progressStream generator, outputs promise, and stats promise
+ * @returns Object with progressStream generator, outputs promise, and stats promise
  * @example
  * ```typescript
- * // txt2img (non-streaming)
+ * // Basic usage
  * const { outputs, stats } = diffusion({ modelId, prompt: "a cat" });
  * const buffers = await outputs;
+ * fs.writeFileSync("output.png", buffers[0]);
  *
- * // txt2img (streaming with progress)
- * const { outputStream, progressStream } = diffusion({ modelId, prompt: "a cat", stream: true });
- * // consume progress in parallel
- * (async () => { for await (const { step, totalSteps } of progressStream) console.log(`${step}/${totalSteps}`); })();
- * for await (const { data, outputIndex } of outputStream) {
- *   fs.writeFileSync(`output_${outputIndex}.png`, Buffer.from(data, "base64"));
+ * // With progress tracking
+ * const { progressStream, outputs } = diffusion({ modelId, prompt: "a cat" });
+ * for await (const { step, totalSteps } of progressStream) {
+ *   console.log(`${step}/${totalSteps}`);
  * }
+ * const buffers = await outputs;
  * ```
  */
 export function diffusion(params: DiffusionClientParams): DiffusionResult {
-  const { stream: streaming, ...rest } = params;
-
   const request: DiffusionStreamRequest = {
     type: "diffusionStream",
-    ...rest,
+    ...params,
   };
 
   let statsResolver: (value: DiffusionStats | undefined) => void = () => {};
@@ -60,12 +61,9 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
   );
   statsPromise.catch(() => {});
 
-  const outputQueue: { data: string; outputIndex: number }[] = [];
   const progressQueue: DiffusionProgressTick[] = [];
   const collectedBuffers: Buffer[] = [];
-  let outputDone = false;
   let progressDone = false;
-  let outputResolve: (() => void) | null = null;
   let progressResolve: (() => void) | null = null;
   let streamError: Error | null = null;
 
@@ -97,13 +95,7 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
           }
 
           if (parsed.data) {
-            const outputEntry = { data: parsed.data, outputIndex: parsed.outputIndex ?? 0 };
-            outputQueue.push(outputEntry);
             collectedBuffers.push(Buffer.from(parsed.data, "base64"));
-            if (outputResolve) {
-              outputResolve();
-              outputResolve = null;
-            }
           }
 
           if (parsed.done) {
@@ -118,12 +110,7 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
       outputsRejecter(streamError);
     }
 
-    outputDone = true;
     progressDone = true;
-    if (outputResolve) {
-      outputResolve();
-      outputResolve = null;
-    }
     if (progressResolve) {
       progressResolve();
       progressResolve = null;
@@ -145,34 +132,7 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
     }
   })();
 
-  if (streaming) {
-    const outputStream = (async function* () {
-      while (true) {
-        if (outputQueue.length > 0) {
-          yield outputQueue.shift()!;
-        } else if (outputDone) {
-          if (streamError) throw streamError as Error;
-          return;
-        } else {
-          await new Promise<void>((resolve) => { outputResolve = resolve; });
-        }
-      }
-    })();
-
-    return {
-      outputStream,
-      progressStream,
-      outputs: outputsPromise,
-      stats: statsPromise,
-    };
-  }
-
-  const outputStream = (async function* () {
-    // Empty generator for non-streaming mode
-  })();
-
   return {
-    outputStream,
     progressStream,
     outputs: outputsPromise,
     stats: statsPromise,

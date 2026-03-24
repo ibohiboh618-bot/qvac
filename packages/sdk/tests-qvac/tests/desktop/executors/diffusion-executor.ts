@@ -58,7 +58,6 @@ export class DiffusionExecutor extends AbstractModelExecutor<typeof diffusionTes
     if (p.seed != null) params.seed = p.seed as number;
     if (p.batch_count != null) params.batch_count = p.batch_count as number;
     if (p.vae_tiling != null) params.vae_tiling = p.vae_tiling as boolean;
-    if (p.stream != null) params.stream = p.stream as boolean;
 
     return params;
   }
@@ -69,19 +68,6 @@ export class DiffusionExecutor extends AbstractModelExecutor<typeof diffusionTes
 
     try {
       const genParams = this.buildParams(modelId, p);
-
-      if (genParams.stream) {
-        const { outputStream } = diffusion(genParams);
-        const collected: string[] = [];
-        for await (const { data } of outputStream) {
-          collected.push(data);
-        }
-        return ValidationHelpers.validate(
-          collected,
-          expectation as Expectation,
-        );
-      }
-
       const { outputs } = diffusion(genParams);
       const buffers = await outputs;
       return ValidationHelpers.validate(buffers, expectation as Expectation);
@@ -104,7 +90,6 @@ export class DiffusionExecutor extends AbstractModelExecutor<typeof diffusionTes
 
     try {
       const genParams = this.buildParams(modelId, p);
-      delete genParams.stream;
 
       const { outputs: outputs1 } = diffusion(genParams);
       const buffers1 = await outputs1;
@@ -143,25 +128,18 @@ export class DiffusionExecutor extends AbstractModelExecutor<typeof diffusionTes
     const modelId = await this.resources.ensureLoaded("diffusion");
 
     try {
-      const genParams = this.buildParams(modelId, { ...p, stream: true });
-      const { outputStream, progressStream, stats } = diffusion(genParams);
+      const genParams = this.buildParams(modelId, p);
+      const { progressStream, outputs, stats } = diffusion(genParams);
 
       const progressTicks: { step: number; totalSteps: number; elapsedMs: number }[] = [];
-      const progressDone = (async () => {
-        for await (const tick of progressStream) {
-          progressTicks.push(tick);
-        }
-      })();
-
-      let outputCount = 0;
-      for await (const _chunk of outputStream) {
-        outputCount++;
+      for await (const tick of progressStream) {
+        progressTicks.push(tick);
       }
 
-      await progressDone;
+      const buffers = await outputs;
       const finalStats = await stats;
 
-      const hasOutputs = outputCount > 0;
+      const hasOutputs = buffers.length > 0;
       const hasStats = finalStats != null;
       const hasProgress = progressTicks.length > 0;
       const progressValid = progressTicks.every(
@@ -170,7 +148,7 @@ export class DiffusionExecutor extends AbstractModelExecutor<typeof diffusionTes
 
       return {
         passed: hasOutputs && hasStats && hasProgress && progressValid,
-        output: `Received ${outputCount} output(s), ${progressTicks.length} progress tick(s), stats: ${hasStats ? "present" : "missing"}, progress valid: ${progressValid}`,
+        output: `Received ${buffers.length} output(s), ${progressTicks.length} progress tick(s), stats: ${hasStats ? "present" : "missing"}, progress valid: ${progressValid}`,
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);

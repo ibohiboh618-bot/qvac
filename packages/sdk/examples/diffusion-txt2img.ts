@@ -21,7 +21,7 @@ console.log(`Model loaded: ${modelId}`);
 
 console.log(`\nGenerating: "${prompt}"`);
 
-const { outputStream, stats } = diffusion({
+const { progressStream, outputs, stats } = diffusion({
   modelId,
   prompt,
   width: 512,
@@ -29,12 +29,17 @@ const { outputStream, stats } = diffusion({
   steps: 20,
   cfg_scale: 7.0,
   seed: -1,
-  stream: true,
 });
 
-for await (const { data, outputIndex } of outputStream) {
-  const outputPath = path.join(outputDir, `output_${outputIndex}.png`);
-  fs.writeFileSync(outputPath, Buffer.from(data, "base64"));
+for await (const { step, totalSteps } of progressStream) {
+  process.stdout.write(`\rStep ${step}/${totalSteps}`);
+}
+console.log();
+
+const buffers = await outputs;
+for (let i = 0; i < buffers.length; i++) {
+  const outputPath = path.join(outputDir, `output_${i}.png`);
+  fs.writeFileSync(outputPath, buffers[i]!);
   console.log(`Saved: ${outputPath}`);
 }
 

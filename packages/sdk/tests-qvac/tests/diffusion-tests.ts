@@ -148,7 +148,6 @@ export const diffusionStreaming = createDiffusionTest(
     height: 256,
     steps: 4,
     seed: 42,
-    stream: true,
   },
   { validation: "type", expectedType: "array" },
 );
@@ -161,7 +160,6 @@ export const diffusionStreamingProgress = createDiffusionTest(
     height: 256,
     steps: 4,
     seed: 42,
-    stream: true,
     verifyProgress: true,
   },
   { validation: "type", expectedType: "string" },

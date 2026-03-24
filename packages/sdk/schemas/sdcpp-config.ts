@@ -129,5 +129,4 @@ export type DiffusionClientParams = {
   batch_count?: number;
   vae_tiling?: boolean;
   cache_preset?: string;
-  stream?: boolean;
 };
