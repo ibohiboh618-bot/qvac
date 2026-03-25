@@ -7,26 +7,33 @@ export const sdcppConfigSchema = z
     device: z.enum(["gpu", "cpu"]).optional(),
     prediction: z
       .enum(["auto", "eps", "v", "edm_v", "flow", "flux_flow", "flux2_flow"])
-      .optional(),
+      .optional()
+      .describe("Prediction type; auto-detected from model when omitted"),
     type: z
       .enum([
         "auto", "f32", "f16", "bf16",
         "q2_k", "q3_k", "q4_0", "q4_1", "q4_k",
         "q5_0", "q5_1", "q5_k", "q6_k", "q8_0",
       ])
-      .optional(),
+      .optional()
+      .describe("Weight quantization type override; auto-detected when omitted"),
     rng: z.enum(["cpu", "cuda", "std_default"]).optional(),
     sampler_rng: z.enum(["cpu", "cuda", "std_default"]).optional(),
-    clip_on_cpu: z.boolean().optional(),
-    vae_on_cpu: z.boolean().optional(),
-    vae_tiling: z.boolean().optional(),
-    flash_attn: z.boolean().optional(),
+    clip_on_cpu: z.boolean().optional().describe("Force CLIP text encoder to run on CPU"),
+    vae_on_cpu: z.boolean().optional().describe("Force VAE decoder to run on CPU"),
+    vae_tiling: z.boolean().optional().describe("Enable VAE tiling for large images on limited VRAM"),
+    flash_attn: z.boolean().optional().describe("Enable flash attention to reduce memory usage"),
     verbosity: z.number().optional(),
-    clipLModelSrc: modelSrcInputSchema.optional(),
-    clipGModelSrc: modelSrcInputSchema.optional(),
-    t5XxlModelSrc: modelSrcInputSchema.optional(),
-    llmModelSrc: modelSrcInputSchema.optional(),
-    vaeModelSrc: modelSrcInputSchema.optional(),
+    clipLModelSrc: modelSrcInputSchema.optional()
+      .describe("CLIP-L text encoder model — required for SD3 and FLUX.1"),
+    clipGModelSrc: modelSrcInputSchema.optional()
+      .describe("CLIP-G text encoder model — required for SDXL and SD3"),
+    t5XxlModelSrc: modelSrcInputSchema.optional()
+      .describe("T5-XXL text encoder model — required for SD3 and FLUX.1"),
+    llmModelSrc: modelSrcInputSchema.optional()
+      .describe("LLM text encoder model (e.g. Qwen3) — required for FLUX.2 [klein]"),
+    vaeModelSrc: modelSrcInputSchema.optional()
+      .describe("VAE decoder model — required for FLUX.2 [klein], optional for SDXL"),
   });
 
 export type SdcppConfig = z.infer<typeof sdcppConfigSchema>;
@@ -66,8 +73,8 @@ export const diffusionRequestSchema = z.object({
   modelId: z.string(),
   prompt: z.string(),
   negative_prompt: z.string().optional(),
-  width: z.number().int().multipleOf(8).optional(),
-  height: z.number().int().multipleOf(8).optional(),
+  width: z.number().int().positive().multipleOf(8).optional(),
+  height: z.number().int().positive().multipleOf(8).optional(),
   steps: z.number().int().positive().optional(),
   cfg_scale: z.number().optional(),
   guidance: z.number().optional(),
