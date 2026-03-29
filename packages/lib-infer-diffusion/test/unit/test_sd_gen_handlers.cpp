@@ -289,6 +289,13 @@ TEST(SdGenHandlers_Steps, ZeroThrows) {
       StatusError);
 }
 
+TEST(SdGenHandlers_Width, NonMultipleOf8Throws) {
+  SdGenConfig cfg;
+  EXPECT_THROW(
+      applySdGenHandlers(cfg, makeObj("width", num(7.0))),
+      StatusError);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. SdImageBatch – RAII memory management
 //
