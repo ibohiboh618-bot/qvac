@@ -115,36 +115,6 @@ resources.define("sharded-embeddings", {
   skipPreDownload: true,
 });
 
-resources.define("marian-en-es", {
-  constant: BERGAMOT_EN_ES,
-  type: "nmt",
-  config: {
-    engine: "Bergamot",
-    from: "en",
-    to: "es",
-    beamsize: 4,
-    lengthpenalty: 1.0,
-    maxlength: 512,
-    temperature: 0.3,
-    norepeatngramsize: 3,
-  },
-});
-
-resources.define("marian-es-en", {
-  constant: BERGAMOT_ES_EN,
-  type: "nmt",
-  config: {
-    engine: "Bergamot",
-    from: "es",
-    to: "en",
-    beamsize: 4,
-    lengthpenalty: 1.0,
-    maxlength: 512,
-    temperature: 0.3,
-    norepeatngramsize: 3,
-  },
-});
-
 resources.define("indictrans-en-hi", {
   constant: MARIAN_EN_HI_INDIC_200M_Q4_0,
   type: "nmt",

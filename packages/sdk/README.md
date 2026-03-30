@@ -197,7 +197,6 @@ bun run examples/path/to/example.ts
 
 ### Translation
 
-- Marian OPUS translation: [`examples/translation/translation-opus.ts`](examples/translation/translation-opus.ts)
 - Indic language translation: [`examples/translation/translation-indic.ts`](examples/translation/translation-indic.ts)
 - LLM-based translation: [`examples/translation/translation-llm.ts`](examples/translation/translation-llm.ts)
 
