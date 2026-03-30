@@ -99,3 +99,33 @@ TEST(SdCtxHandlers_Rng, RngAndSamplerRngSupportedValuesAndUnknownThrow) {
           std::unordered_map<std::string, std::string>{{"sampler_rng", "bogus"}}),
       StatusError);
 }
+
+TEST(SdCtxHandlers_LoraApplyMode, SupportedValuesAndUnknownThrows) {
+  EXPECT_EQ(
+      applyOne("lora_apply_mode", "auto").loraApplyMode,
+      LORA_APPLY_AUTO);
+  EXPECT_EQ(
+      applyOne("lora_apply_mode", "immediately").loraApplyMode,
+      LORA_APPLY_IMMEDIATELY);
+  EXPECT_EQ(
+      applyOne("lora_apply_mode", "at_runtime").loraApplyMode,
+      LORA_APPLY_AT_RUNTIME);
+
+  SdCtxConfig cfg;
+  EXPECT_THROW(
+      applySdCtxHandlers(
+          cfg,
+          std::unordered_map<std::string, std::string>{{"lora_apply_mode", "bogus"}}),
+      StatusError);
+}
+
+TEST(SdCtxHandlers_Threads, ValidIntegerAndInvalidThrows) {
+  EXPECT_EQ(applyOne("threads", "8").nThreads, 8);
+
+  SdCtxConfig cfg;
+  EXPECT_THROW(
+      applySdCtxHandlers(
+          cfg,
+          std::unordered_map<std::string, std::string>{{"threads", "abc"}}),
+      StatusError);
+}
