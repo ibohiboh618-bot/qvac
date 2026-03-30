@@ -159,7 +159,7 @@ export const tests = [
   // RAG tests
   ...ragTests,
 
-  // Translation: Marian Opus (DE↔EN, EN↔FR, FR↔EN)
+  // Translation: Marian integration name (EN↔ES, ES↔EN via Bergamot)
   ...translationMarianTests,
 
   // Translation: IndicTrans2 (EN↔HI)

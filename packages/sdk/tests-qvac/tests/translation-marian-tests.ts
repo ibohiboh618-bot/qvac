@@ -13,98 +13,7 @@ const createMarianTest = (
   metadata: { category: "translation-marian", dependency: resource, estimatedDurationMs },
 });
 
-// --- DE → EN (marian-de-en) ---
-
-export const marianDeEnBasic = createMarianTest(
-  "translation-marian-de-en-basic",
-  "Hallo, wie geht es dir heute?",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["hello", "how", "are", "you", "today"] },
-);
-
-export const marianDeEnLongText = createMarianTest(
-  "translation-marian-de-en-long-text",
-  "Der schnelle braune Fuchs springt über den faulen Hund. Dieser Satz enthält viele häufige Buchstaben. Die maschinelle Übersetzung hat in den letzten Jahren große Fortschritte gemacht, wobei neuronale maschinelle Übersetzungsmodelle beeindruckende Ergebnisse erzielen.",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["fox", "dog", "translation", "machine", "neural"] },
-  20000,
-);
-
-export const marianDeEnShortText = createMarianTest(
-  "translation-marian-de-en-short-text",
-  "Ja",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["yes", "yeah"] },
-  10000,
-);
-
-export const marianDeEnSpecialChars = createMarianTest(
-  "translation-marian-de-en-special-chars",
-  "Hallo! Wie geht's dir? Das kostet 50€ - nicht $60!",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["hello", "how", "cost", "50"] },
-);
-
-export const marianDeEnNumbers = createMarianTest(
-  "translation-marian-de-en-numbers",
-  "Das Treffen ist um 10:30 Uhr. Wir haben 25 Teilnehmer.",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["meeting", "10:30", "25", "participant"] },
-);
-
-export const marianDeEnQuestion = createMarianTest(
-  "translation-marian-de-en-question",
-  "Können Sie mir bitte sagen, wo der Bahnhof ist? Wie weit ist es von hier?",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["station", "where", "far", "tell"] },
-);
-
-export const marianDeEnFormal = createMarianTest(
-  "translation-marian-de-en-formal",
-  "Sehr geehrte Damen und Herren, hiermit möchte ich mich für die Stelle bewerben.",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["dear", "sir", "madam", "apply", "position"] },
-);
-
-export const marianDeEnEmptyText: TestDefinition = {
-  testId: "translation-marian-de-en-empty-text",
-  params: { text: "", resource: "marian-de-en" },
-  expectation: { validation: "type", expectedType: "string" },
-  metadata: { category: "translation-marian", dependency: "marian-de-en", estimatedDurationMs: 10000 },
-};
-
-export const marianDeEnStreaming = createMarianTest(
-  "translation-marian-de-en-streaming",
-  "Guten Tag, wie geht es Ihnen?",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["good", "day", "how", "are"] },
-);
-
-export const marianDeEnStats = createMarianTest(
-  "translation-marian-de-en-stats",
-  "Hallo Welt",
-  "marian-de-en",
-  { validation: "contains-any", contains: ["hello", "world"] },
-);
-
-export const marianDeEnBatchBasic: TestDefinition = {
-  testId: "translation-marian-de-en-batch-basic",
-  params: { texts: ["Guten Morgen", "Gute Nacht"], resource: "marian-de-en" },
-  expectation: { validation: "contains-any", contains: ["morning", "night", "good"] },
-  metadata: { category: "translation-marian", dependency: "marian-de-en", estimatedDurationMs: 15000 },
-};
-
-export const marianDeEnBatchMultiple: TestDefinition = {
-  testId: "translation-marian-de-en-batch-multiple",
-  params: {
-    texts: ["Wie geht es dir?", "Das Wetter ist schön.", "Ich habe Hunger.", "Auf Wiedersehen.", "Vielen Dank."],
-    resource: "marian-de-en",
-  },
-  expectation: { validation: "contains-any", contains: ["how", "weather", "hunger", "goodbye", "thank"] },
-  metadata: { category: "translation-marian", dependency: "marian-de-en", estimatedDurationMs: 25000 },
-};
-
-// --- EN → ES (marian-en-es) ---
+// --- EN → ES (marian-en-es, Bergamot) ---
 
 export const marianEnEsBasic = createMarianTest(
   "translation-marian-en-es-basic",
@@ -175,19 +84,6 @@ export const marianEsEnQuestion = createMarianTest(
 );
 
 export const translationMarianTests = [
-  // DE → EN
-  marianDeEnBasic,
-  marianDeEnLongText,
-  marianDeEnShortText,
-  marianDeEnSpecialChars,
-  marianDeEnNumbers,
-  marianDeEnQuestion,
-  marianDeEnFormal,
-  marianDeEnEmptyText,
-  marianDeEnStreaming,
-  marianDeEnStats,
-  marianDeEnBatchBasic,
-  marianDeEnBatchMultiple,
   // EN → ES
   marianEnEsBasic,
   marianEnEsLongText,

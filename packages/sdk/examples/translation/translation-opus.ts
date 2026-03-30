@@ -2,15 +2,15 @@ import {
   loadModel,
   translate,
   unloadModel,
-  MARIAN_OPUS_EN_IT_Q4_0,
+  BERGAMOT_EN_IT,
 } from "@qvac/sdk";
 
 try {
   const modelId = await loadModel({
-    modelSrc: MARIAN_OPUS_EN_IT_Q4_0,
+    modelSrc: BERGAMOT_EN_IT,
     modelType: "nmt",
     modelConfig: {
-      engine: "Opus",
+      engine: "Bergamot",
       from: "en",
       to: "it",
       temperature: 0.2,

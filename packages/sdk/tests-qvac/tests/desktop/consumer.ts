@@ -8,9 +8,6 @@ import {
   VAD_SILERO_5_1_2,
   QWEN3_1_7B_INST_Q4,
   OCR_LATIN_RECOGNIZER_1,
-  MARIAN_OPUS_DE_EN_Q4_0,
-  MARIAN_OPUS_EN_ES_Q4_0,
-  MARIAN_OPUS_ES_EN_Q4_0,
   BERGAMOT_EN_FR,
   BERGAMOT_EN_ES,
   BERGAMOT_ES_EN,
@@ -118,26 +115,11 @@ resources.define("sharded-embeddings", {
   skipPreDownload: true,
 });
 
-resources.define("marian-de-en", {
-  constant: MARIAN_OPUS_DE_EN_Q4_0,
-  type: "nmt",
-  config: {
-    engine: "Opus",
-    from: "de",
-    to: "en",
-    beamsize: 4,
-    lengthpenalty: 1.0,
-    maxlength: 512,
-    temperature: 0.3,
-    norepeatngramsize: 3,
-  },
-});
-
 resources.define("marian-en-es", {
-  constant: MARIAN_OPUS_EN_ES_Q4_0,
+  constant: BERGAMOT_EN_ES,
   type: "nmt",
   config: {
-    engine: "Opus",
+    engine: "Bergamot",
     from: "en",
     to: "es",
     beamsize: 4,
@@ -149,10 +131,10 @@ resources.define("marian-en-es", {
 });
 
 resources.define("marian-es-en", {
-  constant: MARIAN_OPUS_ES_EN_Q4_0,
+  constant: BERGAMOT_ES_EN,
   type: "nmt",
   config: {
-    engine: "Opus",
+    engine: "Bergamot",
     from: "es",
     to: "en",
     beamsize: 4,
