@@ -129,3 +129,54 @@ TEST(SdCtxHandlers_Threads, ValidIntegerAndInvalidThrows) {
           std::unordered_map<std::string, std::string>{{"threads", "abc"}}),
       StatusError);
 }
+
+TEST(SdCtxHandlers_MemoryFlags, BoolKeysMapAndInvalidThrow) {
+  EXPECT_TRUE(applyOne("mmap", "true").mmap);
+  EXPECT_TRUE(applyOne("offload_to_cpu", "1").offloadToCpu);
+  EXPECT_FALSE(applyOne("clip_on_cpu", "false").keepClipOnCpu);
+  EXPECT_TRUE(applyOne("vae_on_cpu", "true").keepVaeOnCpu);
+
+  SdCtxConfig cfg;
+  EXPECT_THROW(
+      applySdCtxHandlers(
+          cfg,
+          std::unordered_map<std::string, std::string>{{"mmap", "maybe"}}),
+      StatusError);
+}
+
+TEST(
+    SdCtxHandlers_ComputeAndCompatFlags,
+    DiffusionFaConvAndSdxlFlagsMapAndInvalidThrow) {
+  EXPECT_TRUE(applyOne("diffusion_fa", "true").diffusionFlashAttn);
+  EXPECT_TRUE(
+      applyOne("diffusion_conv_direct", "1").diffusionConvDirect);
+  EXPECT_FALSE(applyOne("vae_conv_direct", "0").vaeConvDirect);
+  EXPECT_TRUE(
+      applyOne("force_sdxl_vae_conv_scale", "true").forceSDXLVaeConvScale);
+
+  SdCtxConfig cfg;
+  EXPECT_THROW(
+      applySdCtxHandlers(
+          cfg,
+          std::unordered_map<std::string, std::string>{
+              {"diffusion_conv_direct", "bogus"}}),
+      StatusError);
+}
+
+TEST(
+    SdCtxHandlers_PassthroughAndFloat,
+    DeviceTensorRulesBackendsDirAndFlowShift) {
+  EXPECT_EQ(applyOne("device", "cpu").device, "cpu");
+  EXPECT_EQ(
+      applyOne("tensor_type_rules", "^vae.=f16").tensorTypeRules,
+      "^vae.=f16");
+  EXPECT_EQ(applyOne("backendsDir", "/tmp/backends").backendsDir, "/tmp/backends");
+  EXPECT_FLOAT_EQ(applyOne("flow_shift", "1.25").flowShift, 1.25f);
+
+  SdCtxConfig cfg;
+  EXPECT_THROW(
+      applySdCtxHandlers(
+          cfg,
+          std::unordered_map<std::string, std::string>{{"flow_shift", "bogus"}}),
+      StatusError);
+}
