@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.14.1] - 2026-03-31
+
+### Fixed
+
+#### Context sliding with `tools_at_end` could corrupt tool boundary tracking
+
+When context sliding (token discard) occurred during generation or prefill with `tools_at_end` enabled, the `nPastBeforeTools` boundary was not adjusted. This caused the post-generation trim to use a stale boundary, leaving tool tokens in the KV cache across turns.
+
+**The bug**: The sliding window removes N tokens from the middle of the KV cache and shifts everything after them left. But `nPastBeforeTools` (which marks where conversation ends and tools begin) was not shifted, so it pointed past the actual boundary.
+
+**The fix**:
+- Limit discard to conversation-only tokens — never eat into the tool region
+- After sliding, adjust `nPastBeforeTools` by the same delta so the trim boundary stays accurate
+- Reset `DynamicToolsState` in the fallback discard path (full conversation wipe)
+- Applied to both `TextLlmContext` and `MtmdLlmContext`
+
+### Added
+
+- Regression test `CacheToolsAtEndSlidingDuringGenDoesNotLeakToolTokens` that triggers sliding during generation with a large tool definition in a small (512-token) context
+
 ## [0.14.0] - 2026-03-19
 
 ### Added

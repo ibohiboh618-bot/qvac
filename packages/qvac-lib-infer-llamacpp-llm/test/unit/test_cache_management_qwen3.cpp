@@ -445,3 +445,108 @@ TEST_F(CacheManagementQwen3Test, CacheToolsAtEndModeRestoresNPastBeforeTools) {
   llama_pos nPastBeforeTools2 = model2->getNPastBeforeTools();
   EXPECT_EQ(nPastBeforeTools2, -1);
 }
+
+// Regression test: context sliding during generation with tools_at_end
+// must adjust nPastBeforeTools so the post-generation trim does not leave
+// stale tool tokens in the KV cache.
+TEST_F(
+    CacheManagementQwen3Test,
+    CacheToolsAtEndSlidingDuringGenDoesNotLeakToolTokens) {
+  if (!isQwen3ModelPath(test_model_path)) {
+    GTEST_SKIP() << "Test requires Qwen3 model for tools_at_end feature";
+  }
+
+  if (!hasValidModel()) {
+    FAIL() << "Test model not found";
+  }
+
+  // Small context + n_discarded to trigger sliding during generation
+  config_files["tools_at_end"] = "true";
+  config_files["ctx_size"] = "512";
+  config_files["n_discarded"] = "100";
+  config_files["n_predict"] = "200";
+  auto model = createModel();
+  if (!model) {
+    FAIL() << "Model failed to load";
+  }
+
+  // Turn 1: short user message + large tool definition.
+  // Tools ~350 tokens + conversation ~20 + generated ~200 = ~570 > 512.
+  // Sliding must trigger during generation; after trim only conversation
+  // tokens should remain.
+  std::string input1 = R"([{"role": "session", "content": "test_session1_qwen3.bin"},)"
+      R"( {"role": "user", "content": "Hi"},)"
+      R"( {"type": "function", "name": "get_weather",)"
+      R"( "description": "Get detailed weather forecast data with temperature )"
+      R"(humidity wind speed precipitation UV index visibility atmospheric )"
+      R"(pressure sunrise sunset times weather alerts air quality index tidal )"
+      R"(information solar radiation data pollen count road conditions marine )"
+      R"(forecasts aviation weather fire danger ratings drought indices )"
+      R"(tropical cyclone tracking severe storm warnings fog advisories flood )"
+      R"(watches winter storm alerts heat advisories wind chill factors dew )"
+      R"(point calculations relative humidity measurements barometric pressure )"
+      R"(trends cloud cover percentages precipitation probability snowfall )"
+      R"(accumulation rainfall intensity thunderstorm likelihood tornado risk )"
+      R"(assessment hail size predictions",)"
+      R"( "parameters": {"type": "object", "properties": {)"
+      R"("city": {"type": "string", "description": "City name"},)"
+      R"("country": {"type": "string", "description": "Country code"},)"
+      R"("lat": {"type": "number", "description": "Latitude"},)"
+      R"("lon": {"type": "number", "description": "Longitude"},)"
+      R"("zip": {"type": "string", "description": "ZIP code"},)"
+      R"("units": {"type": "string", "description": "Units metric or imperial"},)"
+      R"("lang": {"type": "string", "description": "Language code"},)"
+      R"("forecast_days": {"type": "integer", "description": "Days 1-14"},)"
+      R"("hourly": {"type": "boolean", "description": "Hourly data"},)"
+      R"("alerts": {"type": "boolean", "description": "Weather alerts"},)"
+      R"("aqi": {"type": "boolean", "description": "Air quality"},)"
+      R"("tides": {"type": "boolean", "description": "Tide info"},)"
+      R"("solar": {"type": "boolean", "description": "Solar data"},)"
+      R"("marine": {"type": "boolean", "description": "Marine forecasts"},)"
+      R"("aviation": {"type": "boolean", "description": "Aviation weather"},)"
+      R"("agricultural": {"type": "boolean", "description": "Agricultural data"})"
+      R"(}, "required": ["city"]}}])";
+
+  EXPECT_NO_THROW({
+    std::string output = processPromptString(model, input1);
+    EXPECT_GE(output.length(), 0);
+  });
+
+  auto stats1 = model->runtimeStats();
+  double cacheTokens1 = getStatValue(stats1, "CacheTokens");
+  double contextSlides1 = getStatValue(stats1, "contextSlides");
+
+  EXPECT_GT(contextSlides1, 0)
+      << "Expected context sliding to occur during generation";
+
+  // After trim, CacheTokens should be small (only conversation tokens).
+  const int maxExpectedCacheTokens = 50;
+  EXPECT_GT(cacheTokens1, 0);
+  EXPECT_LE(cacheTokens1, maxExpectedCacheTokens)
+      << "CacheTokens (" << cacheTokens1 << ") should not exceed "
+      << maxExpectedCacheTokens
+      << " after sliding+trim - tool tokens must not leak into cache";
+
+  // Turn 2: short follow-up with same tools, another slide cycle.
+  // Keep prompt small enough to fit in 512 ctx after cache restore.
+  std::string input2 = R"([{"role": "session", "content": "test_session1_qwen3.bin"},)"
+      R"( {"role": "user", "content": "What about London?"},)"
+      R"( {"type": "function", "name": "get_weather",)"
+      R"( "description": "Get weather forecast",)"
+      R"( "parameters": {"type": "object", "properties": {)"
+      R"("city": {"type": "string", "description": "City name"})"
+      R"(}, "required": ["city"]}}])";
+
+  EXPECT_NO_THROW({
+    std::string output = processPromptString(model, input2);
+    EXPECT_GE(output.length(), 0);
+  });
+
+  auto stats2 = model->runtimeStats();
+  double cacheTokens2 = getStatValue(stats2, "CacheTokens");
+  EXPECT_GT(cacheTokens2, cacheTokens1)
+      << "Turn 2 should have more cache tokens (conversation grew)";
+  EXPECT_LE(cacheTokens2, 2 * maxExpectedCacheTokens)
+      << "CacheTokens (" << cacheTokens2
+      << ") still bounded - no tool token leakage after multi-turn sliding";
+}
