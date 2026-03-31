@@ -460,20 +460,20 @@ TEST_F(
     FAIL() << "Test model not found";
   }
 
-  // Small context + n_discarded to trigger sliding during generation
+  // Small context + n_discarded + fill-context predict to guarantee sliding
   config_files["tools_at_end"] = "true";
   config_files["ctx_size"] = "512";
   config_files["n_discarded"] = "100";
-  config_files["n_predict"] = "200";
+  config_files["n_predict"] = "-2";  // generate until context is full
   auto model = createModel();
   if (!model) {
     FAIL() << "Model failed to load";
   }
 
   // Turn 1: short user message + large tool definition.
-  // Tools ~350 tokens + conversation ~20 + generated ~200 = ~570 > 512.
-  // Sliding must trigger during generation; after trim only conversation
-  // tokens should remain.
+  // Tools ~350 tokens + conversation ~20 = ~370 prefill. n_predict=-2
+  // fills the remaining ~142 tokens, guaranteeing at least one slide.
+  // After trim only conversation tokens should remain.
   std::string input1 = R"([{"role": "session", "content": "test_session1_qwen3.bin"},)"
       R"( {"role": "user", "content": "Hi"},)"
       R"( {"type": "function", "name": "get_weather",)"

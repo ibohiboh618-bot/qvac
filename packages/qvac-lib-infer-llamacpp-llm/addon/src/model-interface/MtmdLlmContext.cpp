@@ -270,15 +270,11 @@ bool MtmdLlmContext::evalMessageWithTools(
   }
   if (nPast_ + nTokens >= llama_n_ctx(lctx_)) {
 
-    // Limit discard to conversation tokens only — never eat into tool tokens
+    // Clamp discard so it never eats into tool tokens
     auto& dts = dynamicToolsState();
-    llama_pos discard = nDiscarded_;
-    if (dts.toolsAtEnd() && dts.nPastBeforeTools() > firstMsgTokens_) {
-      llama_pos safeLimit = dts.nPastBeforeTools() - firstMsgTokens_;
-      discard = std::min(discard, std::max(safeLimit, static_cast<llama_pos>(0)));
-    }
+    llama_pos discard = dts.clampDiscard(nDiscarded_, firstMsgTokens_);
     llama_pos leftTokens = nPast_ - firstMsgTokens_ - discard;
-    if (leftTokens >= 0 &&
+    if (leftTokens >= 0 && discard > 0 &&
         nPast_ + nTokens - discard < llama_n_ctx(lctx_)) {
       auto* mem = llama_get_memory(lctx_);
       llama_memory_seq_rm(
@@ -286,9 +282,7 @@ bool MtmdLlmContext::evalMessageWithTools(
       llama_memory_seq_add(
           mem, 0, firstMsgTokens_ + discard, nPast_, -discard);
       nPast_ -= discard;
-      if (dts.nPastBeforeTools() > firstMsgTokens_) {
-        dts.setNPastBeforeTools(dts.nPastBeforeTools() - discard);
-      }
+      dts.adjustAfterSlide(discard, firstMsgTokens_);
       ++nSlides_;
       QLOG_IF(
           Priority::DEBUG,
@@ -299,10 +293,13 @@ bool MtmdLlmContext::evalMessageWithTools(
     } else if (
         leftTokens < 0 && firstMsgTokens_ + nTokens < llama_n_ctx(lctx_) &&
         nDiscarded_ > 0) {
+      // Fallback: wipe everything after the first message.
       auto* mem = llama_get_memory(lctx_);
       llama_memory_seq_rm(mem, 0, firstMsgTokens_, nPast_);
       nPast_ = firstMsgTokens_;
-      dynamicToolsState().reset();
+      if (dts.toolsAtEnd()) {
+        dts.reset();
+      }
       ++nSlides_;
       QLOG_IF(
           Priority::DEBUG,
@@ -386,25 +383,20 @@ void MtmdLlmContext::applyContextDiscard() {
       nDiscarded_ == 0) {
     return;
   }
-  // Limit discard to conversation tokens only — never eat into tool tokens
+  // Clamp discard so it never eats into tool tokens.
+  // During generation there is no fallback path — if discard is 0
+  // we simply cannot free space and the caller handles overflow.
   auto& dts = dynamicToolsState();
-  llama_pos discard = nDiscarded_;
-  if (dts.toolsAtEnd() && dts.nPastBeforeTools() > firstMsgTokens_) {
-    llama_pos safeLimit = dts.nPastBeforeTools() - firstMsgTokens_;
-    if (safeLimit <= 0) {
-      return; // no conversation tokens to discard
-    }
-    discard = std::min(discard, safeLimit);
+  llama_pos discard = dts.clampDiscard(nDiscarded_, firstMsgTokens_);
+  if (discard == 0) {
+    return;
   }
   auto* mem = llama_get_memory(lctx_);
   llama_memory_seq_rm(mem, 0, firstMsgTokens_, firstMsgTokens_ + discard);
   llama_memory_seq_add(
       mem, 0, firstMsgTokens_ + discard, nPast_, -discard);
   nPast_ -= discard;
-  // Adjust the dynamic tools boundary so trim stays accurate after the slide
-  if (dts.nPastBeforeTools() > firstMsgTokens_) {
-    dts.setNPastBeforeTools(dts.nPastBeforeTools() - discard);
-  }
+  dts.adjustAfterSlide(discard, firstMsgTokens_);
   ++nSlides_;
   QLOG_IF(
       Priority::DEBUG,

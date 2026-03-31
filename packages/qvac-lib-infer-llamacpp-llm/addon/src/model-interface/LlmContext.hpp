@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 
@@ -128,6 +129,25 @@ public:
   void reset() {
     nConversationOnlyTokens_ = 0;
     nPastBeforeTools_ = -1;
+  }
+
+  // Clamp a discard amount so it never eats into the tool region.
+  // Returns the original value unchanged when tools_at_end is off.
+  [[nodiscard]] llama_pos clampDiscard(
+      llama_pos nDiscarded, llama_pos firstMsgTokens) const {
+    if (toolsAtEnd_ && nPastBeforeTools_ > firstMsgTokens) {
+      llama_pos safeLimit = nPastBeforeTools_ - firstMsgTokens;
+      return std::min(nDiscarded, safeLimit);
+    }
+    return nDiscarded;
+  }
+
+  // Shift nPastBeforeTools left after a context slide so the trim
+  // boundary stays accurate. No-op when tools_at_end is off.
+  void adjustAfterSlide(llama_pos discard, llama_pos firstMsgTokens) {
+    if (toolsAtEnd_ && nPastBeforeTools_ > firstMsgTokens) {
+      nPastBeforeTools_ -= discard;
+    }
   }
 
 private:
