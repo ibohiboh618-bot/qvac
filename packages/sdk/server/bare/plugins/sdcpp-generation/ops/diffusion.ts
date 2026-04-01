@@ -14,7 +14,7 @@ export async function* diffusion(
 ): AsyncGenerator<DiffusionStreamResponse> {
   const model = getModel(request.modelId);
 
-  const runParams: Record<string, unknown> = {
+  const response = await model.run({
     prompt: request.prompt,
     negative_prompt: request.negative_prompt,
     width: request.width,
@@ -28,9 +28,7 @@ export async function* diffusion(
     batch_count: request.batch_count,
     vae_tiling: request.vae_tiling,
     cache_preset: request.cache_preset,
-  };
-
-  const response = await model.run(runParams);
+  });
 
   let outputIndex = 0;
 

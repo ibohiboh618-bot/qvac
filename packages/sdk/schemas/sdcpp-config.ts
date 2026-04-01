@@ -76,8 +76,10 @@ export const diffusionRequestSchema = z.object({
   width: z.number().int().positive().multipleOf(8).optional(),
   height: z.number().int().positive().multipleOf(8).optional(),
   steps: z.number().int().positive().optional(),
-  cfg_scale: z.number().optional(),
-  guidance: z.number().optional(),
+  cfg_scale: z.number().optional()
+    .describe("Classifier-free guidance scale for SD 1.x / 2.x / XL / SD3 models; typical range 1–20, default 7"),
+  guidance: z.number().optional()
+    .describe("Distilled guidance for FLUX models; typical range 1–10, default 3.5"),
   sampling_method: z
     .enum([
       "euler",
@@ -119,19 +121,4 @@ export type DiffusionStreamRequest = z.infer<
   typeof diffusionStreamRequestSchema
 >;
 
-export type DiffusionClientParams = {
-  modelId: string;
-  prompt: string;
-  negative_prompt?: string;
-  width?: number;
-  height?: number;
-  steps?: number;
-  cfg_scale?: number;
-  guidance?: number;
-  sampling_method?: DiffusionRequest["sampling_method"];
-  scheduler?: DiffusionRequest["scheduler"];
-  seed?: number;
-  batch_count?: number;
-  vae_tiling?: boolean;
-  cache_preset?: string;
-};
+export type DiffusionClientParams = DiffusionRequest;

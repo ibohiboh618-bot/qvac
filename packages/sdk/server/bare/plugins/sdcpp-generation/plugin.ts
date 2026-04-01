@@ -1,4 +1,4 @@
-import ImgStableDiffusion from "@qvac/diffusion-cpp";
+import ImgStableDiffusion, { type ImgStableDiffusionArgs, type SdConfig } from "@qvac/diffusion-cpp";
 import addonLogging from "@qvac/diffusion-cpp/addonLogging";
 import {
   definePlugin,
@@ -25,14 +25,6 @@ type DiffusionArtifactKey =
   | "llmModelPath"
   | "vaeModelPath";
 
-const SRC_TO_ARTIFACT = {
-  clipLModelSrc: "clipLModelPath",
-  clipGModelSrc: "clipGModelPath",
-  t5XxlModelSrc: "t5XxlModelPath",
-  llmModelSrc: "llmModelPath",
-  vaeModelSrc: "vaeModelPath",
-} as const satisfies Record<string, DiffusionArtifactKey>;
-
 export const diffusionPlugin = definePlugin({
   modelType: ModelType.sdcppGeneration,
   displayName: "Image Generation (stable-diffusion.cpp)",
@@ -43,31 +35,38 @@ export const diffusionPlugin = definePlugin({
     cfg: SdcppConfig,
     ctx: ResolveContext,
   ): Promise<ResolveResult<SdcppConfig, DiffusionArtifactKey>> {
-    const srcKeys = new Set(Object.keys(SRC_TO_ARTIFACT));
-    const config = Object.fromEntries(
-      Object.entries(cfg).filter(([key]) => !srcKeys.has(key)),
-    ) as SdcppConfig;
+    const {
+      clipLModelSrc, clipGModelSrc, t5XxlModelSrc,
+      llmModelSrc, vaeModelSrc, ...runtimeConfig
+    } = cfg;
 
-    const srcEntries = Object.entries(SRC_TO_ARTIFACT).filter(
-      ([srcKey]) => cfg[srcKey as keyof typeof SRC_TO_ARTIFACT],
-    );
+    const sources = { clipLModelSrc, clipGModelSrc, t5XxlModelSrc, llmModelSrc, vaeModelSrc };
+    const hasSources = Object.values(sources).some(Boolean);
 
-    if (srcEntries.length === 0) {
-      return { config };
+    if (!hasSources) {
+      return { config: runtimeConfig };
     }
 
-    const resolved = await Promise.all(
-      srcEntries.map(([srcKey]) =>
-        ctx.resolveModelPath(cfg[srcKey as keyof typeof SRC_TO_ARTIFACT]!),
-      ),
-    );
+    const resolve = ctx.resolveModelPath;
+    const [clipLModelPath, clipGModelPath, t5XxlModelPath, llmModelPath, vaeModelPath] =
+      await Promise.all([
+        clipLModelSrc ? resolve(clipLModelSrc) : undefined,
+        clipGModelSrc ? resolve(clipGModelSrc) : undefined,
+        t5XxlModelSrc ? resolve(t5XxlModelSrc) : undefined,
+        llmModelSrc ? resolve(llmModelSrc) : undefined,
+        vaeModelSrc ? resolve(vaeModelSrc) : undefined,
+      ]);
 
-    const artifacts: Partial<Record<DiffusionArtifactKey, string>> = {};
-    for (let i = 0; i < srcEntries.length; i++) {
-      artifacts[srcEntries[i]![1]] = resolved[i]!;
-    }
-
-    return { config, artifacts };
+    return {
+      config: runtimeConfig,
+      artifacts: {
+        ...(clipLModelPath && { clipLModelPath }),
+        ...(clipGModelPath && { clipGModelPath }),
+        ...(t5XxlModelPath && { t5XxlModelPath }),
+        ...(llmModelPath && { llmModelPath }),
+        ...(vaeModelPath && { vaeModelPath }),
+      },
+    };
   },
 
   createModel(params: CreateModelParams): PluginModelResult {
@@ -77,7 +76,7 @@ export const diffusionPlugin = definePlugin({
     const logger = createStreamLogger(modelId, ModelType.sdcppGeneration);
     registerAddonLogger(modelId, ModelType.sdcppGeneration, logger);
 
-    const addonArgs = {
+    const addonArgs: ImgStableDiffusionArgs = {
       diskPath: dirPath,
       modelName: basePath,
       logger,
@@ -89,24 +88,7 @@ export const diffusionPlugin = definePlugin({
       ...(artifacts?.["vaeModelPath"] && { vaeModel: artifacts["vaeModelPath"] }),
     };
 
-    const addonConfig = Object.fromEntries(
-      Object.entries({
-        threads: config.threads,
-        device: config.device,
-        prediction: config.prediction,
-        type: config.type,
-        rng: config.rng,
-        sampler_rng: config.sampler_rng,
-        clip_on_cpu: config.clip_on_cpu,
-        vae_on_cpu: config.vae_on_cpu,
-        vae_tiling: config.vae_tiling,
-        flash_attn: config.flash_attn,
-        verbosity: config.verbosity,
-      }).filter(([, v]) => v !== undefined),
-    );
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-    const model = new ImgStableDiffusion(addonArgs as any, addonConfig);
+    const model = new ImgStableDiffusion(addonArgs, config as SdConfig);
 
     return { model, loader: undefined };
   },

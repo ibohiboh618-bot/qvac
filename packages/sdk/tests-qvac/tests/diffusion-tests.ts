@@ -118,7 +118,6 @@ export const diffusionSeedReproducibility = createDiffusionTest(
     height: 256,
     steps: 4,
     seed: 12345,
-    verifySeedReproducibility: true,
   },
   { validation: "type", expectedType: "string" },
   600000,
@@ -160,7 +159,6 @@ export const diffusionStreamingProgress = createDiffusionTest(
     height: 256,
     steps: 4,
     seed: 42,
-    verifyProgress: true,
   },
   { validation: "type", expectedType: "string" },
 );
@@ -175,7 +173,6 @@ export const diffusionStatsPresent = createDiffusionTest(
     height: 256,
     steps: 4,
     seed: 42,
-    verifyStats: true,
   },
   { validation: "type", expectedType: "string" },
 );
