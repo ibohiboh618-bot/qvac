@@ -65,7 +65,7 @@ import { TtsExecutor } from "../shared/executors/tts-executor.js";
 import { ParakeetExecutor } from "./executors/parakeet-executor.js";
 import { VisionExecutor } from "./executors/vision-executor.js";
 import { DownloadExecutor } from "../shared/executors/download-executor.js";
-import { DiffusionExecutor } from "./executors/diffusion-executor.js";
+import { DiffusionExecutor } from "../shared/executors/diffusion-executor.js";
 
 const resources = new ResourceManager();
 
@@ -328,6 +328,7 @@ resources.define("vision", {
 resources.define("diffusion", {
   constant: FLUX_2_KLEIN_4B_Q4_0,
   type: "diffusion",
+  skipPreDownload: true,
   config: {
     device: "gpu",
     threads: 4,
@@ -358,7 +359,7 @@ export const executor = createExecutor({
     new KvCacheExecutor(resources),
     new ParakeetExecutor(resources),
     new VisionExecutor(resources),
-    new DownloadExecutor(resources),
+    new DownloadExecutor(),
     new DiffusionExecutor(resources),
   ],
   profiling: {

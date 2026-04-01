@@ -7,7 +7,7 @@ const createDiffusionTest = (
   expectation:
     | { validation: "type"; expectedType: "string" | "number" | "array" }
     | { validation: "throws-error"; errorContains: string },
-  estimatedDurationMs: number = 120000,
+  estimatedDurationMs: number = 300000,
 ): TestDefinition => ({
   testId,
   params,
@@ -121,7 +121,7 @@ export const diffusionSeedReproducibility = createDiffusionTest(
     verifySeedReproducibility: true,
   },
   { validation: "type", expectedType: "string" },
-  240000,
+  600000,
 );
 
 export const diffusionBatchCount = createDiffusionTest(
@@ -135,7 +135,7 @@ export const diffusionBatchCount = createDiffusionTest(
     seed: 42,
   },
   { validation: "type", expectedType: "array" },
-  240000,
+  600000,
 );
 
 // ---- streaming ----

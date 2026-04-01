@@ -203,9 +203,6 @@ export const tests = [
   // TTS tests
   ...ttsTests,
 
-  // Diffusion tests
-  ...diffusionTests,
-
   // Config reload tests
   ...configReloadTests,
 
@@ -220,6 +217,9 @@ export const tests = [
 
   // Download tests (cancel isolation)
   ...downloadTests,
+
+  // Diffusion tests
+  ...diffusionTests,
 
   // Additional model tests
   modelSwitchLlm,
