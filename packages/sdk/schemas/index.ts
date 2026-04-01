@@ -44,6 +44,7 @@ export {
   PROFILING_TRAILER_KEY,
   DELEGATION_BREAKDOWN_KEY,
   OPERATION_EVENT_KEY,
+  MODEL_EXECUTION_KEY,
   profilerModeSchema,
   serverBreakdownSchema,
   delegationBreakdownSchema,
