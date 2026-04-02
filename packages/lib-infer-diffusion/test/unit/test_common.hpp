@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <iostream>
 #include <string>
 #include <vector>
 
@@ -27,16 +26,9 @@ inline int getTestThreads() { return 4; }
 // is CMAKE_SOURCE_DIR and the ctest WORKING_DIRECTORY).
 // Returns an empty string when no model is found so callers can GTEST_SKIP().
 inline std::string getModelPath() {
-  const char* envPath = std::getenv("SD_TEST_MODEL_PATH");
-  std::cerr << "[sd-test] SD_TEST_MODEL_PATH="
-            << (envPath ? envPath : "<unset>") << std::endl;
-  if (envPath) {
-    std::cerr << "[sd-test] exists(SD_TEST_MODEL_PATH)="
-              << std::filesystem::exists(envPath) << std::endl;
-    if (std::filesystem::exists(envPath)) {
-      std::cerr << "[sd-test] getModelPath() -> env" << std::endl;
-      return envPath;
-    }
+  if (const char* p = std::getenv("SD_TEST_MODEL_PATH")) {
+    if (std::filesystem::exists(p))
+      return p;
   }
 
 #ifdef PROJECT_ROOT
@@ -49,18 +41,10 @@ inline std::string getModelPath() {
       root + "/test/model/stable-diffusion-v2-1-Q8_0.gguf",
       root + "/models/stable-diffusion-v2-1-Q8_0.gguf",
   };
-
-  std::cerr << "[sd-test] PROJECT_ROOT=" << root << std::endl;
   for (const auto& path : candidates) {
-    std::cerr << "[sd-test] exists(" << path << ")="
-              << std::filesystem::exists(path) << std::endl;
-    if (std::filesystem::exists(path)) {
-      std::cerr << "[sd-test] getModelPath() -> " << path << std::endl;
+    if (std::filesystem::exists(path))
       return path;
-    }
   }
-
-  std::cerr << "[sd-test] getModelPath() -> empty" << std::endl;
   return {};
 }
 
