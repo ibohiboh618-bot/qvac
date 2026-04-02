@@ -39,6 +39,7 @@ jobs:
           - os: ubuntu-24.04
             platform: linux
             arch: x64
+            runner: ai-run-linux-gpu
           - os: windows-11
             platform: windows
             runner: ai-run-windows11-gpu
@@ -167,6 +168,15 @@ jobs:
         run: |
           npm install
           npm install -g bare bare-make
+
+      - if: ${{ matrix.os == 'ubuntu-24.04' }}
+        name: Download SD2 model for C++ tests
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          ./scripts/download-model-sd2.sh
+          mkdir -p ./test/model
+          cp -f ./models/stable-diffusion-v2-1-Q8_0.gguf ./test/model/stable-diffusion-v2-1-Q8_0.gguf
+          test -f ./test/model/stable-diffusion-v2-1-Q8_0.gguf
 
       - if: ${{ matrix.platform == 'darwin' }}
         name: Use Apple clang for Apple platform builds
