@@ -58,6 +58,7 @@ import { ErrorExecutor } from "../shared/executors/error-executor.js";
 import { TtsExecutor } from "../shared/executors/tts-executor.js";
 import { ParakeetExecutor } from "./executors/parakeet-executor.js";
 import { VisionExecutor } from "./executors/vision-executor.js";
+import { DownloadExecutor } from "../shared/executors/download-executor.js";
 
 const resources = new ResourceManager();
 
@@ -192,7 +193,7 @@ resources.define("afriquegemma", {
 });
 
 
-const referenceAudioPath = path.resolve(process.cwd(), "assets/audio/transcription-short.wav");
+const referenceAudioPath = path.resolve(process.cwd(), "assets/audio/transcription-short-wav.wav");
 
 resources.define("tts-chatterbox", {
   constant: TTS_TOKENIZER_EN_CHATTERBOX,
@@ -272,6 +273,8 @@ resources.define("vision", {
   },
 });
 
+await resources.downloadAllOnce(console.log);
+
 export const executor = createExecutor({
   handlers: [
     new ModelLoadingExecutor(resources),
@@ -294,6 +297,7 @@ export const executor = createExecutor({
     new KvCacheExecutor(resources),
     new ParakeetExecutor(resources),
     new VisionExecutor(resources),
+    new DownloadExecutor(),
   ],
   profiling: {
     init: () => profiler.enable({ mode: "summary", includeServerBreakdown: true }),
