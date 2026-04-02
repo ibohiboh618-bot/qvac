@@ -75,9 +75,13 @@ jobs:
         name: Install Vulkan SDK on Linux
         working-directory: ${{ env.WORKDIR }}
         run: |
+          sudo rm -f /etc/apt/sources.list.d/lunarg-vulkan-noble.list
+          sudo rm -f /etc/apt/sources.list.d/archive_uri-https_packages_lunarg_com_vulkan-*.list
+          sudo rm -f /etc/apt/trusted.gpg.d/lunarg.asc
+
           curl -fsSL https://packages.lunarg.com/lunarg-signing-key-pub.asc | gpg --dearmor | sudo tee /usr/share/keyrings/lunarg-archive-keyring.gpg > /dev/null
           sudo chmod 644 /usr/share/keyrings/lunarg-archive-keyring.gpg
-          curl -fsSL http://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list | sed 's|^deb |deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] |' | sudo tee /etc/apt/sources.list.d/lunarg-vulkan-noble.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] https://packages.lunarg.com/vulkan/ noble main" | sudo tee /etc/apt/sources.list.d/lunarg-vulkan-noble.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y vulkan-sdk
 
