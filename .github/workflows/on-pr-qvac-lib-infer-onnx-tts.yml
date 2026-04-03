@@ -1,9 +1,11 @@
 name: On PR Trigger (TTS)
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, labeled]
+  push:
     branches: [main, release-*, feature-*, tmp-*]
+  # pull_request_target:
+  #   types: [opened, synchronize, reopened, labeled]
+  #   branches: [main, release-*, feature-*, tmp-*]
     paths:
       - "packages/qvac-lib-infer-onnx-tts/**"
       - ".github/workflows/*onnx-tts*.yml"
