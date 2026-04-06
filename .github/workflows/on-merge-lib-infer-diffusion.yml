@@ -99,7 +99,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           base-ref: ${{ github.ref_name }}
-          base-sha: ${{ github.event.before }}
+          base-sha: ${{ github.event.before || format('{0}^', github.sha) }}
           head-sha: ${{ github.sha }}
           package-slug: lib-infer-diffusion
           package-json-path: packages/lib-infer-diffusion/package.json
