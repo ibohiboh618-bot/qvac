@@ -161,6 +161,8 @@ jobs:
   publish-release-npm:
     needs: [build, publish-logic, release-merge-guard]
     if: >-
+      always() &&
+      needs.build.result == 'success' &&
       needs.publish-logic.outputs.publish_release == 'true' &&
       (needs.release-merge-guard.result == 'success' || needs.release-merge-guard.result == 'skipped')
     runs-on: ubuntu-latest
