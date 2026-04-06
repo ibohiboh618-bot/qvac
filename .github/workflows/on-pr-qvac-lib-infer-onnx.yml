@@ -23,10 +23,6 @@ permissions:
   pull-requests: read
   packages: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: true
-
 jobs:
   authorize:
     runs-on: ubuntu-latest
@@ -164,9 +160,7 @@ jobs:
     needs: [authorize, changes]
     if: needs.authorize.outputs.allowed == 'true' || github.event_name == 'workflow_dispatch'
     uses: tetherto/qvac-devops/.github/workflows/cpp-lint.yaml@v1.1.7
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+    secrets: inherit
     with:
       sha: ${{ github.event.pull_request.base.sha || github.sha }}
       pr_head_sha: ${{ github.event.pull_request.head.sha }}
@@ -177,7 +171,7 @@ jobs:
       contents: write
       packages: write
       pull-requests: write
-    needs: [authorize, sanity-checks, cpp-lint]
+    needs: [authorize, changes]
     if: |
       (needs.changes.outputs.pkg == 'true') &&
       (
@@ -185,9 +179,7 @@ jobs:
         needs.authorize.outputs.allowed == 'true'
       )
     uses: ./.github/workflows/prebuilds-qvac-lib-infer-onnx.yml
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+    secrets: inherit
     with:
       repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
       ref: ${{ github.event.pull_request.head.ref || github.ref }}

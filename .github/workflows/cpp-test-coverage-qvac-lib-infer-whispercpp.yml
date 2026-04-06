@@ -2,12 +2,6 @@ name: CPP Tests (Whispercpp)
 
 on:
   workflow_call:
-    secrets:
-      NPM_TOKEN:
-        required: true
-      PAT_TOKEN:
-        required: true
-
     inputs:
       ref:
         description: 'ref'
@@ -32,19 +26,11 @@ env:
   ENABLE_COVERAGE: ON
   WORKDIR: ${{ inputs.workdir || github.event.inputs.workdir }}
 
-permissions:
-  contents: read
-
 jobs:
   cpp-tests:
     runs-on: ${{ matrix.os }}
     environment: release
     name: ${{ matrix.platform }}-${{ matrix.arch }}-cpp-tests
-    permissions:
-      contents: read
-      packages: read
-      checks: write
-      pull-requests: write
     strategy:
       fail-fast: false
       matrix:

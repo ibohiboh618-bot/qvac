@@ -7,16 +7,6 @@ on:
       - "packages/qvac-lib-infer-onnx-tts/**"
 
   workflow_call:
-    secrets:
-      AWS_ACCESS_KEY_ID:
-        required: true
-      AWS_SECRET_ACCESS_KEY:
-        required: true
-      NPM_TOKEN:
-        required: true
-      PAT_TOKEN:
-        required: true
-
     inputs:
       ref:
         description: "Git ref/sha to checkout"
@@ -48,20 +38,11 @@ env:
   BUILD_TYPE: Debug
   ENABLE_COVERAGE: ON
 
-permissions:
-  contents: read
-
 jobs:
   cpp-tests:
     runs-on: ${{ matrix.os }}
     environment: release
     name: ${{ matrix.platform }}-${{ matrix.arch }}-cpp-tests
-
-    permissions:
-      contents: read
-      packages: read
-      checks: write
-      pull-requests: write
 
     strategy:
       fail-fast: false
