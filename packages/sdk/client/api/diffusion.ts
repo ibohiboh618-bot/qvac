@@ -5,7 +5,6 @@ import {
   type DiffusionStats,
 } from "@/schemas";
 import { stream as streamRpc } from "@/client/rpc/rpc-client";
-
 export interface DiffusionProgressTick {
   step: number;
   totalSteps: number;
@@ -14,7 +13,7 @@ export interface DiffusionProgressTick {
 
 interface DiffusionResult {
   progressStream: AsyncGenerator<DiffusionProgressTick>;
-  outputs: Promise<Buffer[]>;
+  outputs: Promise<Uint8Array[]>;
   stats: Promise<DiffusionStats | undefined>;
 }
 
@@ -53,14 +52,14 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
   statsPromise.catch(() => {});
 
   const progressQueue: DiffusionProgressTick[] = [];
-  const collectedBuffers: Buffer[] = [];
+  const collectedBuffers: Uint8Array[] = [];
   let progressDone = false;
   let progressResolve: (() => void) | null = null;
   let streamError: Error | null = null;
 
-  let outputsResolver: (value: Buffer[]) => void = () => {};
+  let outputsResolver: (value: Uint8Array[]) => void = () => {};
   let outputsRejecter: (error: unknown) => void = () => {};
-  const outputsPromise = new Promise<Buffer[]>((resolve, reject) => {
+  const outputsPromise = new Promise<Uint8Array[]>((resolve, reject) => {
     outputsResolver = resolve;
     outputsRejecter = reject;
   });
@@ -86,7 +85,10 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
           }
 
           if (parsed.data) {
-            collectedBuffers.push(Buffer.from(parsed.data, "base64"));
+            const binary = atob(parsed.data);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            collectedBuffers.push(bytes);
           }
 
           if (parsed.done) {
