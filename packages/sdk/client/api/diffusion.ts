@@ -5,6 +5,8 @@ import {
   type DiffusionStats,
 } from "@/schemas";
 import { stream as streamRpc } from "@/client/rpc/rpc-client";
+import { decodeBase64 } from "@/utils/encoding";
+
 export interface DiffusionProgressTick {
   step: number;
   totalSteps: number;
@@ -85,10 +87,7 @@ export function diffusion(params: DiffusionClientParams): DiffusionResult {
           }
 
           if (parsed.data) {
-            const binary = atob(parsed.data);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            collectedBuffers.push(bytes);
+            collectedBuffers.push(decodeBase64(parsed.data));
           }
 
           if (parsed.done) {
