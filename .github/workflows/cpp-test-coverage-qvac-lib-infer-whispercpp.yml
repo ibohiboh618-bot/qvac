@@ -26,9 +26,16 @@ env:
   ENABLE_COVERAGE: ON
   WORKDIR: ${{ inputs.workdir || github.event.inputs.workdir }}
 
+permissions:
+      contents: read
+
 jobs:
   cpp-tests:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
     environment: release
     name: ${{ matrix.platform }}-${{ matrix.arch }}-cpp-tests
     strategy:
