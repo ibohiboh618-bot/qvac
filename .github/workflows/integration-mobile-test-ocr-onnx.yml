@@ -1368,6 +1368,87 @@ jobs:
           echo "   Your tests: $USER_PASSED passed (out of $USER_TEST_COUNT total)"
           echo "   Device Farm total: $TOTAL | Passed: $PASSED | Failed: $FAILED | Skipped: $SKIPPED"
 
+      - name: Download Device Farm test logs
+        id: download_logs
+        if: always() && steps.schedule_run.outputs.run_arn
+        env:
+          RUN_ARN: ${{ steps.schedule_run.outputs.run_arn }}
+        run: |
+          LOGS_DIR="${GITHUB_WORKSPACE}/devicefarm-logs-${{ matrix.platform }}"
+          mkdir -p "$LOGS_DIR"
+
+          echo "Downloading Device Farm artifacts for run: $RUN_ARN"
+
+          JOBS=$(aws devicefarm list-jobs --arn "$RUN_ARN" --output json)
+
+          for JOB_ARN in $(echo "$JOBS" | jq -r '.jobs[].arn'); do
+            DEVICE_NAME=$(echo "$JOBS" | jq -r --arg arn "$JOB_ARN" '.jobs[] | select(.arn==$arn) | .device.name // "device"')
+            SAFE_NAME=$(echo "$DEVICE_NAME" | tr ' ' '_' | tr -cd '[:alnum:]_-')
+            DEVICE_DIR="$LOGS_DIR/$SAFE_NAME"
+            mkdir -p "$DEVICE_DIR"
+
+            echo "$DEVICE_NAME" > "$DEVICE_DIR/DEVICE_NAME"
+
+            JOB_RESULT=$(echo "$JOBS" | jq -r --arg arn "$JOB_ARN" '.jobs[] | select(.arn==$arn) | .result // "UNKNOWN"')
+            echo "$JOB_RESULT" > "$DEVICE_DIR/JOB_RESULT"
+
+            echo "  Device: $DEVICE_NAME (result: $JOB_RESULT)"
+
+            # Download FILE artifacts (test spec output, customer artifacts)
+            FILE_ARTS=$(aws devicefarm list-artifacts --arn "$JOB_ARN" --type FILE --output json 2>/dev/null || echo '{"artifacts":[]}')
+            for ART_TYPE in TESTSPEC_OUTPUT CUSTOMER_ARTIFACT; do
+              URL=$(echo "$FILE_ARTS" | jq -r --arg t "$ART_TYPE" '.artifacts[] | select(.type==$t) | .url' | head -1)
+              if [ -n "$URL" ] && [ "$URL" != "null" ]; then
+                echo "    Downloading $ART_TYPE..."
+                curl -sL -o "$DEVICE_DIR/${ART_TYPE}.log" "$URL" || true
+              fi
+            done
+
+            # Download LOG artifacts (device log, logcat)
+            LOG_ARTS=$(aws devicefarm list-artifacts --arn "$JOB_ARN" --type LOG --output json 2>/dev/null || echo '{"artifacts":[]}')
+            for ART_TYPE in DEVICE_LOG LOGCAT; do
+              URL=$(echo "$LOG_ARTS" | jq -r --arg t "$ART_TYPE" '.artifacts[] | select(.type==$t) | .url' | head -1)
+              if [ -n "$URL" ] && [ "$URL" != "null" ]; then
+                echo "    Downloading $ART_TYPE..."
+                curl -sL -o "$DEVICE_DIR/${ART_TYPE}.log" "$URL" || true
+              fi
+            done
+          done
+
+          echo ""
+          echo "logs_dir=$LOGS_DIR" >> $GITHUB_OUTPUT
+          echo "Downloaded artifacts:"
+          find "$LOGS_DIR" -type f -name "*.log" -exec ls -lh {} \;
+
+      - name: Generate test report (JSON)
+        if: always() && steps.schedule_run.outputs.run_arn
+        run: >
+          node addon/scripts/test-reporting/devicefarm-to-json.js
+          --logs-dir "${{ steps.download_logs.outputs.logs_dir }}"
+          --output "addon/${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.json"
+          --suite "ocr-onnx"
+          --platform "${{ matrix.platform }}"
+          --job-result "${{ steps.monitor_run.outputs.test_result }}"
+
+      - name: Generate test report (HTML)
+        if: always() && steps.schedule_run.outputs.run_arn
+        run: >
+          node addon/scripts/test-reporting/render-report.js
+          --input "addon/${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.json"
+          --output "addon/${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.html"
+          --format html
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-ocr-onnx-${{ matrix.platform }}-mobile-${{ github.run_number }}
+          path: |
+            addon/${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.json
+            addon/${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.html
+          retention-days: 90
+          if-no-files-found: ignore
+
       - name: Comment PR with results
         if: always() && github.event.pull_request.number
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # 8.0.0

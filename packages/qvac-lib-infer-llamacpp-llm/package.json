@@ -26,6 +26,10 @@
     "coverage:cpp:summary": "cd build/test/unit && llvm-cov-19 report ./addon-test --instr-profile=coverage.profdata -ignore-filename-regex='(tests|build|node_modules|gtest|gmock|\\.vcpkg|/usr)/' > coverage-summary.txt",
     "coverage:cpp:report": "cd build/test/unit/ && ls -lha && llvm-profdata-19 merge -sparse default.profraw -o coverage.profdata && llvm-cov-19 show ./addon-test -instr-profile=coverage.profdata -format=html -output-dir=coverage-html -ignore-filename-regex='(tests|build|node_modules|gtest|gmock|\\.vcpkg|/usr)/' && llvm-cov-19 export ./addon-test -instr-profile=coverage.profdata -format=lcov -ignore-filename-regex='(tests|build|node_modules|gtest|gmock|\\.vcpkg|/usr)/' > lcov.info && npm run coverage:cpp:summary",
     "coverage:cpp": "npm run coverage:cpp:build && npm run coverage:cpp:run && npm run coverage:cpp:report",
+    "test:report": "npm run test:integration:generate && bare test/integration/all.js --exit 2>&1 | tee test-output.log; npm run test:report:json && npm run test:report:html",
+    "test:report:json": "node ../../scripts/test-reporting/tap-to-json.js -i test-output.log -o test/results/test-report.json -s llamacpp-llm",
+    "test:report:html": "node ../../scripts/test-reporting/render-report.js -i test/results/test-report.json -o test/results/test-report.html",
+    "test:report:junit": "node ../../scripts/test-reporting/render-report.js -i test/results/test-report.json -o test/results/junit-report.xml -f junit",
     "test:all": "npm run test && npm run test:cpp",
     "benchmarks": "./benchmarks/run-benchmarks.sh",
     "benchmarks:windows": "powershell -ExecutionPolicy Bypass -File ./benchmarks/run-benchmarks.ps1"

@@ -8,9 +8,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXIT_CODE_FILE="$SCRIPT_DIR/.exit-code"
 TIMEOUT=${INTEGRATION_TEST_TIMEOUT:-600}
 
+TEST_OUTPUT_LOG="${TEST_OUTPUT_LOG:-$SCRIPT_DIR/../../test-output.log}"
+
 rm -f "$EXIT_CODE_FILE"
 
-bare "$SCRIPT_DIR/run-with-exit.js" &
+bare "$SCRIPT_DIR/run-with-exit.js" 2>&1 | tee "$TEST_OUTPUT_LOG" &
 BARE_PID=$!
 
 ELAPSED=0

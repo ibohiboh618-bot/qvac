@@ -163,3 +163,32 @@ jobs:
         run: npm run test:integration
         env:
           QASE_API_TOKEN: ${{ secrets.QASE_API_TOKEN }}
+
+      - name: Generate test report (JSON)
+        if: always()
+        working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+        run: >
+          node ../../scripts/test-reporting/tap-to-json.js
+          --input test-output.log
+          --output test/results/test-report.json
+          --suite "ocr-onnx-${{ matrix.platform }}-${{ matrix.arch }}"
+
+      - name: Generate test report (HTML)
+        if: always()
+        working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+        run: >
+          node ../../scripts/test-reporting/render-report.js
+          --input test/results/test-report.json
+          --output test/results/test-report.html
+          --format html
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-ocr-onnx-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.run_number }}
+          path: |
+            ${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.json
+            ${{ inputs.workdir || env.PKG_DIR }}/test/results/test-report.html
+          retention-days: 90
+          if-no-files-found: ignore

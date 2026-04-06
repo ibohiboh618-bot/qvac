@@ -27,6 +27,7 @@ p2p-models/
 .clang-tidy
 # Added by qvac-lint-cpp
 .clang-format
+test/results/
 benchmarks/results
 benchmarks/performance/results/
 benchmarks/performance/models/

@@ -1473,6 +1473,24 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           find "$LOG_DIR" -type f -exec ls -lh {} \; 2>/dev/null || echo "  (no logs downloaded)"
 
+      - name: Generate test report (JSON)
+        if: always() && steps.schedule_run.outputs.run_arn_1
+        run: >
+          node ${{ repo.temp }}/addon/scripts/test-reporting/devicefarm-to-json.js
+          --logs-dir "devicefarm-logs/${{ matrix.platform }}"
+          --output "${{ env.ADDON_WORKDIR }}/test/results/test-report.json"
+          --suite "llamacpp-llm"
+          --platform "${{ matrix.platform }}"
+          --job-result "${{ steps.monitor_run.outputs.test_result }}"
+
+      - name: Generate test report (HTML)
+        if: always() && steps.schedule_run.outputs.run_arn_1
+        run: >
+          node ${{ repo.temp }}/addon/scripts/test-reporting/render-report.js
+          --input "${{ env.ADDON_WORKDIR }}/test/results/test-report.json"
+          --output "${{ env.ADDON_WORKDIR }}/test/results/test-report.html"
+          --format html
+
       - name: Upload Device Farm Logs
         if: always() && steps.schedule_run.outputs.run_arn_1
         uses: actions/upload-artifact@v4
@@ -1480,5 +1498,16 @@ jobs:
           name: devicefarm-logs-${{ matrix.platform }}
           path: devicefarm-logs/
           retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-llamacpp-llm-${{ matrix.platform }}-mobile-${{ github.run_number }}
+          path: |
+            ${{ env.ADDON_WORKDIR }}/test/results/test-report.json
+            ${{ env.ADDON_WORKDIR }}/test/results/test-report.html
+          retention-days: 90
           if-no-files-found: ignore
 
