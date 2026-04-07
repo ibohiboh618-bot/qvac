@@ -257,6 +257,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      id-token: write
     uses: ./.github/workflows/on-publish-benchmark-qvac-lib-infer-nmtcpp.yml
     secrets: inherit
     with:
