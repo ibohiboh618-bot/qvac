@@ -78,7 +78,7 @@ async function unloadModel (model, label, { suppressError = false } = {}) {
   }
 }
 
-async function setupTwoModels (t, { loadSecond = true } = {}) {
+async function setupModelEnvironment (t) {
   setupJsLogger(binding)
 
   const [downloadedModelName, modelDir] = await ensureModel({
@@ -90,15 +90,24 @@ async function setupTwoModels (t, { loadSecond = true } = {}) {
   console.log(`Model: ${downloadedModelName}`)
   console.log(`Dir  : ${modelDir}`)
 
+  t.teardown(async () => {
+    try {
+      binding.releaseLogger()
+    } catch (_) {}
+  })
+
+  return { downloadedModelName, modelDir }
+}
+
+async function setupTwoModels (t, { loadSecond = true } = {}) {
+  const { downloadedModelName, modelDir } = await setupModelEnvironment(t)
+
   const model1 = createModel(modelDir, downloadedModelName, console)
   const model2 = createModel(modelDir, downloadedModelName, console)
 
   t.teardown(async () => {
     await unloadModel(model1, 'instance-1 teardown', { suppressError: true })
     await unloadModel(model2, 'instance-2 teardown', { suppressError: true })
-    try {
-      binding.releaseLogger()
-    } catch (_) {}
   })
 
   if (loadSecond) {
@@ -179,47 +188,85 @@ async function assertSuccessfulRun (t, runResult, label) {
   t.ok(isPng(images[images.length - 1]), `${label} produced a valid PNG`)
 }
 
+test('diffusion multi-instance - two instances can run inference simultaneously', { timeout: 900000, skip }, async t => {
+  const { model1, model2 } = await setupTwoModels(t)
+
+  console.log('\n=== Scenario 1: two instances can run inference simultaneously ===')
+
+  const run1 = await startTrackedRun(model1, 'scenario-1 instance-1', { ...TEST_PARAMS, seed: 101 })
+  const run2 = await startTrackedRun(model2, 'scenario-1 instance-2', { ...TEST_PARAMS, seed: 202 })
+
+  await Promise.all([
+    assertSuccessfulRun(t, run1, 'scenario-1 instance-1'),
+    assertSuccessfulRun(t, run2, 'scenario-1 instance-2')
+  ])
+})
+
+test('diffusion multi-instance - repeated load/unload cycles should remain stable', { timeout: 900000, skip }, async t => {
+  const { downloadedModelName, modelDir } = await setupModelEnvironment(t)
+  const NUM_CYCLES = 3
+
+  console.log('\n=== Scenario 2: repeated load/unload cycles should remain stable ===')
+
+  for (let i = 0; i < NUM_CYCLES; i++) {
+    const model = createModel(modelDir, downloadedModelName, console)
+    await model.load()
+
+    const run = await startTrackedRun(model, `scenario-2 cycle-${i + 1}`, { ...TEST_PARAMS, seed: 300 + i })
+    await assertSuccessfulRun(t, run, `scenario-2 cycle-${i + 1}`)
+
+    await unloadModel(model, `scenario-2 cycle-${i + 1}`)
+    t.pass(`scenario-2 cycle ${i + 1}: load/unload completed`)
+  }
+})
+
 test('diffusion multi-instance - unload instance 2 while instance 1 is running', { timeout: 900000, skip }, async t => {
   const { model1, model2 } = await setupTwoModels(t)
 
-  console.log('\n=== Scenario 1: unload instance 2 while instance 1 is running ===')
+  console.log('\n=== Scenario 3: unload instance 2 while instance 1 is running ===')
 
   try {
-    const run1 = await startTrackedRun(model1, 'scenario-1 instance-1', { ...TEST_PARAMS, seed: 303 })
-    await withTimeout(run1.firstProgress, 120000, 'scenario-1 first progress')
+    const run1 = await startTrackedRun(model1, 'scenario-3 instance-1', { ...TEST_PARAMS, seed: 303 })
+    await withTimeout(run1.firstProgress, 120000, 'scenario-3 first progress')
 
-    console.log('[scenario-1] instance-1 is active, unloading instance-2')
-    await unloadModel(model2, 'scenario-1 instance-2')
+    console.log('[scenario-3] instance-1 is active, unloading instance-2')
+    await unloadModel(model2, 'scenario-3 instance-2')
 
-    await assertSuccessfulRun(t, run1, 'scenario-1 instance-1')
-    t.pass('scenario-1 completed without interrupting the active run')
+    await assertSuccessfulRun(t, run1, 'scenario-3 instance-1')
+    t.pass('scenario-3 completed without interrupting the active run')
   } catch (error) {
-    console.error('[scenario-1] error:', error)
+    console.error('[scenario-3] error:', error)
     throw error
   }
 })
 
-test('diffusion multi-instance - load and run instance 2 while instance 1 is running', { timeout: 900000, skip }, async t => {
-  const { model1, model2 } = await setupTwoModels(t, { loadSecond: false })
+test('diffusion multi-instance - multiple load/unload cycles on one instance while another generates', { timeout: 900000, skip }, async t => {
+  const { downloadedModelName, modelDir } = await setupModelEnvironment(t)
+  const model1 = createModel(modelDir, downloadedModelName, console)
+  const NUM_CYCLES = 3
 
-  console.log('\n=== Scenario 2: load and run instance 2 while instance 1 is running ===')
+  t.teardown(async () => {
+    await unloadModel(model1, 'instance-1 teardown', { suppressError: true })
+  })
+
+  await model1.load()
+
+  console.log('\n=== Scenario 4: multiple load/unload cycles on one instance while another generates ===')
 
   try {
-    const run1 = await startTrackedRun(model1, 'scenario-2 instance-1', { ...TEST_PARAMS, seed: 404 })
-    await withTimeout(run1.firstProgress, 120000, 'scenario-2 first progress')
+    const run1 = await startTrackedRun(model1, 'scenario-4 instance-1', { ...TEST_PARAMS, steps: 50, seed: 404 })
+    await withTimeout(run1.firstProgress, 120000, 'scenario-4 first progress')
 
-    console.log('[scenario-2] loading instance-2 while instance-1 is still running')
-    await model2.load()
+    for (let i = 0; i < NUM_CYCLES; i++) {
+      const model2 = createModel(modelDir, downloadedModelName, console)
+      await model2.load()
+      await unloadModel(model2, `scenario-4 cycle-${i + 1}`)
+      t.pass(`scenario-4 cycle ${i + 1}: load/unload completed while instance-1 generates`)
+    }
 
-    console.log('[scenario-2] starting instance-2 while instance-1 is still running')
-    const run2 = await startTrackedRun(model2, 'scenario-2 instance-2', { ...TEST_PARAMS, seed: 505 })
-
-    await Promise.all([
-      assertSuccessfulRun(t, run1, 'scenario-2 instance-1'),
-      assertSuccessfulRun(t, run2, 'scenario-2 instance-2')
-    ])
+    await assertSuccessfulRun(t, run1, 'scenario-4 instance-1')
   } catch (error) {
-    console.error('[scenario-2] error:', error)
+    console.error('[scenario-4] error:', error)
     throw error
   }
 })
