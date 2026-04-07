@@ -71,7 +71,6 @@ jobs:
       metric_chrfpp: true
       metric_comet: true
       use_pivot: false
-      is_quantized_model: false
       use_batch: false
       hyperparams: 'fast'
 
