@@ -43,7 +43,7 @@ function createEnvironment(): nunjucks.Environment {
 
   env.addFilter("formatShortSignature", (fn: ApiFunction) => {
     const sig = fn.signature.replace(/^function\s+/, "");
-    return sig.replace(/\|/g, "\\|");
+    return sig.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
   });
 
   env.addFilter("stripCodeFence", (value: string) => {
