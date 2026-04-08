@@ -113,7 +113,7 @@ function loadDoctrUrlConfig () {
 
 /**
  * Downloads a single DocTR model if not already cached.
- * On mobile uses presigned S3 URLs from doctr-model-urls.json; falls back to GitHub releases.
+ * On mobile uses URLs from doctr-model-urls.json if available; falls back to GitHub releases.
  * Retries up to 3 times on transient errors (e.g. GitHub Releases HTTP 500).
  * @param {string} filename - Model filename (e.g., 'db_resnet50.onnx')
  * @param {Object|null} urlConfig - Presigned URL config loaded from testAssets (mobile only)
@@ -122,11 +122,11 @@ async function downloadDoctrModel (filename, urlConfig = null) {
   const destPath = path.join(DOCTR_MODELS_DIR, filename)
   if (fs.existsSync(destPath)) return
 
-  // Prefer presigned S3 URL on mobile; fall back to public GitHub release URL
+  // Prefer config URL on mobile; fall back to public GitHub release URL
   const url = (urlConfig && urlConfig[filename]) || DOCTR_MODEL_URLS[filename]
   if (!url) throw new Error(`No download URL for DocTR model: ${filename}`)
 
-  const source = (urlConfig && urlConfig[filename]) ? 'S3 presigned URL' : 'GitHub releases'
+  const source = (urlConfig && urlConfig[filename]) ? 'config URL' : 'GitHub releases'
   console.log(`Downloading ${filename} from ${source}...`)
 
   const fetch = require('bare-fetch')
@@ -154,7 +154,7 @@ async function downloadDoctrModel (filename, urlConfig = null) {
 
 /**
  * Ensures all requested DocTR models are available.
- * On mobile downloads from presigned S3 URLs (doctr-model-urls.json in testAssets);
+ * On mobile downloads from URLs in doctr-model-urls.json (testAssets) if available;
  * on desktop downloads from OnnxTR GitHub releases if not already present.
  * @param {string[]} [models] - Model filenames to ensure. Defaults to all 4 models.
  * @returns {Promise<Object>} Map of model name (without extension) to full path
@@ -181,7 +181,7 @@ async function ensureDoctrModels (models) {
 
 /**
  * Ensures OCR model is available and returns its path
- * On mobile: downloads from presigned URLs bundled in testAssets
+ * On mobile: downloads from URLs bundled in testAssets (ocr-model-urls.json)
  * On desktop: returns the relative path (models should be pre-downloaded by CI)
  *
  * @param {string} modelName - Model name (e.g., 'detector_craft' or 'recognizer_latin')
@@ -257,7 +257,7 @@ async function ensureModelPath (modelName) {
   }
 
   if (!downloadUrl) {
-    throw new Error(`No presigned URL found for model: ${modelName}`)
+    throw new Error(`No download URL found for model: ${modelName}`)
   }
 
   fs.mkdirSync(modelsDir, { recursive: true })
