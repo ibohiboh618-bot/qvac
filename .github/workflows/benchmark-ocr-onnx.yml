@@ -247,16 +247,16 @@ jobs:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
           aws-region: eu-central-1
 
-      - name: Download QVAC OCR models
+      - name: Download QVAC OCR models from HuggingFace
         if: needs.setup.outputs.qvac_needed == 'true'
         working-directory: ${{ env.PKG_DIR }}
         run: |
           mkdir -p models/ocr/rec_dyn
-          aws s3 cp s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/rec_dyn/ models/ocr/rec_dyn/ --recursive --exclude "*" \
-            --include "detector_craft.onnx" \
-            --include "recognizer_latin.onnx"
+          HF_BASE="https://huggingface.co/olyas/easyocr-onnx/resolve/main/rec_dyn"
+          curl -sL "${HF_BASE}/detector_craft.onnx" -o models/ocr/rec_dyn/detector_craft.onnx
+          curl -sL "${HF_BASE}/recognizer_latin.onnx" -o models/ocr/rec_dyn/recognizer_latin.onnx
           echo "Downloaded QVAC OCR models:"
-          ls -la models/ocr/
+          ls -la models/ocr/rec_dyn/
 
       - name: Download OCRBench_v2 dataset
         working-directory: ${{ env.PKG_DIR }}

@@ -318,26 +318,35 @@ jobs:
           npm install
           echo "✅ Test framework dependencies installed"
 
-      # Model provisioning for mobile: presigned URLs so the app can download detector + all
+      # Model provisioning for mobile: HuggingFace URLs so the app can download detector + all
       # recognizers at runtime (same set as desktop integration tests).
-      - name: Configure AWS credentials via OIDC for model download
-        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          aws-region: eu-central-1
-
-      - name: Generate presigned URLs for OCR models
+      - name: Generate HuggingFace URLs for OCR models
         working-directory: ./addon/${{ inputs.workdir || env.PKG_DIR }}
         shell: bash
-        env:
-          MODEL_S3_BUCKET: ${{ secrets.MODEL_S3_BUCKET }}
         run: |
-          echo "🔑 Generating presigned URLs for OCR models..."
-          chmod +x scripts/generate-ocr-presigned-urls.sh
+          echo "Generating HuggingFace URLs for OCR models..."
           OUTPUT_DIR="${GITHUB_WORKSPACE}/addon/${{ inputs.workdir || env.PKG_DIR }}/test/mobile/testAssets"
           mkdir -p "$OUTPUT_DIR"
-          OUTPUT_DIR="$OUTPUT_DIR" ./scripts/generate-ocr-presigned-urls.sh
-          echo "✅ Presigned URLs generated and saved to testAssets"
+          HF_BASE="https://huggingface.co/olyas/easyocr-onnx/resolve/main/rec_dyn"
+          cat > "$OUTPUT_DIR/ocr-model-urls.json" <<URLS
+          {
+            "detectorUrl": "${HF_BASE}/detector_craft.onnx",
+            "recognizer_latin_url": "${HF_BASE}/recognizer_latin.onnx",
+            "recognizer_korean_url": "${HF_BASE}/recognizer_korean.onnx",
+            "recognizer_arabic_url": "${HF_BASE}/recognizer_arabic.onnx",
+            "recognizer_cyrillic_url": "${HF_BASE}/recognizer_cyrillic.onnx",
+            "recognizer_devanagari_url": "${HF_BASE}/recognizer_devanagari.onnx",
+            "recognizer_bengali_url": "${HF_BASE}/recognizer_bengali.onnx",
+            "recognizer_thai_url": "${HF_BASE}/recognizer_thai.onnx",
+            "recognizer_zh_sim_url": "${HF_BASE}/recognizer_zh_sim.onnx",
+            "recognizer_zh_tra_url": "${HF_BASE}/recognizer_zh_tra.onnx",
+            "recognizer_japanese_url": "${HF_BASE}/recognizer_japanese.onnx",
+            "recognizer_tamil_url": "${HF_BASE}/recognizer_tamil.onnx",
+            "recognizer_telugu_url": "${HF_BASE}/recognizer_telugu.onnx",
+            "recognizer_kannada_url": "${HF_BASE}/recognizer_kannada.onnx"
+          }
+          URLS
+          echo "HuggingFace URLs saved to testAssets"
           cat "$OUTPUT_DIR/ocr-model-urls.json"
 
       - name: Generate presigned URLs for DocTR models

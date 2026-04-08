@@ -10,19 +10,14 @@ This directory contains NMT models required for C++ unit tests.
 
 ## Setup Options
 
-### Option 1: Using HyperdriveDL (Recommended - No AWS Needed)
-
-Run the JS examples to download models via peer-to-peer network, then create symlinks:
+### Option 1: Download from HuggingFace (Recommended)
 
 ```bash
-# Step 1: Download models by running examples
-bare examples/indictrans.js          # Downloads IndicTrans model
-
-# Step 2: Create symlinks for C++ tests
+# Step 1: Download model
 mkdir -p models/unit-test
-ln -sf ../ggml-indictrans2-en-indic-dist-200M.bin models/unit-test/ggml-indictrans2-en-indic-dist-200M-q4_0.bin
+curl -sL "https://huggingface.co/olyas/indictrans2-ggml/resolve/main/ggml-indictrans2-en-indic-dist-200M-q4_0.bin" -o models/unit-test/ggml-indictrans2-en-indic-dist-200M-q4_0.bin
 
-# Step 3: Run tests
+# Step 2: Run tests
 ./build/addon/tests/addon-test
 ```
 

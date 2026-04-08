@@ -2,19 +2,18 @@
 
 const fs = require('bare-fs')
 const path = require('bare-path')
-const { QVACRegistryClient } = require('@qvac/registry-client')
 
 const DEFAULT_DISK_PATH = './models/ocr'
 
+const HF_BASE_URL = 'https://huggingface.co/olyas/easyocr-onnx/resolve/main/rec_dyn'
+
 const OCR_MODELS = {
   detector: {
-    path: 'qvac_models_compiled/ocr/2026-02-12/rec_512/detector_craft.onnx',
-    source: 's3',
+    url: `${HF_BASE_URL}/detector_craft.onnx`,
     filename: 'detector_craft.onnx'
   },
   recognizer_latin: {
-    path: 'qvac_models_compiled/ocr/2026-02-12/rec_dyn/recognizer_latin.onnx',
-    source: 's3',
+    url: `${HF_BASE_URL}/recognizer_latin.onnx`,
     filename: 'recognizer_latin.onnx'
   }
 }
@@ -33,34 +32,24 @@ async function ensureModels (diskPath) {
 
   fs.mkdirSync(diskPath, { recursive: true })
 
-  console.log('Downloading OCR models from registry...')
-  const client = new QVACRegistryClient()
+  console.log('Downloading OCR models from HuggingFace...')
+  const fetch = require('bare-fetch')
 
-  try {
-    await client.ready()
-
-    if (!fs.existsSync(detectorPath)) {
-      console.log(`  Downloading ${OCR_MODELS.detector.filename}...`)
-      await client.downloadModel(OCR_MODELS.detector.path, OCR_MODELS.detector.source, {
-        outputFile: detectorPath,
-        timeout: 60000
-      })
-      console.log(`  Downloaded: ${OCR_MODELS.detector.filename}`)
+  for (const [key, model] of [['detector', OCR_MODELS.detector], ['recognizer_latin', OCR_MODELS.recognizer_latin]]) {
+    const outPath = key === 'detector' ? detectorPath : recognizerPath
+    if (fs.existsSync(outPath)) {
+      console.log(`  ${model.filename} already exists.`)
+      continue
     }
-
-    if (!fs.existsSync(recognizerPath)) {
-      console.log(`  Downloading ${OCR_MODELS.recognizer_latin.filename}...`)
-      await client.downloadModel(OCR_MODELS.recognizer_latin.path, OCR_MODELS.recognizer_latin.source, {
-        outputFile: recognizerPath,
-        timeout: 60000
-      })
-      console.log(`  Downloaded: ${OCR_MODELS.recognizer_latin.filename}`)
-    }
-
-    console.log('Models ready.')
-  } finally {
-    await client.close()
+    console.log(`  Downloading ${model.filename}...`)
+    const response = await fetch(model.url)
+    if (!response.ok) throw new Error(`HTTP ${response.status} downloading ${model.filename}`)
+    const buffer = await response.arrayBuffer()
+    fs.writeFileSync(outPath, Buffer.from(buffer))
+    console.log(`  Downloaded: ${model.filename}`)
   }
+
+  console.log('Models ready.')
 
   return { detectorPath, recognizerPath }
 }

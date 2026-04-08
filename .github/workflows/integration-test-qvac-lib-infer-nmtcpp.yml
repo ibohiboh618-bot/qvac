@@ -162,12 +162,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          aws-region: eu-central-1
-
       - name: Download Bergamot models from Firefox CDN
         working-directory: ${{ inputs.workdir || env.PKG_DIR }}
         shell: bash
@@ -224,13 +218,13 @@ jobs:
           echo "Bergamot model directories:"
           ls -la model/bergamot/
 
-      - name: Download IndicTrans model from S3
+      - name: Download IndicTrans model from HuggingFace
         working-directory: ${{ inputs.workdir || env.PKG_DIR }}
         shell: bash
         run: |
-          echo "Downloading IndicTrans en-indic model from S3..."
+          echo "Downloading IndicTrans en-indic model from HuggingFace..."
           mkdir -p model/indictrans
-          aws s3 cp "s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ggml/indictrans2/q4_0/ggml-indictrans2-en-indic-dist-200M/2026-01-01/ggml-indictrans2-en-indic-dist-200M-q4_0.bin" model/indictrans/
+          curl -sL "https://huggingface.co/olyas/indictrans2-ggml/resolve/main/ggml-indictrans2-en-indic-dist-200M-q4_0.bin" -o model/indictrans/ggml-indictrans2-en-indic-dist-200M-q4_0.bin
           echo "IndicTrans model files:"
           ls -la model/indictrans/
 

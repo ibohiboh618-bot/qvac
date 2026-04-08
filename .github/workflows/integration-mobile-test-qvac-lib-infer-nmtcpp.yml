@@ -361,75 +361,40 @@ jobs:
           echo "   Both Opus and Bergamot backends will be tested"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          aws-region: us-west-2
-
-      - name: Generate IndicTrans Model URLs
-        working-directory: ./monorepo/${{ inputs.workdir || env.PKG_DIR }}
-        env:
-          AWS_REGION: eu-central-1
-          MODEL_S3_BUCKET: ${{ secrets.MODEL_S3_BUCKET }}
-        run: |
-          echo "🔑 Generating IndicTrans model URLs for mobile tests..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          # Make the script executable
-          chmod +x scripts/generate-indictrans-presigned-urls.sh
-
-          # Generate presigned URL for IndicTrans model
-          # This will export INDICTRANS_MODEL_URL to GITHUB_ENV
-          ./scripts/generate-indictrans-presigned-urls.sh
-
-          echo ""
-          echo "✅ IndicTrans model URL generated and exported"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
       - name: Bundle Model URLs in config files for APK to access
         working-directory: ./monorepo/${{ inputs.workdir || env.PKG_DIR }}
         env:
           BERGAMOT_MODEL_URL: ${{ env.BERGAMOT_MODEL_URL }}
           BERGAMOT_VOCAB_URL: ${{ env.BERGAMOT_VOCAB_URL }}
-          INDICTRANS_MODEL_URL: ${{ env.INDICTRANS_MODEL_URL }}
         run: |
-          echo "📝 Creating model URL config files for mobile app bundling..."
-          echo "🔍 Debug: Checking environment variables..."
-          echo "   BERGAMOT_MODEL_URL: ${BERGAMOT_MODEL_URL:-NOTSET}"
-          echo "   BERGAMOT_VOCAB_URL: ${BERGAMOT_VOCAB_URL:-NOTSET}"
-          echo "   INDICTRANS_MODEL_URL: ${INDICTRANS_MODEL_URL:-NOTSET}"
+          echo "Creating model URL config files for mobile app bundling..."
 
           # Create testAssets directory in the addon
           mkdir -p test/mobile/testAssets
 
           # Bundle Bergamot URLs
           if [ -n "${BERGAMOT_MODEL_URL:-}" ] && [ -n "${BERGAMOT_VOCAB_URL:-}" ]; then
-            echo "✅ Creating Bergamot config..."
+            echo "Creating Bergamot config..."
             echo "{" > test/mobile/testAssets/bergamot-urls.json
             echo "  \"modelUrl\": \"${BERGAMOT_MODEL_URL}\"," >> test/mobile/testAssets/bergamot-urls.json
             echo "  \"vocabUrl\": \"${BERGAMOT_VOCAB_URL}\"" >> test/mobile/testAssets/bergamot-urls.json
             echo "}" >> test/mobile/testAssets/bergamot-urls.json
-            echo "   ✅ Bergamot URLs bundled"
+            echo "   Bergamot URLs bundled"
             cat test/mobile/testAssets/bergamot-urls.json
           else
-            echo "   ⚠️  Bergamot URLs not available"
+            echo "   Bergamot URLs not available"
           fi
 
-          # Bundle IndicTrans URL
-          if [ -n "${INDICTRANS_MODEL_URL:-}" ]; then
-            echo "✅ Creating IndicTrans config..."
-            echo "{" > test/mobile/testAssets/indictrans-model-urls.json
-            echo "  \"modelUrl\": \"${INDICTRANS_MODEL_URL}\"" >> test/mobile/testAssets/indictrans-model-urls.json
-            echo "}" >> test/mobile/testAssets/indictrans-model-urls.json
-            echo "   ✅ IndicTrans URL bundled"
-            cat test/mobile/testAssets/indictrans-model-urls.json
-          else
-            echo "   ⚠️  IndicTrans URL not available"
-          fi
+          # Bundle IndicTrans URL (public HuggingFace)
+          echo "Creating IndicTrans config..."
+          echo "{" > test/mobile/testAssets/indictrans-model-urls.json
+          echo "  \"modelUrl\": \"https://huggingface.co/olyas/indictrans2-ggml/resolve/main/ggml-indictrans2-en-indic-dist-200M-q4_0.bin\"" >> test/mobile/testAssets/indictrans-model-urls.json
+          echo "}" >> test/mobile/testAssets/indictrans-model-urls.json
+          echo "   IndicTrans URL bundled"
+          cat test/mobile/testAssets/indictrans-model-urls.json
 
           echo ""
-          echo "📂 testAssets directory contents:"
+          echo "testAssets directory contents:"
           ls -la test/mobile/testAssets/
 
       - name: Pack addon

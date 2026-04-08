@@ -404,17 +404,12 @@ jobs:
           name: prebuilds
           path: prebuilds
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          aws-region: eu-central-1
-
-      - name: Download onnx model files
+      - name: Download onnx model files from HuggingFace
         run: |
           mkdir -p models/ocr
-          aws s3 cp s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/2025-12-16/recognizer_latin.onnx models/ocr/recognizer_latin.onnx
-          aws s3 cp s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/2025-04-25/detector_craft.onnx models/ocr/detector_craft.onnx
+          HF_BASE="https://huggingface.co/olyas/easyocr-onnx/resolve/main/rec_dyn"
+          curl -sL "${HF_BASE}/recognizer_latin.onnx" -o models/ocr/recognizer_latin.onnx
+          curl -sL "${HF_BASE}/detector_craft.onnx" -o models/ocr/detector_craft.onnx
 
       - name: Upload models artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0

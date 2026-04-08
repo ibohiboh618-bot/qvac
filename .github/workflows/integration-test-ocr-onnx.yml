@@ -147,18 +147,19 @@ jobs:
 
       # Required for all OCR integration tests (param-validation, lifecycle, image-formats,
       # full-ocr-suite, etc.). Provides detector + all recognizers under rec_dyn.
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          aws-region: eu-central-1
-
-      - name: Download onnx model files
+      - name: Download onnx model files from HuggingFace
         working-directory: ${{ inputs.workdir || env.PKG_DIR }}
         shell: bash
         run: |
           mkdir -p models/ocr/rec_dyn
-          aws s3 cp s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/rec_dyn/ models/ocr/rec_dyn/ --recursive
+          HF_BASE="https://huggingface.co/olyas/easyocr-onnx/resolve/main/rec_dyn"
+          MODELS="detector_craft recognizer_arabic recognizer_bengali recognizer_cyrillic recognizer_devanagari recognizer_japanese recognizer_kannada recognizer_korean recognizer_latin recognizer_tamil recognizer_telugu recognizer_thai recognizer_zh_sim recognizer_zh_tra"
+          for model in $MODELS; do
+            echo "Downloading ${model}.onnx..."
+            curl -sL "${HF_BASE}/${model}.onnx" -o "models/ocr/rec_dyn/${model}.onnx"
+          done
+          echo "Downloaded OCR models:"
+          ls -lh models/ocr/rec_dyn/
 
       - name: Run integration test
         working-directory: ${{ inputs.workdir || env.PKG_DIR }}
