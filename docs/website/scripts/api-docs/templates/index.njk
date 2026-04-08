@@ -1,0 +1,23 @@
+{#- API index page with function summary table.
+    Context: { functions: ApiFunction[], versionLabel: string }
+-#}
+---
+title: "@qvac/sdk"
+titleStyle: code
+description: API reference — {{ versionLabel }}
+---
+
+## Overview
+
+`@qvac/sdk` npm package exposes a function-centric, typed JS API.
+
+## Functions
+
+| Function | Summary | Signature |
+| --- | --- | --- |
+{% for fn in functions -%}
+| [`{{ fn.name }}()`](./{{ fn.name }}) | {{ fn.description | firstSentence | escapeTable }} | `{{ fn | formatShortSignature }}` |
+{% endfor %}
+## Errors
+
+See [Errors](./errors) for the full list of SDK error codes.

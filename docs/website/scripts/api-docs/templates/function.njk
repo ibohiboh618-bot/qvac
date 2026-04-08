@@ -1,0 +1,106 @@
+{#- Per-function API reference page.
+    Context: { fn: ApiFunction }
+
+    The macro must be defined before it is called.
+-#}
+{%- macro renderExpandedTypes(types, depth) -%}
+{% for expanded in types -%}
+{%- set clampedDepth = depth if depth <= 5 else 5 -%}
+{%- set hashes = "#" * clampedDepth %}
+
+{{ hashes }} `{{ expanded.typeName }}`
+
+| Field | Type | Required? | Description |
+| --- | --- | :---: | --- |
+{% for f in expanded.fields -%}
+| `{{ f.name }}` | `{{ f.type | escapeTable }}` | {{ "✓" if f.required else "✗" }} | {{ (f.description or "—") | escapeTable }} |
+{% endfor -%}
+{% if expanded.children.length > 0 -%}
+{{ renderExpandedTypes(expanded.children, depth + 1) }}
+{%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}
+
+{%- set desc = (fn.description or "No description available") | replace('"', '\\"') | replace('undefined', '—') -%}
+---
+title: "{{ fn.name }}( )"
+titleStyle: code
+description: "{{ desc }}"
+---
+
+{% if fn.deprecated -%}
+<Callout type="warn" title="Deprecated">
+{{ fn.deprecated }}
+</Callout>
+
+{% endif -%}
+```typescript
+{{ fn.signature }}
+```
+{% if fn.parameters.length > 0 %}
+
+## Parameters
+
+| Name | Type | Required? | Description |
+| --- | --- | :---: | --- |
+{% for p in fn.parameters -%}
+{%- set typeStr = p.type | escapeTable -%}
+{%- set hasExpansion = false -%}
+{%- for e in fn.expandedParams -%}
+{%- if e.typeName | lower == p.type | lower -%}
+{%- set hasExpansion = true -%}
+{%- endif -%}
+{%- endfor -%}
+{%- if hasExpansion -%}
+{%- set typeCell = "[`" + typeStr + "`](#" + (p.type | slugify) + ")" -%}
+{%- else -%}
+{%- set typeCell = "`" + typeStr + "`" -%}
+{%- endif -%}
+| `{{ p.name }}` | {{ typeCell }} | {{ "✓" if p.required else "✗" }} | {{ (p.description or "No description") | escapeTable }} |
+{% endfor -%}
+{%- if fn.expandedParams.length > 0 %}
+{{ renderExpandedTypes(fn.expandedParams, 3) }}
+{%- endif -%}
+{%- endif %}
+
+## Returns
+
+```typescript
+{{ fn.returns.type or "unknown" }}
+```
+
+{{ (fn.returns.description or "No description available") | replace('undefined', '—') }}
+{%- if fn.returnFields.length > 0 %}
+
+| Field | Type | Description |
+| --- | --- | --- |
+{% for f in fn.returnFields -%}
+| `{{ f.name }}` | `{{ f.type | escapeTable }}` | {{ (f.description or "—") | escapeTable }} |
+{% endfor -%}
+{%- endif -%}
+{%- if fn.expandedReturns.length > 0 %}
+
+{{ renderExpandedTypes(fn.expandedReturns, 3) }}
+{%- endif %}
+
+{% if fn.throws and fn.throws.length > 0 -%}
+## Throws
+
+| Error | When |
+| --- | --- |
+{% for t in fn.throws -%}
+| `{{ t.error }}` | {{ t.description }} |
+{% endfor %}
+{% endif -%}
+{%- if fn.examples and fn.examples.length > 0 -%}
+## Example
+
+{% for ex in fn.examples -%}
+```typescript
+{{ ex | stripCodeFence }}
+```
+{% if not loop.last %}
+
+{% endif -%}
+{% endfor -%}
+{%- endif -%}
