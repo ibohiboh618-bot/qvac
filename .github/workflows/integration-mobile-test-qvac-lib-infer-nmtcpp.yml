@@ -397,6 +397,12 @@ jobs:
           echo "testAssets directory contents:"
           ls -la test/mobile/testAssets/
 
+      - name: Configure AWS credentials for Device Farm
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-west-2
+
       - name: Pack addon
         working-directory: ./monorepo/${{ inputs.workdir || env.PKG_DIR }}
         run: |
