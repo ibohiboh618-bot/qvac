@@ -11,10 +11,9 @@ on:
         type: string
         default: "."
       project-directory:
-        description: "Root project directory (where package.json lives). Defaults to repo root."
-        required: false
+        description: "Root project directory (where package.json lives)"
+        required: true
         type: string
-        default: "."
       platforms:
         description: 'JSON array of runner labels (e.g., ["ubuntu-latest"] or ["ai-run-linux-gpu", "macos-latest-xlarge"])'
         required: true
@@ -28,6 +27,15 @@ on:
         description: 'Filter tests by category or testId prefix (comma-separated, e.g., "model,completion")'
         required: false
         type: string
+      test-version:
+        description: "Git ref to checkout (branch, tag, or SHA). Defaults to trigger ref."
+        required: false
+        type: string
+      cache-models:
+        description: "Cache downloaded models between runs"
+        required: false
+        type: boolean
+        default: true
     secrets:
       MQTT_PROTOCOL:
         required: true
@@ -50,6 +58,9 @@ on:
       PAT_TOKEN:
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   test-desktop:
     strategy:
@@ -57,6 +68,7 @@ jobs:
         os: ${{ fromJSON(inputs.platforms) }}
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    environment: release
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -66,16 +78,17 @@ jobs:
       MQTT_USERNAME: ${{ secrets.MQTT_USERNAME }}
       MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.test-version || github.event.pull_request.head.sha || github.sha }}
           token: ${{ secrets.PAT_TOKEN }}
+          sparse-checkout: ${{ inputs.project-directory }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
         with:
           node-version: 22
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # 2.2.0
         with:
           bun-version: latest
 
@@ -96,10 +109,9 @@ jobs:
             `//npm.pkg.github.com/:_authToken=${process.env.PAT_TOKEN}`
           ];
           const npmrc = lines.join('\n');
-          const projectDir = '${{ inputs.project-directory }}';
-          const target = projectDir === '.' ? '.npmrc' : path.join(projectDir, '.npmrc');
+          const target = path.join('${{ inputs.project-directory }}', '.npmrc');
           fs.writeFileSync(target, npmrc, 'utf8');
-          console.log(`✅ .npmrc configured at ${target}`);
+          console.log(`.npmrc configured at ${target}`);
 
       - name: Setup MQTT certificates
         shell: node {0}
@@ -115,23 +127,27 @@ jobs:
           const certsDir = path.join(os.tmpdir(), 'mqtt-certs');
           fs.mkdirSync(certsDir, { recursive: true });
 
-          if (process.env.CA_CERT) {
+          const caCert = (process.env.CA_CERT || '').trim();
+          const clientCert = (process.env.CLIENT_CERT || '').trim();
+          const clientKey = (process.env.CLIENT_KEY || '').trim();
+
+          if (caCert) {
             const caPath = path.join(certsDir, 'ca.crt');
-            fs.writeFileSync(caPath, process.env.CA_CERT, 'utf8');
+            fs.writeFileSync(caPath, caCert, 'utf8');
             fs.appendFileSync(process.env.GITHUB_ENV, `MQTT_CA_PATH=${caPath}\n`, 'utf8');
             console.log('✅ CA certificate written');
           }
 
-          if (process.env.CLIENT_CERT) {
+          if (clientCert) {
             const certPath = path.join(certsDir, 'client.crt');
-            fs.writeFileSync(certPath, process.env.CLIENT_CERT, 'utf8');
+            fs.writeFileSync(certPath, clientCert, 'utf8');
             fs.appendFileSync(process.env.GITHUB_ENV, `MQTT_CERT_PATH=${certPath}\n`, 'utf8');
             console.log('✅ Client certificate written');
           }
 
-          if (process.env.CLIENT_KEY) {
+          if (clientKey) {
             const keyPath = path.join(certsDir, 'client.key');
-            fs.writeFileSync(keyPath, process.env.CLIENT_KEY, 'utf8');
+            fs.writeFileSync(keyPath, clientKey, 'utf8');
             fs.appendFileSync(process.env.GITHUB_ENV, `MQTT_KEY_PATH=${keyPath}\n`, 'utf8');
             console.log('✅ Client key written');
           }
@@ -163,12 +179,10 @@ jobs:
           const projectDir = '${{ inputs.project-directory }}';
           const consumerDir = '${{ inputs.working-directory }}';
           if (consumerDir !== projectDir) {
-            const source = projectDir === '.' ? '.npmrc' : path.join(projectDir, '.npmrc');
+            const source = path.join(projectDir, '.npmrc');
             const npmrcContent = fs.readFileSync(source, 'utf8');
             fs.writeFileSync(path.join(consumerDir, '.npmrc'), npmrcContent, 'utf8');
-            console.log('✅ .npmrc copied to consumer directory');
-          } else {
-            console.log('ℹ️  Consumer directory is project root, .npmrc already present');
+            console.log('.npmrc copied to consumer directory');
           }
 
       - name: Install dependencies (consumer)
@@ -178,6 +192,42 @@ jobs:
       - name: Build project (consumer)
         working-directory: ${{ inputs.working-directory }}
         run: bun run build
+
+      - name: Configure SDK cache directory
+        shell: node {0}
+        run: |
+          const fs = require('fs');
+          const path = require('path');
+          const cacheDir = path.resolve('${{ inputs.working-directory }}', '.qvac-cache');
+          fs.mkdirSync(cacheDir, { recursive: true });
+          const config = { cacheDirectory: cacheDir };
+          const configPath = path.resolve('${{ inputs.working-directory }}', 'qvac.config.json');
+          fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+          fs.appendFileSync(process.env.GITHUB_ENV, `QVAC_CONFIG_PATH=${configPath}\n`);
+          console.log(`SDK cache dir: ${cacheDir}`);
+          console.log(`Config written to: ${configPath}`);
+
+      - name: Restore models cache
+        id: models-cache
+        if: inputs.cache-models != false
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ inputs.working-directory }}/.qvac-cache
+          key: qvac-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
+
+      - name: Bootstrap (download models)
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        run: npx qvac-test run:bootstrap:desktop --config=.
+
+      # Save right after bootstrap. On parallel runners, first to finish reserves the key;
+      # others get a non-fatal "unable to reserve" warning which is expected.
+      - name: Save models cache
+        if: steps.models-cache.outputs.cache-hit != 'true' && inputs.cache-models != false
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ inputs.working-directory }}/.qvac-cache
+          key: qvac-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
 
       - name: Generate runId
         id: runid
@@ -202,7 +252,7 @@ jobs:
 
       - name: Run tests (consumer + producer)
         working-directory: ${{ inputs.working-directory }}
-        timeout-minutes: 15
+        timeout-minutes: 45
         shell: node {0}
         run: |
           (async () => {
@@ -212,18 +262,14 @@ jobs:
             const filter = '${{ inputs.filter }}';
             const filterArgs = filter ? ['--filter=' + filter] : [];
 
-            const logStream = fs.createWriteStream('consumer.log', { flags: 'w' });
             const consumer = spawn('npx', [
               'qvac-test', 'run:consumer:desktop',
               '--runId=${{ steps.runid.outputs.runId }}',
               '--config=.'
-            ], { detached: false, shell: true });
+            ], { detached: false, shell: true, stdio: 'inherit' });
 
             let consumerClosed = false;
             let consumerExitCode = 0;
-
-            consumer.stdout.pipe(logStream, { end: false });
-            consumer.stderr.pipe(logStream, { end: false });
 
             consumer.on('exit', (code, signal) => {
               if (code !== 0 || signal) {
@@ -253,12 +299,6 @@ jobs:
               console.log(`✅ Consumer running (PID: ${consumer.pid})`);
             } else {
               console.log('❌ Consumer died immediately');
-              logStream.end();
-              await new Promise(resolve => logStream.on('finish', resolve));
-              if (fs.existsSync('consumer.log')) {
-                console.log('\n--- Consumer log ---');
-                console.log(fs.readFileSync('consumer.log', 'utf8'));
-              }
               process.exit(1);
             }
 
@@ -303,9 +343,6 @@ jobs:
               ]);
             }
 
-            logStream.end();
-            await new Promise(resolve => logStream.on('finish', resolve));
-            console.log('📄 Consumer log written to consumer.log');
 
             const exitCode = producerExit || consumerExitCode;
             if (exitCode !== 0) {
@@ -350,7 +387,7 @@ jobs:
 
       - name: Upload consumer logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
           name: consumer-log-${{ steps.runid.outputs.platform }}
           path: ${{ inputs.working-directory }}/consumer.log
@@ -358,15 +395,15 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
           name: results-${{ steps.runid.outputs.platform }}-${{ github.run_number }}
-          path: ${{ inputs.working-directory }}/reports/results-*.json
+          path: ${{ inputs.working-directory }}/reports/
           retention-days: 30
 
       - name: Upload baseline (main/develop only)
         if: always() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
           name: baseline-${{ steps.runid.outputs.platform }}
           path: ${{ inputs.working-directory }}/reports/results-*.json
@@ -387,17 +424,20 @@ jobs:
     needs: test-desktop
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    environment: release
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
         with:
+          ref: ${{ inputs.test-version || github.event.pull_request.head.sha || github.sha }}
           token: ${{ secrets.PAT_TOKEN }}
+          sparse-checkout: ${{ inputs.project-directory }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
         with:
           node-version: 22
 
@@ -415,8 +455,7 @@ jobs:
             `//npm.pkg.github.com/:_authToken=${process.env.PAT_TOKEN}`
           ];
           const npmrc = lines.join('\n');
-          const projectDir = '${{ inputs.project-directory }}';
-          const target = projectDir === '.' ? '.npmrc' : path.join(projectDir, '.npmrc');
+          const target = path.join('${{ inputs.project-directory }}', '.npmrc');
           fs.writeFileSync(target, npmrc, 'utf8');
 
       - name: Copy .npmrc to consumer directory
@@ -427,7 +466,7 @@ jobs:
           const projectDir = '${{ inputs.project-directory }}';
           const consumerDir = '${{ inputs.working-directory }}';
           if (consumerDir !== projectDir) {
-            const source = projectDir === '.' ? '.npmrc' : path.join(projectDir, '.npmrc');
+            const source = path.join(projectDir, '.npmrc');
             const npmrcContent = fs.readFileSync(source, 'utf8');
             fs.writeFileSync(path.join(consumerDir, '.npmrc'), npmrcContent, 'utf8');
           }
@@ -437,7 +476,7 @@ jobs:
         run: npm install --install-links --ignore-scripts
 
       - name: Download current results
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
         with:
           path: ${{ inputs.working-directory }}/current-results/
           pattern: results-*
@@ -445,7 +484,7 @@ jobs:
 
       - name: Download baseline results
         id: download-baseline
-        uses: dawidd6/action-download-artifact@v6
+        uses: dawidd6/action-download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
         continue-on-error: true
         with:
           workflow: test-desktop-sdk.yml
@@ -568,7 +607,7 @@ jobs:
           fs.writeFileSync('comment.md', comment, 'utf8');
 
       - name: Comment on PR
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # 8.0.0
         with:
           script: |
             const fs = require('fs');

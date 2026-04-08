@@ -1,5 +1,9 @@
 # Notify docs owner when a release branch is pushed (e.g. after merge).
-# Docs live in the monorepo at packages/docs; deploy is via PR main → docs-production.
+# Deploy is via PR main → docs-production.
+#
+# DISABLED: This workflow floods the issues tab in a monorepo with frequent
+# releases. The notify job is gated with `if: false` until we redesign the
+# notification strategy (e.g. batch summary, Slack, or PR comment).
 name: Docs Deploy Notify
 
 on:
@@ -15,12 +19,13 @@ on:
 
 jobs:
   notify:
+    if: false # DISABLED — see comment at top of file
     runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:
       - name: Ensure docs-deploy label exists
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # 8.0.0
         with:
           script: |
             try {
@@ -42,7 +47,7 @@ jobs:
             }
 
       - name: Notify docs owner
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # 8.0.0
         env:
           NOTIFY_USER: ${{ secrets.DOCS_DEPLOY_NOTIFY_USER }}
           TEST_REF: ${{ github.event.inputs.test_ref }}
