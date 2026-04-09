@@ -2,71 +2,87 @@
 
 Brain-Computer Interface (BCI) neural signal transcription addon for qvac, powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
 
-This package adapts the whisper.cpp inference engine to accept multi-channel neural signals (e.g., from microelectrode arrays) instead of audio, and produces text transcriptions. It mirrors the JS API surface of `@qvac/transcription-whispercpp` but replaces audio input with neural signal input.
+Transcribes multi-channel neural signals (e.g., 512-channel microelectrode array recordings) into text using a BCI-trained whisper model running natively via GGML. Output matches the Python BrainWhisperer reference model exactly.
 
 ## Architecture
 
 ```
-Neural Signals (multi-channel float arrays)
+Neural Signal (512ch, 20ms bins)
     │
     ▼
-┌─────────────────────────┐
-│   NeuralProcessor (C++) │  ← Gaussian smoothing, channel projection
-│   - Smooth per channel  │
-│   - Project to 1D       │
-│   - Resample to 16kHz   │
-└────────────┬────────────┘
-             │  audio-like waveform
-             ▼
-┌─────────────────────────┐
-│   whisper.cpp (vcpkg)   │  ← Unmodified whisper.cpp backend
-│   - Mel spectrogram     │
-│   - Encoder             │
-│   - Decoder             │
-└────────────┬────────────┘
-             │
-             ▼
-        Text output
+┌──────────────────────────────┐
+│   NeuralProcessor (C++)      │
+│   - Gaussian smoothing       │  std=2, kernel=100
+│   - Day-specific projection  │  low-rank (A·B) + month + softsign
+│   - Pad to 3000 frames       │  mel-major layout for whisper.cpp
+└──────────────┬───────────────┘
+               │  mel features (512 × 3000)
+               ▼
+┌──────────────────────────────┐
+│   whisper.cpp (patched)      │
+│   - conv1 (k=7, 512→384)    │  BCI-trained embedder weights
+│   - conv2 (k=3, stride=2)   │
+│   - Positional encoding      │  learned time PE + sinusoidal day PE
+│   - 6-layer encoder          │  windowed attention (w=57) on layers 0–3
+│   - 4-layer decoder (LoRA)   │  beam search, length_penalty=0.14
+└──────────────┬───────────────┘
+               │
+               ▼
+          Text output
 ```
 
-The neural signal processing pipeline:
-1. **Gaussian smoothing** — reduces noise in neural firing rate estimates (per-channel 1D convolution with a Gaussian kernel, matching the BrainWhisperer preprocessing)
-2. **Channel projection** — averages across all neural channels to produce a single-channel waveform
-3. **Resampling** — upsamples from neural time resolution (50 Hz, 20ms bins) to audio sample rate (16kHz) via linear interpolation
-4. **Normalization** — scales output to [-0.3, 0.3] amplitude range
+## Results
+
+Native GGML inference matches the Python BrainWhisperer reference on all test samples:
+
+| Sample | Ground Truth | GGML Native Output | Python Reference |
+|--------|-------------|-------------------|-----------------|
+| 0 | "You can see the code at this point as well." | "You can see the good at this point as well." | "you can see the good at this point as well" |
+| 1 | "How does it keep the cost down?" | "How does it keep the cost said?" | "how does it keep the cost said" |
+| 2 | "Not too controversial." | "Not too controversial." | "not too controversial" |
+| 3 | "The jury and a judge work together on it." | "The jury and a judge work together on it." | "the jury and a judge work together on it" |
+| 4 | "Were quite vocal about it." | "We're quite vocal about it." | "we're quite vocal about it" |
 
 ## Neural Signal Format
 
 Binary files with the following layout:
 
-| Offset | Type    | Description          |
-|--------|---------|----------------------|
-| 0      | uint32  | Number of timesteps  |
-| 4      | uint32  | Number of channels   |
+| Offset | Type      | Description                                          |
+|--------|-----------|------------------------------------------------------|
+| 0      | uint32    | Number of timesteps                                  |
+| 4      | uint32    | Number of channels                                   |
 | 8      | float32[] | Feature data (row-major: `features[t * channels + c]`) |
 
-Each timestep represents a 20ms bin of neural activity. Channels correspond to individual electrodes in a microelectrode array (e.g., 256 or 512 channels).
+Each timestep represents a 20ms bin of neural activity. Channels correspond to individual electrodes in a microelectrode array (typically 512 channels).
 
 ## Installation
 
 ```bash
 cd packages/bci-whispercpp
 npm install
-npm run build
+VCPKG_ROOT=/path/to/vcpkg npm run build
 ```
 
 ### Prerequisites
 
 - **Bare runtime** >= 1.19.0
 - **CMake** >= 3.25
-- **vcpkg** (configured via `vcpkg-configuration.json`)
-- A whisper.cpp GGML model file (e.g., `ggml-tiny.en.bin`)
+- **vcpkg** with `VCPKG_ROOT` environment variable set
 
-### Download Models
+### Model Conversion
+
+Convert a trained BrainWhisperer checkpoint to GGML format:
 
 ```bash
-./scripts/download-models.sh
+python3 scripts/convert-model.py \
+  --checkpoint /path/to/epoch=93-val_wer=0.0910.ckpt \
+  --output models/ggml-bci.bin \
+  --day-idx 1 \
+  --window-size 57 \
+  --last-window-layer 3
 ```
+
+The converter merges LoRA weights, extracts the BCI encoder (conv1 k=7, 6 transformer layers), and writes the GGML model with BCI-specific header fields (`n_audio_conv1_kernel`, `n_audio_window_size`, `n_audio_last_window_layer`).
 
 ## Usage
 
@@ -77,9 +93,10 @@ const { BCIInterface } = require('@qvac/bci-whispercpp/bci')
 const binding = require('@qvac/bci-whispercpp/binding')
 
 const config = {
-  contextParams: { model: '/path/to/ggml-tiny.en.bin' },
+  contextParams: { model: '/path/to/ggml-bci.bin' },
   whisperConfig: { language: 'en', temperature: 0.0 },
-  miscConfig: { caption_enabled: false }
+  miscConfig: { caption_enabled: false },
+  bciConfig: { day_idx: 1 }
 }
 
 const onOutput = (addon, event, jobId, data, error) => {
@@ -91,11 +108,11 @@ const onOutput = (addon, event, jobId, data, error) => {
 const model = new BCIInterface(binding, config, onOutput)
 await model.activate()
 
-// Batch mode
+// Batch mode — pass entire signal at once
 const neuralData = fs.readFileSync('signal.bin')
 await model.runJob({ input: new Uint8Array(neuralData) })
 
-// Streaming mode
+// Streaming mode — send chunks then signal end
 await model.append({ type: 'neural', input: chunk1 })
 await model.append({ type: 'neural', input: chunk2 })
 await model.append({ type: 'end of job' })
@@ -103,47 +120,18 @@ await model.append({ type: 'end of job' })
 await model.destroyInstance()
 ```
 
-### High-level API (BCIWhispercpp)
-
-```javascript
-const { BCIWhispercpp, computeWER } = require('@qvac/bci-whispercpp')
-
-const bci = new BCIWhispercpp(
-  { modelPath: '/path/to/ggml-tiny.en.bin' },
-  { whisperConfig: { language: 'en' } }
-)
-
-await bci.load()
-
-// Transcribe a file
-const result = await bci.transcribeFile('signal.bin')
-console.log(result.text)
-
-// Compute WER
-const wer = computeWER(result.text, 'expected transcription')
-console.log(`WER: ${(wer * 100).toFixed(1)}%`)
-
-await bci.destroy()
-```
-
-### Example Script
-
-```bash
-bare examples/transcribe-neural.js test/fixtures/neural_sample_0.bin models/ggml-tiny.en.bin
-```
-
 ## Testing
 
 ### Integration Tests
 
 ```bash
-WHISPER_MODEL_PATH=models/ggml-tiny.en.bin npm run test:integration
+WHISPER_MODEL_PATH=./models/ggml-bci.bin npm run test:integration
 ```
 
 ### C++ Unit Tests
 
 ```bash
-npm run test:cpp
+VCPKG_ROOT=/path/to/vcpkg npm run test:cpp
 ```
 
 ## Configuration
@@ -153,57 +141,43 @@ npm run test:cpp
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `language` | string | `"en"` | Language code |
-| `n_threads` | number | `0` (auto) | Number of threads |
 | `temperature` | number | `0.0` | Sampling temperature |
-| `suppress_nst` | boolean | `true` | Suppress non-speech tokens |
-| `duration_ms` | number | `0` | Max duration in ms (0 = unlimited) |
+| `n_threads` | number | `0` (auto) | Number of threads |
 
-### bciConfig (optional)
+### bciConfig
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `smooth_kernel_std` | number | `2.0` | Gaussian smoothing kernel std |
-| `smooth_kernel_size` | number | `20` | Smoothing kernel size |
-| `sample_rate` | number | `16000` | Target sample rate for whisper.cpp |
+| `day_idx` | number | `0` | Session day index for day-specific projection |
 
 ### contextParams
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `model` | string | **Required.** Path to GGML model file |
+| `model` | string | **Required.** Path to BCI GGML model file |
 | `use_gpu` | boolean | Enable GPU acceleration |
 | `flash_attn` | boolean | Enable flash attention |
-| `gpu_device` | number | GPU device index |
+
+## whisper.cpp Patches
+
+The package includes a vcpkg overlay with 4 patches applied to whisper.cpp:
+
+| Patch | Description |
+|-------|-------------|
+| 0001 | Fix vcpkg build |
+| 0002 | Fix Apple Silicon cross-compilation |
+| 0003 | Variable conv1 kernel size (read `n_audio_conv1_kernel` from model header) |
+| 0004 | Windowed attention mask, window size/layer params in header, BCI-specific SOS tokens |
 
 ## Platform Support
 
-### Verified
-
 | Platform | Architecture | Status |
 |----------|-------------|--------|
-| macOS (Darwin) | arm64 (Apple Silicon) | ✅ Tested |
-
-### Feasibility Assessment
-
-| Platform | Architecture | Feasibility | Notes |
-|----------|-------------|-------------|-------|
-| macOS | x86_64 | ✅ High | Same build system, minor toolchain changes |
-| Linux | x64 | ✅ High | Whisper.cpp has full Linux support; build with `libc++` |
-| Linux | arm64 | ✅ High | Cross-compile via vcpkg triplets (same as transcription-whispercpp) |
-| Windows | x64 | ✅ High | Whisper.cpp supports MSVC; add `msvcrt.lib` link (already in CMake) |
-| Android | arm64 | 🟡 Medium | Requires NDK toolchain; transcription-whispercpp already supports this |
-| iOS | arm64 | 🟡 Medium | Requires Xcode toolchain; transcription-whispercpp has iOS prebuilds |
-
-The build system (CMake + vcpkg + bare-make) is the same as `@qvac/transcription-whispercpp`, which already supports all these platforms. Porting primarily requires:
-1. Adding platform-specific vcpkg triplets (can copy from transcription-whispercpp)
-2. Setting up CI matrix entries for each platform
-3. Testing neural signal I/O on each target
-
-## Limitations
-
-- **Standard whisper.cpp model**: The current implementation uses a standard Whisper model (e.g., `whisper-tiny.en`). For accurate neural-to-text decoding, a BCI-trained model (like the BrainWhisperer model with LoRA-adapted decoder) must be converted to GGML format.
-- **Signal projection**: The channel-averaging projection is a simplified stand-in for the learned neural embedder from the BrainWhisperer architecture. Production use requires exporting the trained embedding weights.
-- **No LoRA support in whisper.cpp**: The BrainWhisperer model uses LoRA adapters on the Whisper decoder. Supporting this requires either (a) merging LoRA weights into the base model before GGML conversion, or (b) adding LoRA inference support to whisper.cpp.
+| macOS | arm64 (Apple Silicon) | Tested |
+| Linux | x64 | Feasible (same build system as transcription-whispercpp) |
+| Windows | x64 | Feasible (whisper.cpp supports MSVC) |
+| Android | arm64 | Feasible (NDK toolchain) |
+| iOS | arm64 | Feasible (Xcode toolchain) |
 
 ## License
 
