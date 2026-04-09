@@ -195,6 +195,20 @@ std::vector<float> NeuralProcessor::processToMel(
   std::vector<float> features(numTimesteps * numChannels);
   std::memcpy(features.data(), rawData.data() + K_HEADER_BYTES, expectedBytes);
 
+  // Passthrough mode: if dayIdx == -1, skip preprocessing and treat
+  // the input as pre-computed mel features in frame-major layout.
+  if (dayIdx == -1) {
+    const int melBins = K_WHISPER_N_MEL;
+    const int melFrames = K_WHISPER_MEL_FRAMES;
+    std::vector<float> melOutput(melFrames * melBins, 0.0F);
+    uint32_t framesToCopy = std::min(numTimesteps, static_cast<uint32_t>(melFrames));
+    uint32_t chToCopy = std::min(numChannels, static_cast<uint32_t>(melBins));
+    for (uint32_t t = 0; t < framesToCopy; ++t)
+      for (uint32_t c = 0; c < chToCopy; ++c)
+        melOutput[c * melFrames + t] = features[t * numChannels + c];
+    return melOutput;
+  }
+
   // Step 1: Gaussian smoothing (std=2.0, kernel_size=100, matching BrainWhisperer)
   auto smoothed = gaussianSmooth(features, numTimesteps, numChannels, 2.0F, 100);
 
@@ -209,7 +223,8 @@ std::vector<float> NeuralProcessor::processToMel(
   }
 
   // Step 3: Pad to 3000 frames at 512 channels for whisper_set_mel()
-  // whisper.cpp (patched) handles conv1(512→384,k=7) → GELU → conv2 → etc.
+  // whisper.cpp stores mel as mel.data[mel_bin * n_len + frame] (mel-major),
+  // so we must write in that layout for whisper_set_mel_with_state.
   const int melBins = K_WHISPER_N_MEL;
   const int melFrames = K_WHISPER_MEL_FRAMES;
   std::vector<float> melOutput(melFrames * melBins, 0.0F);
@@ -218,7 +233,7 @@ std::vector<float> NeuralProcessor::processToMel(
   uint32_t chToCopy = std::min(projChannels, static_cast<uint32_t>(melBins));
   for (uint32_t t = 0; t < framesToCopy; ++t)
     for (uint32_t c = 0; c < chToCopy; ++c)
-      melOutput[t * melBins + c] = projected[t * projChannels + c];
+      melOutput[c * melFrames + t] = projected[t * projChannels + c];
 
   return melOutput;
 }

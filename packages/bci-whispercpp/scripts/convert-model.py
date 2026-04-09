@@ -179,6 +179,10 @@ def main():
     parser.add_argument("--day-idx", type=int, default=0, help="Day index for baked positional embedding")
     parser.add_argument("--whisper-assets", default=None,
                         help="Path to whisper python package assets dir (for mel_filters)")
+    parser.add_argument("--window-size", type=int, default=57,
+                        help="Windowed attention size (0 to disable)")
+    parser.add_argument("--last-window-layer", type=int, default=3,
+                        help="Last encoder layer with windowed attention")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
@@ -294,6 +298,8 @@ def main():
         ftype_global = 0 if args.f32 else 1
         fout.write(struct.pack("i", ftype_global))  # ftype: 0=f32, 1=f16
         fout.write(struct.pack("i", n_conv1_kernel))  # BCI extension
+        fout.write(struct.pack("i", args.window_size))  # BCI windowed attention
+        fout.write(struct.pack("i", args.last_window_layer))
 
         # Mel filters (n_mels x 201, must match n_mels for whisper_set_mel validation)
         fout.write(struct.pack("i", mel_filters.shape[0]))

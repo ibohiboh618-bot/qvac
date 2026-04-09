@@ -107,12 +107,14 @@ whisper_full_params toWhisperFullParams(const BCIConfig& bciConfig) {
 
   // BCI defaults matching the Python notebook's decode settings
   params.beam_search.beam_size = 4;
-  params.suppress_nst = true;
-  params.suppress_blank = true;
+  params.suppress_nst = false;
+  params.suppress_blank = false;
   params.temperature = 0.0F;
-  params.no_timestamps = false;
-  params.single_segment = false;
+  params.no_timestamps = true;
+  params.single_segment = true;
+  params.no_context = true;
   params.length_penalty = 0.14F;
+  params.max_initial_ts = 0;
 
   const auto& handlers = getWhisperMainHandlers();
   for (const auto& [key, value] : bciConfig.whisperMainCfg) {
