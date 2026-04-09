@@ -33,3 +33,13 @@ async function runModelLoadingTest (options = {}) { // eslint-disable-line no-un
 async function runMultiInstanceTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/multi-instance.test.js', options)
 }
+
+module.exports = {
+  runApiBehaviorTest,
+  runGenerateImageFlux2Test,
+  runGenerateImageSd3Test,
+  runGenerateImageSdxlTest,
+  runGenerateImageTest,
+  runModelLoadingTest,
+  runMultiInstanceTest
+}
