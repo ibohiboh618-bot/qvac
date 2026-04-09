@@ -511,7 +511,7 @@ class TranslationNmtcpp extends BaseInference {
   _addonOutputCallback (addon, event, data, error) {
     // Map C++ mangled type names to expected event names
     // Check stats FIRST (before basic_string check, since stats event name also contains 'basic_string')
-    if (typeof data === 'object' && data !== null && 'TPS' in data) {
+    if (typeof data === 'object' && data !== null && !Array.isArray(data) && Object.keys(data).some(k => k.endsWith('TPS'))) {
       // Stats object received - this signals job completion
       // Pass stats with JobEnded event (base class expects stats in JobEnded data)
       return this._outputCallback(addon, 'JobEnded', JOB_ID, data, null)

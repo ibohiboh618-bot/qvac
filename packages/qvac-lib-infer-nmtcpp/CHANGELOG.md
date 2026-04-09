@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.10] - 2026-04-10
+
+### Fixed
+
+- Fix pivot translation (e.g. ES → IT via EN) hanging indefinitely after C++ translation completes
+- Root cause: `PivotTranslationModel::runtimeStats()` prefixes stats keys with the model name (e.g. `"BERGAMOT : es->enTPS"`), but `_addonOutputCallback` only checked for exact `"TPS"` key to detect job completion — the prefixed key never matched, so `JobEnded` was never fired and the response hung until timeout
+- Replace hardcoded key checks with `Object.keys(data).some(k => k.endsWith('TPS'))` which handles all key formats
+
+### Changed
+
+- Updated workflows and actions from main
+
 ## [0.6.8] - 2026-04-09
 
 ### Changed
