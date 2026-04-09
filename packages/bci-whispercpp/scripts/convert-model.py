@@ -58,19 +58,50 @@ def merge_lora_weights(state_dict, alpha=16, r=8):
     return merged
 
 
-def build_day0_positional_embedding(d_model=384):
-    """Build the positional embedding for day 0.
-    The BCI model uses sinusoidal day encoding in the last d_model//2 dims.
-    For day 0, the PositionalEncoding returns sin(0)/cos(0) = [0,1,0,1,...].
+def build_positional_embedding(state_dict, d_model=384, day_idx=0, sessions=None):
+    """Build the combined positional embedding for whisper.cpp.
+
+    The BCI encoder applies two separate positional encodings:
+      1. Learned time positions (embed_positions) → first d_model//2 dims
+      2. Sinusoidal day encoding (PositionalEncoding) → last d_model//2 dims
+
+    whisper.cpp applies a single encoder.positional_embedding after conv2,
+    so we must combine both into one (1500, d_model) tensor.
     """
     half = d_model - d_model // 2  # 192
+
     pe = np.zeros((1500, d_model), dtype=np.float32)
-    # Day 0 encoding: pe[position=0] for PositionalEncoding(192)
+
+    # First half: learned time positional encoding from the trained model
+    time_pe_key = "model.whisper.model.encoder.embed_positions.weight"
+    if time_pe_key in state_dict:
+        time_pe = state_dict[time_pe_key].numpy()  # (1500, 192)
+        pe[:, :half] = time_pe
+        print(f"  Time positional encoding: shape={time_pe.shape}, "
+              f"range=[{time_pe.min():.4f}, {time_pe.max():.4f}]")
+    else:
+        print("  WARNING: embed_positions.weight not found, using zeros for time encoding")
+
+    # Second half: sinusoidal day encoding
+    # For day_idx=0 (session index), resolve through SessionsToDays to get day number
+    # Default: day_number=0 → PositionalEncoding(192) at position 0 = [sin(0),cos(0),...] = [0,1,0,1,...]
+    day_number = day_idx
+    if sessions:
+        from datetime import datetime
+        sorted_sessions = sorted(sessions)
+        fmt = "%Y.%m.%d"
+        datetimes = [datetime.strptime(s[-10:], fmt) for s in sorted_sessions]
+        if day_idx < len(datetimes):
+            day_number = (datetimes[day_idx] - datetimes[0]).days
+
     day_enc = np.zeros(half, dtype=np.float32)
-    day_enc[0::2] = 0.0   # sin(0)
-    day_enc[1::2] = 1.0   # cos(0)
-    # Place in last 192 dims, broadcast across all 1500 frames
+    div_term = np.exp(np.arange(0, half, 2, dtype=np.float32) * (-math.log(10000.0) / half))
+    day_enc[0::2] = np.sin(day_number * div_term)
+    day_enc[1::2] = np.cos(day_number * div_term)
     pe[:, -half:] = day_enc
+    print(f"  Day encoding: day_number={day_number}, "
+          f"range=[{day_enc.min():.4f}, {day_enc.max():.4f}]")
+
     return pe
 
 
@@ -144,6 +175,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--output", default="models/ggml-bci.bin")
+    parser.add_argument("--f32", action="store_true", help="Use f32 for all tensors (avoids f16 precision loss)")
+    parser.add_argument("--day-idx", type=int, default=0, help="Day index for baked positional embedding")
     parser.add_argument("--whisper-assets", default=None,
                         help="Path to whisper python package assets dir (for mel_filters)")
     args = parser.parse_args()
@@ -175,9 +208,14 @@ def main():
     model_sd["encoder.conv2.weight"] = merged["model.embedders.0.conv2.weight"]  # (384, 384, 3)
     model_sd["encoder.conv2.bias"] = merged["model.embedders.0.conv2.bias"]      # (384,)
 
-    # --- Encoder positional embedding (baked day-0 encoding) ---
+    # --- Encoder positional embedding (combined time + day encoding) ---
+    # Extract sessions list from checkpoint config for day number resolution
+    sessions = config.get("dataset", {}).get("sessions", None)
+    if sessions is None:
+        sessions = config.get("sessions", None)
+    print("Building combined positional embedding...")
     model_sd["encoder.positional_embedding"] = torch.from_numpy(
-        build_day0_positional_embedding(384))
+        build_positional_embedding(merged, d_model=384, day_idx=args.day_idx, sessions=sessions))
 
     # --- Encoder transformer layers 0-5 ---
     for layer_idx in range(6):
@@ -253,7 +291,8 @@ def main():
         fout.write(struct.pack("i", n_text_head))
         fout.write(struct.pack("i", n_text_layer))
         fout.write(struct.pack("i", n_mels))
-        fout.write(struct.pack("i", 1))  # ftype=1 (f16)
+        ftype_global = 0 if args.f32 else 1
+        fout.write(struct.pack("i", ftype_global))  # ftype: 0=f32, 1=f16
         fout.write(struct.pack("i", n_conv1_kernel))  # BCI extension
 
         # Mel filters (n_mels x 201, must match n_mels for whisper_set_mel validation)
@@ -283,9 +322,8 @@ def main():
 
             n_dims = len(data.shape)
 
-            # f16 for 2D+ tensors, f32 for 1D and special tensors
-            use_f16 = True
-            ftype = 1
+            use_f16 = not args.f32
+            ftype = 1 if use_f16 else 0
             if n_dims < 2 or \
                     name == "encoder.conv1.bias" or \
                     name == "encoder.conv2.bias" or \

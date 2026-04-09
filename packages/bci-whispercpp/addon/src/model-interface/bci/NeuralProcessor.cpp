@@ -158,13 +158,15 @@ std::vector<float> NeuralProcessor::applyDayProjection(
       bias[i] += weights_.monthBiases[monthIdx][i];
   }
 
+  // Python: output[t,k] = softsign(sum_d(features[t,d] * W[d,k]) + bias[k])
+  // i.e. output = features @ W + bias (right-multiply by W)
   std::vector<float> output(numTimesteps * nf);
   for (uint32_t t = 0; t < numTimesteps; ++t)
-    for (uint32_t i = 0; i < nf; ++i) {
-      float s = bias[i];
-      for (uint32_t j = 0; j < nf; ++j)
-        s += W[i * nf + j] * features[t * numChannels + j];
-      output[t * nf + i] = s / (1.0F + std::abs(s));
+    for (uint32_t k = 0; k < nf; ++k) {
+      float s = bias[k];
+      for (uint32_t d = 0; d < nf; ++d)
+        s += features[t * numChannels + d] * W[d * nf + k];
+      output[t * nf + k] = s / (1.0F + std::abs(s));
     }
 
   return output;
