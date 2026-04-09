@@ -3,11 +3,9 @@
 const test = require('brittle')
 const os = require('bare-os')
 const proc = require('bare-process')
-const binding = require('../../binding')
 const ImgStableDiffusion = require('../../index')
 const {
   ensureModel,
-  setupJsLogger,
   isPng
 } = require('./utils')
 
@@ -33,10 +31,9 @@ const TEST_PARAMS = {
   seed: 42
 }
 
-function createModel (modelDir, modelName, logger) {
+function createModel (modelDir, modelName) {
   return new ImgStableDiffusion(
     {
-      logger,
       diskPath: modelDir,
       modelName
     },
@@ -79,8 +76,6 @@ async function unloadModel (model, label, { suppressError = false } = {}) {
 }
 
 async function setupModelEnvironment (t) {
-  setupJsLogger(binding)
-
   const [downloadedModelName, modelDir] = await ensureModel({
     modelName: DEFAULT_MODEL.name,
     downloadUrl: DEFAULT_MODEL.url
@@ -90,20 +85,14 @@ async function setupModelEnvironment (t) {
   console.log(`Model: ${downloadedModelName}`)
   console.log(`Dir  : ${modelDir}`)
 
-  t.teardown(async () => {
-    try {
-      binding.releaseLogger()
-    } catch (_) {}
-  })
-
   return { downloadedModelName, modelDir }
 }
 
 async function setupTwoModels (t, { loadSecond = true } = {}) {
   const { downloadedModelName, modelDir } = await setupModelEnvironment(t)
 
-  const model1 = createModel(modelDir, downloadedModelName, console)
-  const model2 = createModel(modelDir, downloadedModelName, console)
+  const model1 = createModel(modelDir, downloadedModelName)
+  const model2 = createModel(modelDir, downloadedModelName)
 
   t.teardown(async () => {
     await unloadModel(model1, 'instance-1 teardown', { suppressError: true })
@@ -209,7 +198,7 @@ test('diffusion multi-instance - repeated load/unload cycles should remain stabl
   console.log('\n=== Scenario 2: repeated load/unload cycles should remain stable ===')
 
   for (let i = 0; i < NUM_CYCLES; i++) {
-    const model = createModel(modelDir, downloadedModelName, console)
+    const model = createModel(modelDir, downloadedModelName)
     await model.load()
 
     const run = await startTrackedRun(model, `scenario-2 cycle-${i + 1}`, { ...TEST_PARAMS, seed: 300 + i })
@@ -242,7 +231,7 @@ test('diffusion multi-instance - unload instance 2 while instance 1 is running',
 
 test('diffusion multi-instance - multiple load/unload cycles on one instance while another generates', { timeout: 900000, skip }, async t => {
   const { downloadedModelName, modelDir } = await setupModelEnvironment(t)
-  const model1 = createModel(modelDir, downloadedModelName, console)
+  const model1 = createModel(modelDir, downloadedModelName)
   const NUM_CYCLES = 3
 
   t.teardown(async () => {
@@ -258,7 +247,7 @@ test('diffusion multi-instance - multiple load/unload cycles on one instance whi
     await withTimeout(run1.firstProgress, 120000, 'scenario-4 first progress')
 
     for (let i = 0; i < NUM_CYCLES; i++) {
-      const model2 = createModel(modelDir, downloadedModelName, console)
+      const model2 = createModel(modelDir, downloadedModelName)
       await model2.load()
       await unloadModel(model2, `scenario-4 cycle-${i + 1}`)
       t.pass(`scenario-4 cycle ${i + 1}: load/unload completed while instance-1 generates`)
