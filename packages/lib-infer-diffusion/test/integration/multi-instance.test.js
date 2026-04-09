@@ -31,6 +31,8 @@ const TEST_PARAMS = {
   seed: 42
 }
 
+const unloadedModels = new WeakSet()
+
 function createModel (modelDir, modelName) {
   return new ImgStableDiffusion(
     {
@@ -65,9 +67,15 @@ function withTimeout (promise, ms, label) {
 }
 
 async function unloadModel (model, label, { suppressError = false } = {}) {
+  if (unloadedModels.has(model)) {
+    console.log(`[${label}] unload skipped (already unloaded)`)
+    return
+  }
+
   try {
     console.log(`[${label}] unloading model`)
     await model.unload()
+    unloadedModels.add(model)
     console.log(`[${label}] unload complete`)
   } catch (error) {
     console.error(`[${label}] unload failed:`, error)
