@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <iostream>
 #include <ranges>
 #include <streambuf>
@@ -150,6 +151,13 @@ inline common_init_result_ptr initFromConfig(
       LOG_INF(
           "%s: load the model from disk file and apply lora adapter, if any.\n",
           __func__);
+      if (!std::filesystem::exists(modelPath)) {
+        throw qvac_errors::StatusError(
+            AddonID,
+            error,
+            string_format(
+                "%s: model file not found: %s\n", __func__, modelPath.c_str()));
+      }
       llamaInit = std::move(common_init_from_params(params));
     } else {
       LOG_INF(
