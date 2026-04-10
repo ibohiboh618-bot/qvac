@@ -31,7 +31,9 @@ export async function collectModels(
 
     for (const registryModel of registryModels) {
       const processed = processRegistryModel(registryModel);
-      if (processed) models.push(processed);
+      if (!processed) continue;
+      if (processed.registryPath.includes("ggml-opus")) continue;
+      models.push(processed);
     }
   } finally {
     await client.close();
