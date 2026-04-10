@@ -747,7 +747,12 @@ void LlamaModel::commonParamsParse(
       auto listString = iter->second;
       std::vector<std::string> list = split(listString, ',');
       for (const auto& item : list) {
-        params.antiprompt.push_back(item);
+        std::string trimmed = item;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+        trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+        if (!trimmed.empty()) {
+          params.antiprompt.push_back(trimmed);
+        }
       }
       if (list.empty() && !listString.empty()) {
         params.antiprompt.push_back(listString);

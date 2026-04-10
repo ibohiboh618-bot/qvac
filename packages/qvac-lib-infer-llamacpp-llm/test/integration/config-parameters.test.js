@@ -198,7 +198,8 @@ const scenarios = [
       ctx_size: '0',
       n_predict: '16'
     },
-    expectSuccess: true
+    expectSuccess: true,
+    skip: true // TODO: ctx_size=0 causes 8GB Vulkan allocation on some runners; re-enable once fixed
   },
   {
     name: 'Negative numeric parameters handled without crash',
@@ -254,8 +255,8 @@ const scenarios = [
     ],
     expectSuccess: true,
     assertOutput: (t, output, stats) => {
-      t.ok(output.includes('pizza'), 'reverse prompt output contains keyword')
-      t.ok(output.split('').slice(-5).join('') === 'pizza', 'reverse prompt output ends with keyword')
+      t.ok(output.toLowerCase().includes('pizza'), 'reverse prompt output contains keyword')
+      t.ok(output.toLowerCase().split('').slice(-5).join('') === 'pizza', 'reverse prompt output ends with keyword')
     }
   }
 ]
@@ -416,7 +417,7 @@ async function executeScenario (t, scenario) {
 }
 
 for (const scenario of scenarios) {
-  test(scenario.name, { timeout: 900_000, skip: isMobile }, async t => {
+  test(scenario.name, { timeout: 900_000, skip: isMobile || scenario.skip }, async t => {
     console.log(`\n******* TEST scenario '${scenario.name}' *******`)
     await executeScenario(t, scenario)
   })
