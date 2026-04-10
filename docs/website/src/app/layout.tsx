@@ -19,7 +19,10 @@ export const metadata: Metadata = {
   },
   description: 'Official documentation and single source of truth for QVAC.',
   icons: {
-    icon: '/qvac-favicon.svg',
+    icon: [
+      { url: '/favicon.ico', sizes: '48x48' },
+      { url: '/favicon.png', type: 'image/png', sizes: '96x96' },
+    ],
   },
 };
 
@@ -31,6 +34,9 @@ export default function Layout({ children }: LayoutProps<'/'>) {
       lang="en" 
       suppressHydrationWarning
       className={inter.className}>
+      <head>
+        <meta property="og:logo" content={`${DOCS_SITE_ORIGIN}/qvac-logo.svg`} />
+      </head>
       {gtmId && <GoogleTagManager gtmId={gtmId} />}
       <body className="flex flex-col min-h-screen">
         <InkeepScript />
