@@ -198,9 +198,8 @@ async function createEmbeddingsTestInstance (t, modelName, device = 'gpu', gpuLa
   if (os.platform() === 'android') {
     config.flash_attn = 'off'
     console.log('Platform detected: Android, setting flash_attn to off')
+    config.openclCacheDir = diskPath
   }
-
-  config.openclCacheDir = diskPath
 
   const inference = new GGMLBert({ modelName, loader, logger, diskPath, opts: { stats: true } }, config)
 

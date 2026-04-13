@@ -12,7 +12,7 @@
 #include "common/common.h"
 
 /// @note async version
-inline common_init_result_ptr initFromShards(
+inline common_init_result initFromShards(
     const GGUFShards& shards, common_params& params,
     const std::string& loadingContext) {
   LOG_INF(
@@ -29,11 +29,12 @@ inline common_init_result_ptr initFromShards(
       loadingContext.c_str(),
       shards.tensors_file.c_str(),
       mparams);
-  return common_init_from_model_and_params(model, params);
+  common_init_result iparams = common_init_from_params(params);
+  return common_init_from_model_and_params(model, std::move(iparams), params);
 }
 
 /// @note from disk
-inline common_init_result_ptr
+inline common_init_result
 initFromShards(const GGUFShards& shards, common_params& params) {
   LOG_INF(
       "%s: load the model from disk shards and apply lora adapter, if any.\n",
@@ -45,14 +46,15 @@ initFromShards(const GGUFShards& shards, common_params& params) {
   std::vector<const char*> pathsVec(pathsView.begin(), pathsView.end());
   llama_model* model =
       llama_model_load_from_splits(pathsVec.data(), pathsVec.size(), mparams);
-  return common_init_from_model_and_params(model, params);
+  common_init_result iparams = common_init_from_params(params);
+  return common_init_from_model_and_params(model, std::move(iparams), params);
 }
 
 /// @brief Initializes a model from a single gguf stream stored in memory
 /// @note For performance reasons `initFromShards` should be preferably used
 /// with streams. However, this function is still offered to unify the Js
 /// interface of the addon and separate concerns.
-inline common_init_result_ptr initFromMemory(
+inline common_init_result initFromMemory(
     std::unique_ptr<std::basic_streambuf<char>>&& streambuf,
     common_params& params) {
   LOG_INF(
@@ -81,7 +83,8 @@ inline common_init_result_ptr initFromMemory(
 
   llama_model* model =
       llama_model_load_from_buffer(std::move(contiguousData), mparams);
-  return common_init_from_model_and_params(model, params);
+  common_init_result iparams = common_init_from_params(params);
+  return common_init_from_model_and_params(model, std::move(iparams), params);
 }
 
 /// @brief Initialize a model handling streaming, not-streaming, sharded or
@@ -95,13 +98,12 @@ inline common_init_result_ptr initFromMemory(
 /// @param isStreaming Should be set to true when `setWeightsForFile` is
 /// being used to populate `singleGgufStreamedFiles` or call
 /// `llama_model_load_fulfill_split_future`
-inline common_init_result_ptr initFromConfig(
+inline common_init_result initFromConfig(
     common_params& params, const std::string& modelPath,
     std::map<std::string, std::unique_ptr<std::basic_streambuf<char>>>&
         singleGgufStreamedFiles,
     const GGUFShards& shards, const std::string loading_context,
     const bool isStreaming, const char* AddonID, const std::string& error) {
-  common_init_result_ptr llamaInit;
   // Stream should have been awaited by the time activate is called from JS
   // and init is triggered. isStreaming should be (thread) safe to use at this
   // point because `setWeightsForFile` has already finished.
@@ -137,14 +139,15 @@ inline common_init_result_ptr initFromConfig(
             availableFiles.c_str());
         throw qvac_errors::StatusError(AddonID, error, errorMsg);
       }
-      llamaInit =
-          std::move(initFromMemory(std::move(itGgufModelPath->second), params));
+      common_init_result llamaInit =
+          initFromMemory(std::move(itGgufModelPath->second), params);
       singleGgufStreamedFiles.erase(itGgufModelPath);
+      return llamaInit;
     } else {
       LOG_INF(
           "%s: load the sharded model and apply lora adapter, if any.\n",
           __func__);
-      llamaInit = std::move(initFromShards(shards, params, loading_context));
+      return initFromShards(shards, params, loading_context);
     }
   } else {
     if (shards.gguf_files.empty()) {
@@ -158,14 +161,13 @@ inline common_init_result_ptr initFromConfig(
             string_format(
                 "%s: model file not found: %s\n", __func__, modelPath.c_str()));
       }
-      llamaInit = std::move(common_init_from_params(params));
+      return common_init_from_params(params);
     } else {
       LOG_INF(
           "%s: load the model shards from disk file and apply lora adapter, if "
           "any.\n",
           __func__);
-      llamaInit = std::move(initFromShards(shards, params));
+      return initFromShards(shards, params);
     }
   }
-  return llamaInit;
 }

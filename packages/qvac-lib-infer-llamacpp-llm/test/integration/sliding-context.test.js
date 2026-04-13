@@ -25,7 +25,7 @@ const DEFAULT_MODEL = {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const N_CTX = 256
-const PROMPT_TOKENS = 44 // STORY_PROMPT tokenizes to 44 tokens with Llama 3.2 1B
+const PROMPT_TOKENS = 64 // STORY_PROMPT tokenizes to 64 tokens with Llama 3.2 1B
 const FREE_SLOTS = N_CTX - PROMPT_TOKENS
 const SLIDE_PREDICT = isWindowsX64 ? 256 : 512
 const MANY_SLIDES_PREDICT = isWindowsX64 ? 384 : 1024
@@ -234,12 +234,12 @@ test('Sliding context works with minimal n_discarded of 1', {
   )
 })
 
-// n_discarded=64, n_predict=200 (first run), n_predict=10 (second run)
-// First run: n_past = 44 + 200 = 244, firstMsgTokens = 44
-// Second run follow-up (~20 tokens):
-//   n_past + nTokens = 244 + ~20 = ~264 >= 256 (outer condition)
-//   leftTokens = 244 - 44 - 64 = 136 >= 0
-//   n_past + nTokens - n_discarded = ~264 - 64 = ~200 < 256
+// n_discarded=64, n_predict=180 (first run), n_predict=10 (second run)
+// First run: n_past = 64 + 180 = 244, firstMsgTokens = 64
+// Second run follow-up (~45 tokens):
+//   n_past + nTokens = 244 + ~45 = ~289 >= 256 (outer condition)
+//   leftTokens = 244 - 64 - 64 = 116 >= 0
+//   n_past + nTokens - n_discarded = ~289 - 64 = ~225 < 256
 // :> discards n_discarded (64) tokens after first message
 // Second run uses predict=10 via generationParams so generation can't
 // reach the context limit — any contextSlides must come from prefill.
@@ -253,7 +253,7 @@ test('Cached follow-up discards middle tokens to fit new message', {
   )
 
   const { model } = await setupModel(t, {
-    n_predict: '200',
+    n_predict: '180',
     n_discarded: '64'
   })
 
@@ -276,13 +276,13 @@ test('Cached follow-up discards middle tokens to fit new message', {
   t.is(second.stats.contextSlides, 1, 'exactly one prefill discard slide')
 })
 
-// n_discarded=250 (clamped to 211), n_predict=200 (first run), predict=10 (second run)
-// First run: n_past = 244, firstMsgTokens = 44, n_discarded = 211
-// Second run follow-up (~20 tokens):
-//   leftTokens = 244 - 44 - 211 = -11 < 0
-//   firstMsgTokens + nTokens = 44 + ~20 = ~64 < 256
-//   n_discarded = 211 > 0
-// :> removes all middle tokens from pos 44 to 244
+// n_discarded=250 (clamped to 191), n_predict=180 (first run), predict=10 (second run)
+// First run: n_past = 64 + 180 = 244, firstMsgTokens = 64, n_discarded = 191
+// Second run follow-up (~45 tokens):
+//   leftTokens = 244 - 64 - 191 = -11 < 0
+//   firstMsgTokens + nTokens = 64 + ~45 = ~109 < 256
+//   n_discarded = 191 > 0
+// :> removes all middle tokens from pos 64 to 244
 // Second run uses predict=10 so generation can't cause slides.
 test('Cached follow-up clears all middle tokens when discard window is exhausted', {
   timeout: 900_000,
@@ -294,7 +294,7 @@ test('Cached follow-up clears all middle tokens when discard window is exhausted
   )
 
   const { model } = await setupModel(t, {
-    n_predict: '200',
+    n_predict: '180',
     n_discarded: '250'
   })
 
@@ -317,12 +317,12 @@ test('Cached follow-up clears all middle tokens when discard window is exhausted
   t.is(second.stats.contextSlides, 1, 'exactly one full middle token discard slide')
 })
 
-// n_discarded=0, n_predict=200
-// First run: n_past = 244, firstMsgTokens = 44, n_discarded = 0
-// Second run follow-up (~20 tokens):
-//   n_past + nTokens = ~264 >= 256 (outer condition)
-//   leftTokens = 244 - 44 - 0 = 200 >= 0
-//   normal discard: n_past + nTokens - 0 = ~264 >= 256 (fails)
+// n_discarded=0, n_predict=180
+// First run: n_past = 64 + 180 = 244, firstMsgTokens = 64, n_discarded = 0
+// Second run follow-up (~45 tokens):
+//   n_past + nTokens = ~289 >= 256 (outer condition)
+//   leftTokens = 244 - 64 - 0 = 180 >= 0
+//   normal discard: n_past + nTokens - 0 = ~289 >= 256 (fails)
 //   full middle discard: leftTokens >= 0 (first condition fails)
 // :> no recovery possible, throws ContextOverflow
 test('Cached follow-up overflows when sliding is disabled and context is full', {
@@ -335,7 +335,7 @@ test('Cached follow-up overflows when sliding is disabled and context is full', 
   )
 
   const { model } = await setupModel(t, {
-    n_predict: '200',
+    n_predict: '180',
     n_discarded: '0'
   })
 
