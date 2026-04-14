@@ -2,12 +2,12 @@
 
 Release Date: TBD
 
-## 💥 Breaking Changes
+## 🧹 Chores
 
-- Deprecate Opus NMT engine: remove `"Opus"` from `NMT_ENGINES`, remove `opusConfigSchema`, remove `MARIAN_LANGUAGES` and `MarianLanguage` type. (see PR [#1214](https://github.com/tetherto/qvac/pull/1214)) - See [breaking changes](./breaking.md)
-- Remove 32 `MARIAN_OPUS_*` model constants from the SDK model registry. (see PR [#1214](https://github.com/tetherto/qvac/pull/1214)) - See [models](./models.md)
-- Remove `generateNmtOpusName` from model naming utilities. (see PR [#1214](https://github.com/tetherto/qvac/pull/1214))
+- Deprecate Opus NMT engine and remove `generateNmtOpusName` from naming utilities. (see PR [#1214](https://github.com/tetherto/qvac/pull/1214)) - See [breaking changes](./breaking.md)
+- Filter Opus models from registry update pipeline. (see PR [#1214](https://github.com/tetherto/qvac/pull/1214))
 
 ## 📦 Models
 
-- See [model changes](./models.md)
+- Add 36 TTS models (Supertonic2, Supertonic, LaVASR enhancer/denoiser). (see PR [#1214](https://github.com/tetherto/qvac/pull/1214)) - See [model changes](./models.md)
+- Remove 32 `MARIAN_OPUS_*` model constants. (see PR [#1214](https://github.com/tetherto/qvac/pull/1214)) - See [model changes](./models.md)
