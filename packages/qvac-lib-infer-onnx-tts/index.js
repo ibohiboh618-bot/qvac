@@ -4,6 +4,7 @@ const { platform } = require('bare-os')
 const path = require('bare-path')
 const { TTSInterface } = require('./tts')
 const { QvacErrorAddonTTS, ERR_CODES } = require('./lib/error')
+const { splitText } = require('./lib/text-splitter')
 const InferBase = require('@qvac/infer-base/WeightsProvider/BaseInference')
 const WeightsProvider = require('@qvac/infer-base/WeightsProvider/WeightsProvider')
 
@@ -212,6 +213,14 @@ class ONNXTTS extends InferBase {
       throw createBusyJobError()
     }
 
+    const chunks = splitText(input.input || '')
+    if (chunks.length <= 1) {
+      return this._runSingleJob(input)
+    }
+    return this._runChunked(input, chunks)
+  }
+
+  async _runSingleJob (input) {
     const response = this._createResponse(ONLY_ONE_JOB_ID)
     let accepted
     try {
@@ -239,7 +248,82 @@ class ONNXTTS extends InferBase {
     return response
   }
 
+  async _runChunked (input, chunks) {
+    const response = this._createResponse(ONLY_ONE_JOB_ID)
+    this._hasActiveResponse = true
+    this._isProcessingChunks = true
+    this._chunkResolve = null
+    this._chunkReject = null
+
+    const processChunks = async () => {
+      try {
+        for (let i = 0; i < chunks.length; i++) {
+          this.logger.debug('[TTS] chunk ' + (i + 1) + '/' + chunks.length)
+
+          const chunkDone = new Promise((resolve, reject) => {
+            this._chunkResolve = resolve
+            this._chunkReject = reject
+          })
+
+          const accepted = await this.addon.runJob({
+            type: input.type || 'text',
+            input: chunks[i]
+          })
+
+          if (!accepted) {
+            throw createBusyJobError()
+          }
+
+          await chunkDone
+        }
+
+        this.logger.info('[TTS] All ' + chunks.length + ' chunks completed')
+        response.ended()
+        this._deleteJobMapping(ONLY_ONE_JOB_ID)
+      } catch (error) {
+        const existing = this._jobToResponse.get(ONLY_ONE_JOB_ID)
+        if (existing) {
+          existing.failed(error)
+          this._deleteJobMapping(ONLY_ONE_JOB_ID)
+        }
+      } finally {
+        this._isProcessingChunks = false
+        this._chunkResolve = null
+        this._chunkReject = null
+      }
+    }
+
+    processChunks().catch(() => {})
+
+    const finalized = response.await().finally(() => { this._hasActiveResponse = false })
+    finalized.catch(() => {})
+    response.await = () => finalized
+    return response
+  }
+
   _addonOutputCallback (addon, event, data, error) {
+    if (this._isProcessingChunks) {
+      if (typeof error === 'string' && error.length > 0) {
+        if (this._chunkReject) this._chunkReject(new Error(error))
+        return
+      }
+
+      if (data && typeof data === 'object' && data.outputArray) {
+        return this._outputCallback(addon, 'Output', ONLY_ONE_JOB_ID, data, null)
+      }
+
+      if (
+        data &&
+        typeof data === 'object' &&
+        ('totalTime' in data || 'audioDurationMs' in data || 'totalSamples' in data)
+      ) {
+        if (this._chunkResolve) this._chunkResolve()
+        return
+      }
+
+      return
+    }
+
     if (typeof error === 'string' && error.length > 0) {
       return this._outputCallback(addon, 'Error', ONLY_ONE_JOB_ID, data, error)
     }
@@ -266,6 +350,9 @@ class ONNXTTS extends InferBase {
   }
 
   _failAndClearActiveResponse (reason) {
+    if (this._isProcessingChunks && this._chunkReject) {
+      this._chunkReject(new Error(reason))
+    }
     const currentJobResponse = this._jobToResponse.get(ONLY_ONE_JOB_ID)
     if (currentJobResponse) {
       currentJobResponse.failed(new Error(reason))

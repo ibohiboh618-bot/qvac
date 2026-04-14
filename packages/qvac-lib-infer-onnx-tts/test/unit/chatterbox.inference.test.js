@@ -166,6 +166,111 @@ test('Chatterbox: reload during in-flight job does not stay busy', async (t) => 
   await model.unload()
 })
 
+test('Chatterbox: long text is split into chunks and all audio is collected', async (t) => {
+  const chunkInputs = []
+  const binding = new MockedBinding()
+  const origRunJob = binding.runJob.bind(binding)
+  binding.runJob = function (handle, data) {
+    chunkInputs.push(data.input)
+    return origRunJob(handle, data)
+  }
+
+  const model = createMockedChatterboxModel({ binding })
+  await model.load()
+
+  const longText = 'This is the first sentence. This is the second sentence. And here is a third one.'
+  const response = await model.run({ type: 'text', input: longText })
+  const outputs = []
+  await response.onUpdate(data => outputs.push(data)).await()
+
+  t.ok(chunkInputs.length >= 2, 'Long text should be split into multiple addon runJob calls (got ' + chunkInputs.length + ')')
+  t.ok(outputs.length >= 2, 'Should receive output from each chunk')
+  t.ok(outputs.every(d => d.outputArray), 'Every output should contain audio data')
+  t.is(model._hasActiveResponse, false, 'Active response flag should be cleared after chunked run')
+  await model.unload()
+})
+
+test('Chatterbox: short text is not chunked', async (t) => {
+  const chunkInputs = []
+  const binding = new MockedBinding()
+  const origRunJob = binding.runJob.bind(binding)
+  binding.runJob = function (handle, data) {
+    chunkInputs.push(data.input)
+    return origRunJob(handle, data)
+  }
+
+  const model = createMockedChatterboxModel({ binding })
+  await model.load()
+
+  const response = await model.run({ type: 'text', input: 'Hello world' })
+  await response.onUpdate(() => {}).await()
+
+  t.is(chunkInputs.length, 1, 'Short text should result in exactly one runJob call')
+  t.is(chunkInputs[0], 'Hello world', 'Input should be passed unchanged')
+  await model.unload()
+})
+
+test('Chatterbox: cancel during chunked processing stops remaining chunks', async (t) => {
+  const binding = new MockedBinding({ jobDelayMs: 50 })
+  const chunkInputs = []
+  const origRunJob = binding.runJob.bind(binding)
+  binding.runJob = function (handle, data) {
+    chunkInputs.push(data.input)
+    return origRunJob(handle, data)
+  }
+
+  const model = createMockedChatterboxModel({ binding })
+  await model.load()
+
+  const longText = 'First sentence here. Second sentence here. Third sentence here. Fourth sentence here.'
+  const response = await model.run({ type: 'text', input: longText })
+
+  await new Promise(resolve => setTimeout(resolve, 30))
+  await response.cancel()
+
+  let failed = false
+  try {
+    await response.await()
+  } catch (error) {
+    failed = true
+    t.ok(String(error.message).includes('cancel'), 'Cancelled chunked response should reject with cancel message')
+  }
+
+  t.ok(failed, 'Cancelled chunked response should fail')
+  await new Promise(resolve => setTimeout(resolve, 100))
+  t.is(model._hasActiveResponse, false, 'Active response flag should be cleared after cancel')
+  await model.unload()
+})
+
+test('Chatterbox: reload during chunked processing does not leave model busy', async (t) => {
+  const binding = new MockedBinding({ jobDelayMs: 100 })
+  const model = createMockedChatterboxModel({ binding })
+  await model.load()
+
+  const longText = 'First sentence here. Second sentence here. Third sentence here.'
+  const inFlight = await model.run({ type: 'text', input: longText })
+
+  await model.reload({ language: 'es' })
+
+  let rejected = false
+  try {
+    await inFlight.await()
+  } catch (error) {
+    rejected = true
+    t.ok(String(error.message).includes('reloaded'), 'In-flight chunked job should fail on reload')
+  }
+  t.ok(rejected, 'Reload should reject the in-flight chunked response')
+  t.is(model._hasActiveResponse, false, 'Reload should clear active response busy flag')
+
+  await new Promise(resolve => setTimeout(resolve, 150))
+
+  const afterReload = await model.run({ type: 'text', input: 'hello after reload' })
+  await afterReload.await()
+  t.ok(afterReload.stats.totalSamples > 0, 'Model should accept and complete jobs after reload during chunked processing')
+
+  await model.unload()
+})
+
 test('Chatterbox: Static methods return expected values', async (t) => {
   const modelKey = ONNXTTS.getModelKey({})
   t.is(modelKey, 'onnx-tts', 'getModelKey should return "onnx-tts"')
