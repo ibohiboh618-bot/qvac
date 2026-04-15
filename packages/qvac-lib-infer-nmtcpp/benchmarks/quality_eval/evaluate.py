@@ -37,6 +37,7 @@ DATASETS = {
 FLORES_LANG_CODES = {
     "flores200_dataset": {
         "ar": "arb_Arab",
+        "az": "azj_Latn",
         "be": "bel_Cyrl",
         "bs": "bos_Latn",
         "gu": "guj_Gujr",
