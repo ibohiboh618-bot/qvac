@@ -25,6 +25,7 @@ import { visionTests } from "./vision-tests.js";
 import { downloadTests } from "./download-tests.js";
 import { delegatedInferenceTests } from "./delegated-inference-tests.js";
 import { diffusionTests } from "./diffusion-tests.js";
+import { finetuneTests } from "./finetune-tests.js";
 
 // Model loading tests
 export const modelLoadLlm: TestDefinition = {
@@ -220,6 +221,9 @@ export const tests = [
 
   // Delegated inference tests (P2P)
   ...delegatedInferenceTests,
+
+  // Finetuning tests
+  ...finetuneTests,
 
   // Additional model tests
   modelSwitchLlm,
