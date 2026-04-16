@@ -100,7 +100,7 @@ def translate_direct(texts, src_lang, trg_lang):
         last_stderr_check_time = start_time
         timeout = 7200  # 120 minutes (2 hours)
         output_file_found = False
-        filtered_lines_count = 0
+        last_stdout_debug_line_count = 0
         last_stderr_line_count = 0
 
         while time.time() - start_time < timeout:
@@ -111,21 +111,23 @@ def translate_direct(texts, src_lang, trg_lang):
                     debug_prefixes = ("Set ", "Error:", "Detected model type:", "[C++", "[BERGAMOT")
                     all_lines = f.readlines()
                     translations = []
-                    filtered_this_iteration = 0
+                    stdout_debug_lines = []
 
                     for line in all_lines:
                         line_stripped = line.strip()
                         if line_stripped:
                             if line_stripped.startswith(debug_prefixes):
-                                filtered_this_iteration += 1
+                                stdout_debug_lines.append(line_stripped)
                             else:
                                 translations.append(line_stripped)
 
-                    # Track filtered lines (only log if count changes)
-                    if filtered_this_iteration != filtered_lines_count:
-                        filtered_lines_count = filtered_this_iteration
-                        if filtered_lines_count > 0:
-                            print(f"[QVAC_BERGAMOT] Filtered {filtered_lines_count} debug lines from output", file=sys.stderr)
+                    # Stream newly observed stdout debug lines from nmt-cli.
+                    if len(stdout_debug_lines) > last_stdout_debug_line_count:
+                        new_stdout_logs = stdout_debug_lines[last_stdout_debug_line_count:]
+                        print(f"[QVAC_BERGAMOT] === nmt-cli stdout debug (new {len(new_stdout_logs)} lines) ===", file=sys.stderr)
+                        for line in new_stdout_logs:
+                            print(f"[QVAC_BERGAMOT]   {line}", file=sys.stderr)
+                        last_stdout_debug_line_count = len(stdout_debug_lines)
 
                 # Log when output file is first created
                 if not output_file_found:
@@ -140,15 +142,15 @@ def translate_direct(texts, src_lang, trg_lang):
                     last_progress_time = current_time
                     sys.stderr.flush()
 
-                # Check stderr every 10 seconds for errors or warnings
-                if current_time - last_stderr_check_time >= 10:
+                # Check stderr every second so short-lived runs still surface logs.
+                if current_time - last_stderr_check_time >= 1:
                     try:
                         with open(stderr_path, 'r') as stderr_file:
                             stderr_lines = stderr_file.readlines()
                             new_lines = stderr_lines[last_stderr_line_count:]
                             if new_lines:
                                 print(f"[QVAC_BERGAMOT] === nmt-cli stderr (new {len(new_lines)} lines) ===", file=sys.stderr)
-                                for line in new_lines[-20:]:  # Show last 20 new lines
+                                for line in new_lines:
                                     print(f"[QVAC_BERGAMOT]   {line.rstrip()}", file=sys.stderr)
                                 last_stderr_line_count = len(stderr_lines)
                     except FileNotFoundError:
@@ -163,6 +165,18 @@ def translate_direct(texts, src_lang, trg_lang):
                     print(f"[QVAC_BERGAMOT] Terminating nmt-cli process (PID: {proc.pid})", file=sys.stderr)
                     proc.kill()
                     proc.wait()
+                    # Flush any final stderr lines after process exit.
+                    try:
+                        with open(stderr_path, 'r') as stderr_file:
+                            stderr_lines = stderr_file.readlines()
+                            new_lines = stderr_lines[last_stderr_line_count:]
+                            if new_lines:
+                                print(f"[QVAC_BERGAMOT] === nmt-cli stderr (final {len(new_lines)} lines) ===", file=sys.stderr)
+                                for line in new_lines:
+                                    print(f"[QVAC_BERGAMOT]   {line.rstrip()}", file=sys.stderr)
+                                last_stderr_line_count = len(stderr_lines)
+                    except FileNotFoundError:
+                        pass
                     print(f"[QVAC_BERGAMOT] Process terminated successfully", file=sys.stderr)
                     break
             except FileNotFoundError:
@@ -181,6 +195,18 @@ def translate_direct(texts, src_lang, trg_lang):
             print(f"[QVAC_BERGAMOT] Terminating nmt-cli process (PID: {proc.pid})", file=sys.stderr)
             proc.kill()
             proc.wait()
+            # Flush any final stderr lines after timeout termination.
+            try:
+                with open(stderr_path, 'r') as stderr_file:
+                    stderr_lines = stderr_file.readlines()
+                    new_lines = stderr_lines[last_stderr_line_count:]
+                    if new_lines:
+                        print(f"[QVAC_BERGAMOT] === nmt-cli stderr (final {len(new_lines)} lines) ===", file=sys.stderr)
+                        for line in new_lines:
+                            print(f"[QVAC_BERGAMOT]   {line.rstrip()}", file=sys.stderr)
+                        last_stderr_line_count = len(stderr_lines)
+            except FileNotFoundError:
+                pass
             print(f"[QVAC_BERGAMOT] Process terminated after timeout", file=sys.stderr)
 
         # Ensure we got the same number of translations as inputs
@@ -224,8 +250,8 @@ def translate_direct(texts, src_lang, trg_lang):
                         stderr_content = f.read().strip()
                         if stderr_content:
                             print(f"[QVAC_BERGAMOT] Final nmt-cli stderr ({len(stderr_content)} chars):", file=sys.stderr)
-                            # Print last 30 lines
-                            for line in stderr_content.split('\n')[-30:]:
+                            # Print full stderr log for postmortem visibility.
+                            for line in stderr_content.split('\n'):
                                 if line.strip():
                                     print(f"[QVAC_BERGAMOT]   {line}", file=sys.stderr)
                 except:
