@@ -501,9 +501,9 @@ async function main () {
       }
     }
 
-    console.error(`[BERGAMOT] Model: ${bergamotModel.modelPath}`)
-    console.error(`[BERGAMOT] Source vocab: ${bergamotModel.srcVocabPath}`)
-    console.error(`[BERGAMOT] Target vocab: ${bergamotModel.dstVocabPath}`)
+    console.error(`[BERGAMOT_LOGGING] Model: ${bergamotModel.modelPath}`)
+    console.error(`[BERGAMOT_LOGGING] Source vocab: ${bergamotModel.srcVocabPath}`)
+    console.error(`[BERGAMOT_LOGGING] Target vocab: ${bergamotModel.dstVocabPath}`)
 
     // Logger - output to stderr for debugging
     const logger = {
