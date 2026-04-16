@@ -539,7 +539,7 @@ jobs:
           df -h
 
       - name: Download Firefox translations models for Bergamot (from GitHub)
-        # Only for 'bergamot' translator (not qvac_bergamot which downloads from Firefox CDN)
+        # Only for 'bergamot' translator (qvac_bergamot now downloads from AWS S3)
         if: contains(format(',{0},', inputs.translators), ',bergamot,')
         run: |
           # Install git-lfs on Linux
@@ -571,55 +571,25 @@ jobs:
           echo "Firefox models installed to ~/.local/share/bergamot/models/firefox/"
         continue-on-error: true
 
-      - name: Download Bergamot models for qvac_bergamot (from Firefox CDN)
+      - name: Download Bergamot models for qvac_bergamot (from AWS S3)
         if: contains(inputs.translators, 'qvac_bergamot')
         run: |
-          # Download specific language pair models from Firefox Remote Settings CDN
           pair="${{ matrix.pair }}"
           src_lang="${pair%-*}"
           trg_lang="${pair#*-}"
           pair_code="${src_lang}${trg_lang}"
 
-          echo "Downloading Bergamot model for $pair_code from Firefox CDN..."
-
-          RECORDS_URL="https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/translations-models/records"
-          ATTACHMENT_BASE="https://firefox-settings-attachments.cdn.mozilla.net"
-
-          # Set up Firefox models directory
+          # Keep the same local layout expected by qvac_bergamot.
           DEST_DIR="$HOME/.local/share/bergamot/models/firefox/base-memory/$pair_code"
           mkdir -p "$DEST_DIR"
 
-          # Fetch model records from Firefox Remote Settings
-          echo "Fetching model index from Mozilla..."
-          RECORDS=$(curl -sS "$RECORDS_URL")
+          S3_PATH="s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/bergamot/bergamot-${pair_code}/2025-12-18"
 
-          URLS=$(echo "$RECORDS" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          for r in data.get('data', []):
-              if r.get('fromLang') == '${src_lang}' and r.get('toLang') == '${trg_lang}':
-                  att = r.get('attachment', {})
-                  loc = att.get('location', '')
-                  name = r.get('name', '') or att.get('filename', '')
-                  if loc and name:
-                      print(f'{name}|{loc}')
-          ")
-
-          if [ -z "$URLS" ]; then
-            echo "WARNING: No Firefox model found for ${src_lang}-${trg_lang}"
-            echo "Check https://github.com/mozilla/firefox-translations-models for supported pairs"
-            exit 1
-          fi
-
-          while IFS='|' read -r FILENAME LOCATION; do
-              URL="${ATTACHMENT_BASE}/${LOCATION}"
-              echo "  Downloading ${FILENAME}..."
-              curl -sS -L -o "${DEST_DIR}/${FILENAME}" "$URL"
-          done <<< "$URLS"
-
-          echo "✅ Model files downloaded from Firefox CDN:"
+          echo "Downloading Bergamot model for $pair_code from AWS S3..."
+          echo "S3 path: $S3_PATH"
+          aws s3 cp "$S3_PATH" "$DEST_DIR/" --recursive
+          echo "Bergamot model files downloaded from AWS S3:"
           ls -la "$DEST_DIR"
-
           echo "Bergamot models installed to ~/.local/share/bergamot/models/firefox/"
         continue-on-error: true
 
