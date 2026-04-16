@@ -71,6 +71,7 @@ runs:
         set -euo pipefail
 
         ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
+        SAFE_NPMRC="${{ runner.temp }}/.npmrc_safe"
 
         ####################################################################
         # Resolve target directory (workdir preferred; path supported legacy)
@@ -102,14 +103,14 @@ runs:
         fi
 
         ####################################################################
-        # Write .npmrc
+        # Write .npmrc to a safe location (outside of repo workdir)
         ####################################################################
-        echo "Writing .npmrc in $(pwd)"
+        echo "Writing .npmrc to ${SAFE_NPMRC}"
         {
           echo "registry=https://registry.npmjs.org/"
           echo "@qvac:registry=https://registry.npmjs.org/"
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}"
-        } > .npmrc
+        } > "$SAFE_NPMRC"
 
         ####################################################################
         # Core logic preserved below
@@ -143,9 +144,15 @@ runs:
         fi
 
         SHORT_SHA=$(git -C "$ROOT" rev-parse --short HEAD || echo "unknown")
-        PACKAGE_VERSION=$(node -p "require('./package.json').version")
-        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        PACKAGE_VERSION=$(jq -r .version package.json)
+        PACKAGE_NAME=$(jq -r .name package.json)
         VERSION="${PACKAGE_VERSION}"
+
+        # Validate PACKAGE_VERSION
+        if [[ ! "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+          echo "ERROR: Invalid version format in package.json" >&2
+          exit 1
+        fi
 
         echo "Publishing package: $PACKAGE_NAME"
         echo "Publishing with tag: $TAG"
@@ -154,7 +161,7 @@ runs:
 
         ACCESS="public"
 
-        if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+        if npm view "$PACKAGE_NAME@$VERSION" version --userconfig "$SAFE_NPMRC" >/dev/null 2>&1; then
           echo "Version $VERSION already exists for $PACKAGE_NAME on npm, skipping publish"
           # NEW: explicitly mark skipped and leave published_version empty
           echo "npm_publish_skipped=true" >> "$GITHUB_OUTPUT"
@@ -164,10 +171,10 @@ runs:
 
         if ([ "${EVENT_NAME}" = "push" ] || [ "${EVENT_NAME}" = "workflow_dispatch" ]) && [ "$ACCESS" = "public" ]; then
           echo "Publishing with provenance statements"
-          npm publish --tag "$TAG" --access "$ACCESS" --provenance
+          npm publish --tag "$TAG" --access "$ACCESS" --provenance --userconfig "$SAFE_NPMRC"
           npm access public "$PACKAGE_NAME" || echo "npm access public skipped"
         else
-          npm publish --tag "$TAG" --access "$ACCESS"
+          npm publish --tag "$TAG" --access "$ACCESS" --userconfig "$SAFE_NPMRC"
         fi
 
         echo "npm publish completed successfully"
