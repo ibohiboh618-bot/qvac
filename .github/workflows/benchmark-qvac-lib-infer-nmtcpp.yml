@@ -398,7 +398,7 @@ jobs:
             libunwind-dev
 
       - name: Configure AWS credentials via OIDC
-        if: needs.setup.outputs.qvac_needed == 'true'
+        if: contains(format(',{0},', inputs.translators), ',qvac,') || contains(format(',{0},', inputs.translators), ',qvac_bergamot,')
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
         with:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
