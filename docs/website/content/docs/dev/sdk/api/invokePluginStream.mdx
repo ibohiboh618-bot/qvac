@@ -4,22 +4,33 @@ titleStyle: code
 description: "Invoke a streaming plugin handler."
 ---
 
+<WrapCode>
+
 ```typescript
-function invokePluginStream(options: InvokePluginOptions): AsyncGenerator
+function invokePluginStream(options: InvokePluginOptions<TParams>, rpcOptions?: { forceNewConnection?: boolean; healthCheckTimeout?: number; profiling?: { enabled?: boolean; includeServerBreakdown?: boolean; mode?: "summary" | "verbose" }; timeout?: number }): AsyncGenerator<TResponse>
 ```
 
-## Description
-
-Invoke a streaming plugin handler.
+</WrapCode>
 
 ## Parameters
 
 | Name | Type | Required? | Description |
 | --- | --- | :---: | --- |
-| `options` | `InvokePluginOptions` | ✓ | No description |
+| `options` | `InvokePluginOptions<TParams>` | ✓ | No description |
+| `rpcOptions` | `\{ forceNewConnection?: boolean; healthCheckTimeout?: number; profiling?: \{ enabled?: boolean; includeServerBreakdown?: boolean; mode?: "summary" \| "verbose" \}; timeout?: number \}` | ✗ | No description |
+
+### `InvokePluginOptions`
+
+| Field | Type | Required? | Description |
+| --- | --- | :---: | --- |
+| `modelId` | `string` | ✓ | — |
+| `handler` | `string` | ✓ | — |
+| `params` | `TParams` | ✓ | — |
 
 ## Returns
 
 ```typescript
-AsyncGenerator
+AsyncGenerator<TResponse>
 ```
+
+No description available

@@ -4,29 +4,66 @@ titleStyle: code
 description: "Generates completion from a language model based on conversation history."
 ---
 
+<WrapCode>
+
 ```typescript
-function completion(params: CompletionParams): { stats: Promise<any>; text: Promise<string>; tokenStream: AsyncGenerator<string>; toolCalls: Promise<any[]>; toolCallStream: AsyncGenerator<infer<any>> }
+function completion(params: CompletionParams): { stats: Promise<{ backendDevice?: "cpu" | "gpu"; cacheTokens?: number; timeToFirstToken?: number; tokensPerSecond?: number } | undefined>; text: Promise<string>; tokenStream: AsyncGenerator<string>; toolCalls: Promise<ToolCallWithCall[]>; toolCallStream: AsyncGenerator<{ call: { arguments: Record<string, unknown>; id: string; name: string; raw?: string }; type: "toolCall" } | { error: { code: "PARSE_ERROR" | "VALIDATION_ERROR" | "UNKNOWN_TOOL"; message: string; raw?: string }; type: "toolCallError" }> }
 ```
 
-## Description
-
-Generates completion from a language model based on conversation history.
+</WrapCode>
 
 ## Parameters
 
 | Name | Type | Required? | Description |
 | --- | --- | :---: | --- |
-| `params` | `CompletionParams` | ✓ | The completion parameters |
+| `params` | [`CompletionParams`](#completionparams) | ✓ | The completion parameters |
+
+### `CompletionParams`
+
+| Field | Type | Required? | Description |
+| --- | --- | :---: | --- |
+| `history` | `\{ role: string; content: string; attachments?: \{ path: string; \}[] \| undefined; \}[]` | ✓ | — |
+| `modelId` | `string` | ✓ | — |
+| `kvCache` | `string \| boolean \| undefined` | ✗ | — |
+| `stream` | `boolean` | ✓ | — |
+| `generationParams` | `\{ temp?: number \| undefined; top_p?: number \| undefined; top_k?: number \| undefined; predict?: number \| undefined; seed?: number \| undefined; frequency_penalty?: number \| undefined; presence_penalty?: number \| undefined; repeat_penalty?: number \| undefined; \} \| undefined` | ✗ | — |
+| `tools` | `\{ type: "function"; name: string; description: string; parameters: \{ type: "object"; properties: Record<string, \{ type: "string" \| "number" \| "boolean" \| "object" \| "array" \| "integer"; description?: string \| undefined; enum?: string[] \| undefined; \}>; required?: string[] \| undefined; \}; \}[] \| ToolInput[]` | ✗ | — |
+| `mcp` | `McpClientInput[]` | ✗ | — |
+| `rpcOptions` | `\{ timeout?: number \| undefined; healthCheckTimeout?: number \| undefined; forceNewConnection?: boolean \| undefined; profiling?: \{ enabled?: boolean \| undefined; includeServerBreakdown?: boolean \| undefined; mode?: "summary" \| ... 1 more ... \| undefined; \} \| undefined; \}` | ✗ | — |
+
+#### `McpClientInput`
+
+| Field | Type | Required? | Description |
+| --- | --- | :---: | --- |
+| `client` | `McpClient` | ✓ | — |
+| `includeResources` | `boolean` | ✗ | — |
+
+##### `McpClient`
+
+| Field | Type | Required? | Description |
+| --- | --- | :---: | --- |
+| `listTools` | `() => Promise<\{ [key: string]: unknown; tools: McpTool[]; \}>` | ✓ | — |
+| `callTool` | `(params: \{ name: string; arguments: Record<string, unknown>; \}) => Promise<Record<string, unknown> \| McpToolCallResult>` | ✓ | — |
+| `listResources` | `() => Promise<\{ [key: string]: unknown; resources: McpResource[]; \}>` | ✗ | — |
+| `readResource` | `(params: \{ uri: string; \}) => Promise<\{ [key: string]: unknown; contents: unknown[]; \}>` | ✗ | — |
 
 ## Returns
 
 ```typescript
-{ stats: Promise<any>; text: Promise<string>; tokenStream: AsyncGenerator<string>; toolCalls: Promise<any[]>; toolCallStream: AsyncGenerator<infer<any>> }
+{ stats: Promise<{ backendDevice?: "cpu" | "gpu"; cacheTokens?: number; timeToFirstToken?: number; tokensPerSecond?: number } | undefined>; text: Promise<string>; tokenStream: AsyncGenerator<string>; toolCalls: Promise<ToolCallWithCall[]>; toolCallStream: AsyncGenerator<{ call: { arguments: Record<string, unknown>; id: string; name: string; raw?: string }; type: "toolCall" } | { error: { code: "PARSE_ERROR" | "VALIDATION_ERROR" | "UNKNOWN_TOOL"; message: string; raw?: string }; type: "toolCallError" }> }
 ```
 
+No description available
 
+| Field | Type | Description |
+| --- | --- | --- |
+| `stats` | `Promise<\{ backendDevice?: "cpu" \| "gpu"; cacheTokens?: number; timeToFirstToken?: number; tokensPerSecond?: number \} \| undefined>` | — |
+| `text` | `Promise<string>` | — |
+| `tokenStream` | `AsyncGenerator<string>` | — |
+| `toolCalls` | `Promise<ToolCallWithCall[]>` | — |
+| `toolCallStream` | `AsyncGenerator<\{ call: \{ arguments: Record<string, unknown>; id: string; name: string; raw?: string \}; type: "toolCall" \} \| \{ error: \{ code: "PARSE_ERROR" \| "VALIDATION_ERROR" \| "UNKNOWN_TOOL"; message: string; raw?: string \}; type: "toolCallError" \}>` | — |
 
-## Examples
+## Example
 
 ```typescript
 import { z } from "zod";

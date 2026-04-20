@@ -12,14 +12,18 @@ export interface ExpandedType {
   children: ExpandedType[];
 }
 
+export type ContentSource = "extracted" | "ai";
+
 export interface ApiFunction {
   name: string;
   signature: string;
   description: string;
+  descriptionSource?: ContentSource;
   parameters: Array<{
     name: string;
     type: string;
     required: boolean;
+    defaultValue?: string;
     description: string;
   }>;
   expandedParams: ExpandedType[];
@@ -28,7 +32,25 @@ export interface ApiFunction {
   expandedReturns: ExpandedType[];
   throws?: Array<{ error: string; description: string }>;
   examples?: string[];
+  examplesSource?: ContentSource;
   deprecated?: string;
+}
+
+export interface ApiObject {
+  name: string;
+  description: string;
+  descriptionSource?: ContentSource;
+  fields: TypeField[];
+  children: ExpandedType[];
+  examples?: string[];
+  examplesSource?: ContentSource;
+}
+
+export interface ApiType {
+  name: string;
+  description: string;
+  definition: string;
+  members?: Array<{ name: string; description: string }>;
 }
 
 export interface ErrorEntry {
@@ -41,12 +63,15 @@ export interface GenerateOptions {
   updateLatest: boolean;
   devMode?: boolean;
   forceExtract?: boolean;
+  noAi?: boolean;
 }
 
 export interface ApiData {
   version: string;
   generatedAt: string;
   functions: ApiFunction[];
+  objects?: ApiObject[];
+  types?: ApiType[];
   errors: {
     client: ErrorEntry[];
     server: ErrorEntry[];
