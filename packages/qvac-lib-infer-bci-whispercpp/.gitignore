@@ -4,6 +4,8 @@ prebuilds/
 models/
 package-lock.json
 test/fixtures/*.bin
+test/**/all.js
 .clang-format
 .clang-tidy
 .valgrind.supp
+cpp-test-results.xml

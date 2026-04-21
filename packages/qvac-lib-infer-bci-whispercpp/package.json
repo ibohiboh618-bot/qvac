@@ -15,7 +15,7 @@
     "test": "npm run test:integration",
     "test:integration": "brittle-bare test/integration/addon.test.js",
     "test:cpp:build": "bare-make generate -D BUILD_TESTING=ON && bare-make build --target test-bci-core && bare-make install",
-    "test:cpp:run": "cd build/addon/tests/ && ./test-bci-core --gtest_output=xml:cpp-test-results.xml",
+    "test:cpp:run": "build/addon/tests/test-bci-core --gtest_output=xml:build/addon/tests/cpp-test-results.xml",
     "test:cpp": "npm run test:cpp:build && npm run test:cpp:run",
     "test:dts": "tsc -p tsconfig.dts.json"
   },
@@ -55,12 +55,10 @@
   "devDependencies": {
     "@types/node": "^24.2.1",
     "bare-buffer": "^3.4.2",
-    "bare-fs": "^4.5.1",
     "bare-tty": "^5.0.3",
     "brittle": "^3.17.0",
     "cmake-bare": "^1.7.5",
     "cmake-vcpkg": "^1.1.0",
-    "fs": "npm:bare-fs",
     "os": "npm:bare-os@^3.6.2",
     "standard": "^17.1.2",
     "tty": "npm:bare-node-tty",
@@ -70,8 +68,10 @@
     "@qvac/error": "^0.1.0",
     "@qvac/infer-base": "^0.4.0",
     "@qvac/logging": "^0.1.0",
+    "bare-fs": "^4.5.1",
     "bare-path": "^3.0.0",
     "bare-stream": "^2.7.0",
+    "fs": "npm:bare-fs",
     "path": "npm:bare-path"
   },
   "exports": {

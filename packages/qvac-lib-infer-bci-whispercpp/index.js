@@ -80,14 +80,7 @@ class BCIWhispercpp {
   }
 
   async _load () {
-    // BCI-tuned whisper defaults (beam_size, suppress_nst, temperature,
-    // length_penalty, ...) are applied natively in
-    // addon/src/model-interface/bci/BCIConfig.cpp::toWhisperFullParams.
-    // Only the transport-level defaults live in JS; everything else is
-    // delegated to the C++ layer to avoid double-specification.
     const whisperConfig = {
-      language: 'en',
-      n_threads: 0,
       ...(this._config.whisperConfig || {})
     }
 
@@ -166,7 +159,6 @@ class BCIWhispercpp {
       }
 
       const finalized = response.await()
-      finalized.catch(() => {})
       response.await = () => finalized
       return response
     })
@@ -226,12 +218,12 @@ class BCIWhispercpp {
 
   async unload () {
     return await this._withExclusiveRun(async () => {
+      if (this._job.active) {
+        this._job.fail(new Error('Model was unloaded'))
+      }
       if (this.addon) {
         await this.addon.destroyInstance()
         this.addon = null
-      }
-      if (this._job.active) {
-        this._job.fail(new Error('Model was unloaded'))
       }
       this.state.configLoaded = false
     })
@@ -239,12 +231,12 @@ class BCIWhispercpp {
 
   async destroy () {
     return await this._withExclusiveRun(async () => {
+      if (this._job.active) {
+        this._job.fail(new Error('Model was destroyed'))
+      }
       if (this.addon) {
         await this.addon.destroyInstance()
         this.addon = null
-      }
-      if (this._job.active) {
-        this._job.fail(new Error('Model was destroyed'))
       }
       this.state.configLoaded = false
       this.state.destroyed = true

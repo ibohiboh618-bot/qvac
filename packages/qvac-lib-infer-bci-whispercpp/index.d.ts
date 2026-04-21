@@ -117,6 +117,13 @@ declare class BCIWhispercpp {
  */
 declare function computeWER(hypothesis: string, reference: string): number
 
+declare interface AddonLogging {
+  setLogger(callback: (priority: number, message: string) => void): void
+  releaseLogger(): void
+}
+
+declare const addonLogging: AddonLogging
+
 declare namespace BCIWhispercpp {
   export {
     BCIWhispercpp as default,
@@ -128,6 +135,8 @@ declare namespace BCIWhispercpp {
     BCIWhispercppConfig,
     BCIWhispercppState,
     TranscriptSegment,
+    AddonLogging,
+    addonLogging,
     computeWER
   }
 }

@@ -17,7 +17,7 @@ set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg-overlays;${VCPKG_OVER
 # directory uniformly avoids platform-conditional surprises.
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
-project(bci-whispercpp CXX C)
+project(qvac-lib-infer-bci-whispercpp CXX C)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_compile_options(-stdlib=libc++)
@@ -39,14 +39,14 @@ if(WIN32)
   add_definitions(-DNOMINMAX -DWIN32_LEAN_AND_MEAN -DNOGDI)
 endif()
 
-add_bare_module(bci-whispercpp EXPORTS)
+add_bare_module(qvac-lib-infer-bci-whispercpp EXPORTS)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_options(${bci-whispercpp}_module PRIVATE -Wl,--exclude-libs,ALL)
+  target_link_options(${qvac-lib-infer-bci-whispercpp}_module PRIVATE -Wl,--exclude-libs,ALL)
 endif()
 
 target_sources(
-  ${bci-whispercpp}
+  ${qvac-lib-infer-bci-whispercpp}
   PRIVATE
     ${PROJECT_SOURCE_DIR}/addon/src/js-interface/binding.cpp
     ${PROJECT_SOURCE_DIR}/addon/src/js-interface/JSAdapter.cpp
@@ -56,7 +56,7 @@ target_sources(
 )
 
 target_include_directories(
-  ${bci-whispercpp}
+  ${qvac-lib-infer-bci-whispercpp}
   PRIVATE
     ${PROJECT_SOURCE_DIR}/addon
     ${PROJECT_SOURCE_DIR}/addon/src
@@ -65,16 +65,16 @@ target_include_directories(
 )
 
 target_link_libraries(
-  ${bci-whispercpp}
+  ${qvac-lib-infer-bci-whispercpp}
   PRIVATE
     whisper::whisper
 )
 
-target_compile_definitions(${bci-whispercpp} PUBLIC JS_LOGGER)
+target_compile_definitions(${qvac-lib-infer-bci-whispercpp} PUBLIC JS_LOGGER)
 
 if(WIN32)
   target_link_libraries(
-    ${bci-whispercpp}
+    ${qvac-lib-infer-bci-whispercpp}
     PRIVATE
       msvcrt.lib
   )

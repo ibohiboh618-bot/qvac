@@ -66,7 +66,7 @@ VCPKG_ROOT=/path/to/vcpkg npm run build
 
 ### Prerequisites
 
-- **Bare runtime** >= 1.19.0
+- **Bare runtime** >= 1.24.0
 - **CMake** >= 3.25
 - **vcpkg** with `VCPKG_ROOT` environment variable set
 
