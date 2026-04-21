@@ -79,6 +79,9 @@ jobs:
     environment: release
     name: ${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.tags }}
 
+    env:
+      VCPKG_BUILD_TYPE: release
+
     steps:
       - if: ${{ matrix.platform == 'android' }}
         name: Select NDK
@@ -128,7 +131,7 @@ jobs:
         shell: powershell
         run: |
           git config --system core.longpaths true
-          choco upgrade llvm
+          choco upgrade llvm -y --no-progress
 
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2

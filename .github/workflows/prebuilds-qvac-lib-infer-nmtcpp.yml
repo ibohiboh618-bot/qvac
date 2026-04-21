@@ -69,6 +69,9 @@ jobs:
     environment: release
     name: ${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.tags }}
 
+    env:
+      VCPKG_BUILD_TYPE: release
+
     steps:
       - name: Echo workflow inputs
         shell: bash
