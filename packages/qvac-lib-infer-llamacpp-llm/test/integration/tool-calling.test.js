@@ -39,7 +39,8 @@ const BASE_CONFIG = {
   temp: '0.1',
   n_predict: '1024',
   verbosity: '2',
-  tools: 'true'
+  tools: 'true',
+  no_mmap: 'true'
 }
 
 const prompt1Base = [

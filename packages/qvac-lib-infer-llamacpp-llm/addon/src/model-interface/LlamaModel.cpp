@@ -681,6 +681,17 @@ void LlamaModel::commonParamsParse(
     configFilemap.erase(iter);
   }
 
+  // parse no_mmap flag, disables mmap of model weights when true
+  if (auto iter = configFilemap.find("no_mmap");
+      iter != configFilemap.end()) {
+    std::string val = iter->second;
+    std::transform(val.begin(), val.end(), val.begin(), ::tolower);
+    if (val == "true") {
+      params.use_mmap = false;
+    }
+    configFilemap.erase(iter);
+  }
+
   if (outToolsAtEnd) {
     auto arch = metadata_.tryGetString("general.architecture");
     if (!arch.has_value() || arch.value() != "qwen3") {

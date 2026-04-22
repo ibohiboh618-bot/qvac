@@ -32,7 +32,8 @@ const BASE_CONFIG = {
   n_predict: '256',
   temp: '0.7',
   seed: '1',
-  verbosity: '2'
+  verbosity: '2',
+  no_mmap: 'true'
 }
 
 const FOLLOW_UP_MESSAGE = { role: 'user', content: 'Reference the cached conversation and confirm the color again.' }
