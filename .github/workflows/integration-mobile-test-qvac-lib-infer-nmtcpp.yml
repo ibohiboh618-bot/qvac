@@ -1291,12 +1291,29 @@ jobs:
             echo "run_arn_2=$RUN_ARN_2" >> $GITHUB_OUTPUT
             echo "run_count=2" >> $GITHUB_OUTPUT
           else
-            POOL_ARN="${{ secrets.IOS_DEVICE_POOL_ARN_NMTCPP }}"
-            echo "🚀 Scheduling iOS run..."
-            RUN_ARN_1=$(schedule_run_with_pool "$POOL_ARN" "$RUN_NAME")
-            echo "✅ iOS run scheduled: $RUN_ARN_1"
+            echo "🚀 Scheduling parallel iOS runs (iPhone 16 Pro + iPhone 16e)..."
+
+            echo "Querying available iPhone 16 Pro devices..."
+            aws devicefarm list-devices --region us-west-2 \
+              --filters '[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Apple"]},{"attribute":"MODEL","operator":"CONTAINS","values":["iPhone 16 Pro"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["IOS"]}]' \
+              --query 'devices[].{name:name,model:model,os:os,availability:availability}' --output table || true
+
+            echo "Querying available iPhone 16e devices..."
+            aws devicefarm list-devices --region us-west-2 \
+              --filters '[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Apple"]},{"attribute":"MODEL","operator":"CONTAINS","values":["iPhone 16e"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["IOS"]}]' \
+              --query 'devices[].{name:name,model:model,os:os,availability:availability}' --output table || true
+
+            IPHONE_16_PRO_FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Apple"]},{"attribute":"MODEL","operator":"CONTAINS","values":["iPhone 16 Pro"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["IOS"]}],"maxDevices":1}'
+            RUN_ARN_1=$(schedule_run_with_filter "$RUN_NAME-iPhone16Pro" "$IPHONE_16_PRO_FILTER")
+            echo "✅ iPhone 16 Pro run scheduled: $RUN_ARN_1"
+
+            IPHONE_16E_FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Apple"]},{"attribute":"MODEL","operator":"CONTAINS","values":["iPhone 16e"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["IOS"]}],"maxDevices":1}'
+            RUN_ARN_2=$(schedule_run_with_filter "$RUN_NAME-iPhone16e" "$IPHONE_16E_FILTER")
+            echo "✅ iPhone 16e run scheduled: $RUN_ARN_2"
+
             echo "run_arn_1=$RUN_ARN_1" >> $GITHUB_OUTPUT
-            echo "run_count=1" >> $GITHUB_OUTPUT
+            echo "run_arn_2=$RUN_ARN_2" >> $GITHUB_OUTPUT
+            echo "run_count=2" >> $GITHUB_OUTPUT
           fi
 
           echo "All runs scheduled."
