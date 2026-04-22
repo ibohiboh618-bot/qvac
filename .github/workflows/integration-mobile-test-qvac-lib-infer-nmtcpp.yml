@@ -164,7 +164,7 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
-      - name: Download prebuilds from package
+      - name: Download package from npm
         if: inputs.package
         working-directory: ./monorepo/${{ inputs.workdir || env.PKG_DIR }}
         run: |
@@ -189,13 +189,21 @@ jobs:
             exit 1
           fi
 
-          # Move prebuilds to expected location
-          mv package/prebuilds ./prebuilds
+          # Overlay the entire downloaded package on top of the local source so
+          # JS wrapper + prebuilds + package.json + third-party all come from
+          # the published version being tested. Without this, any workflow_dispatch
+          # targeting a version with a different major than the current monorepo
+          # HEAD would produce a frankenstein build (e.g. 2.x JS wrapper on top
+          # of 1.x native prebuilds), making the run meaningless for regression
+          # checks. Local-only files (e.g. test/mobile/testAssets/*) are kept.
+          echo "🔀 Overlaying downloaded package over local source..."
+          cp -Rp package/. .
 
-          # Cleanup
+          # Cleanup the staging dir and the tarball
           rm -rf package *.tgz
 
-          echo "✅ Prebuilds downloaded from npm:"
+          echo "✅ Package materialized from npm ($PACKAGE_SPEC):"
+          node -e "const p = require('./package.json'); console.log('   name:    ' + p.name); console.log('   version: ' + p.version);"
           ls -la prebuilds/
 
       - name: Verify and prepare prebuilds
