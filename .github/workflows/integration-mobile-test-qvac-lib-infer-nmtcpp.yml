@@ -1173,16 +1173,41 @@ jobs:
             printf '    commands:\n'
             printf '      - echo "Test completed"\n'
 
-          # iOS-specific: Output captured device logs
+          # iOS-specific: Output captured device logs.
+          # On Device Farm, stderr writes from the C++ side (e.g. GGML's
+          # default ggml_log_set(nullptr,...) path) are NOT captured in
+          # device_console.log — that file is rarely produced. The real
+          # source of truth is appium.log, which captures the iOS device
+          # os_log/NSLog stream when appium:showIOSLog=true and
+          # appium:realDeviceLogger=deviceconsole are set (as they are
+          # in this workflow's WDIO config). JS console.log from Bare is
+          # written to os_log, so anything routed from C++ via QLOG →
+          # JsLogger (e.g. the new nmt_ggml_log_callback) lands there.
           if [ "${{ matrix.platform }}" == "iOS" ]; then
             printf '      - echo ""\n'
             printf '      - echo "📱 ========== iOS Device Console Logs =========="\n'
             printf '      - |\n'
             printf '        if [ -f "$DEVICEFARM_LOG_DIR/device_console.log" ]; then\n'
-            printf '          echo "Device console log found, showing BareKit output:"\n'
-            printf '          grep -i "bare\|console\|model\|embedding\|test\|error" "$DEVICEFARM_LOG_DIR/device_console.log" || echo "No matching logs found"\n'
+            printf '          echo "device_console.log found, showing BareKit/GGML/NMT output:"\n'
+            printf '          grep -iE "bare|\\[ggml\\]|ggml_|metal|nmt|bergamot|indictrans|translation|c\\+\\+ info|c\\+\\+ debug|c\\+\\+ error|c\\+\\+ warn|app crashed|exception|abort|segfault" "$DEVICEFARM_LOG_DIR/device_console.log" || echo "No matching logs found"\n'
             printf '        else\n'
             printf '          echo "No device_console.log file found"\n'
+            printf '        fi\n'
+            printf '      - echo ""\n'
+            printf '      - echo "📱 ========== Appium iOS Native Logs (from appium.log) =========="\n'
+            printf '      - |\n'
+            printf '        if [ -f "$DEVICEFARM_LOG_DIR/appium.log" ]; then\n'
+            printf '          echo "Size: $(wc -c < "$DEVICEFARM_LOG_DIR/appium.log") bytes"\n'
+            printf '          echo "---- BareKit / GGML / NMT filtered lines (last 500 matches) ----"\n'
+            printf '          grep -iE "bare|\\[ggml\\]|ggml_|metal|nmt|bergamot|indictrans|translation|c\\+\\+ info|c\\+\\+ debug|c\\+\\+ error|c\\+\\+ warn|app crashed|exception|abort|segfault|exc_bad_access|sigsegv|null pointer" "$DEVICEFARM_LOG_DIR/appium.log" | tail -500 || echo "No matching lines in appium.log"\n'
+            printf '          echo ""\n'
+            printf '          echo "---- Crash-adjacent lines (context around any crash marker) ----"\n'
+            printf '          grep -niE "crash|abort|exception|sigsegv|exc_bad_access|null pointer|fatal|not running" "$DEVICEFARM_LOG_DIR/appium.log" | tail -80 || echo "No crash markers in appium.log"\n'
+            printf '          echo ""\n'
+            printf '          echo "---- Last 200 lines of appium.log (final state before termination) ----"\n'
+            printf '          tail -200 "$DEVICEFARM_LOG_DIR/appium.log"\n'
+            printf '        else\n'
+            printf '          echo "No appium.log file found (unexpected)"\n'
             printf '        fi\n'
             printf '      - echo ""\n'
             printf '      - echo "📋 Available log files:"\n'
