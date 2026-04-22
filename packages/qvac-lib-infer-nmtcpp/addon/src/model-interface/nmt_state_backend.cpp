@@ -2,9 +2,7 @@
 #include "nmt_state_backend.hpp"
 
 #include <cstdint>
-#include <cstdio>
 #include <sstream>
-#include <string>
 #include <vector>
 
 #include <ggml-backend.h>
@@ -304,64 +302,10 @@ void nmt_kv_cache_clear(struct nmt_kv_cache& cache) {
   }
 }
 
-// Route GGML logs to QLOG instead of stderr.
-//
-// GGML's default behavior is fprintf(stderr, ...) for all its internal
-// logs (backend init, Metal device probing, warnings, errors, etc.). On
-// iOS real devices, stderr writes are NOT captured by Appium's
-// realDeviceLogger (deviceconsole), which only reads os_log/NSLog output.
-// That makes native-side failures such as the Apple9-family crash inside
-// ggml_metal_device_init effectively invisible in Device Farm CI — the
-// app dies with zero breadcrumbs and all we see is "App state: 1".
-//
-// Routing through QLOG → JsLogger → JS console.log → Bare runtime
-// surfaces these messages in appium.log on Device Farm and in the Xcode
-// console during local runs, which is what we need to actually diagnose
-// Metal / GGML crashes.
-static void nmt_ggml_log_callback(
-    ggml_log_level level, const char* text, void* /*user_data*/) {
-  if (text == nullptr) {
-    return;
-  }
-  using qvac_lib_inference_addon_cpp::logger::Priority;
-  Priority prio = Priority::DEBUG;
-  switch (level) {
-  case GGML_LOG_LEVEL_ERROR:
-    prio = Priority::ERROR;
-    break;
-  case GGML_LOG_LEVEL_WARN:
-    prio = Priority::WARNING;
-    break;
-  case GGML_LOG_LEVEL_INFO:
-    prio = Priority::INFO;
-    break;
-  case GGML_LOG_LEVEL_DEBUG:
-  case GGML_LOG_LEVEL_CONT:
-  case GGML_LOG_LEVEL_NONE:
-  default:
-    prio = Priority::DEBUG;
-    break;
-  }
-  std::string msg{text};
-  // GGML frequently terminates its messages with '\n'; strip it so the
-  // logger doesn't produce double-spaced lines.
-  if (!msg.empty() && msg.back() == '\n') {
-    msg.pop_back();
-  }
-  // GGML invokes this callback synchronously from inside backend code
-  // (including during init, before the JS logger may be ready). If QLOG
-  // throws (e.g. no JsLogger registered yet, or uv loop shutting down),
-  // we MUST NOT propagate the exception back into GGML. Fall back to
-  // stderr so we preserve at least the prior behavior in edge cases.
-  try {
-    QLOG(prio, std::string{"[GGML] "} + msg);
-  } catch (...) {
-    std::fprintf(stderr, "[GGML] %s\n", msg.c_str());
-  }
-}
-
 struct nmt_global {
-  ggml_log_callback log_callback = nmt_ggml_log_callback;
+  // We save the log callback globally
+  // ggml_log_callback log_callback = nmt_log_callback_default;
+  ggml_log_callback log_callback = nullptr;
   void* log_callback_user_data = nullptr;
 };
 
