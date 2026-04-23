@@ -1,8 +1,15 @@
 import { z } from "zod";
-import { toolSchema, toolCallSchema, toolCallEventSchema } from "./tools";
+import { toolSchema } from "./tools";
+import { completionEventSchema } from "./completion-event";
+
+export { completionStatsSchema, type CompletionStats } from "./completion-event";
 
 export const attachmentSchema = z.object({
-  path: z.string(),
+  path: z
+    .string()
+    .describe(
+      "Absolute or SDK-resolvable path to the attachment file (e.g., image for multimodal models).",
+    ),
 });
 
 const kvCacheSchema = z.union([
@@ -12,34 +19,98 @@ const kvCacheSchema = z.union([
 
 export const generationParamsSchema = z
   .object({
-    temp: z.number().optional(),
-    top_p: z.number().optional(),
-    top_k: z.number().optional(),
-    predict: z.number().optional(),
-    seed: z.number().optional(),
-    frequency_penalty: z.number().optional(),
-    presence_penalty: z.number().optional(),
-    repeat_penalty: z.number().optional(),
+    temp: z
+      .number()
+      .optional()
+      .describe("Sampling temperature (typically 0–2)."),
+    top_p: z
+      .number()
+      .optional()
+      .describe("Top-p (nucleus) sampling cutoff (0–1)."),
+    top_k: z
+      .number()
+      .optional()
+      .describe("Top-k sampling — keep only the top K tokens."),
+    predict: z
+      .number()
+      .optional()
+      .describe(
+        "Max tokens to predict. `-1` = until stop token, `-2` = until context filled.",
+      ),
+    seed: z
+      .number()
+      .optional()
+      .describe("Random seed for reproducibility."),
+    frequency_penalty: z
+      .number()
+      .optional()
+      .describe("Penalty applied to tokens based on frequency so far."),
+    presence_penalty: z
+      .number()
+      .optional()
+      .describe("Penalty applied to tokens that have already appeared."),
+    repeat_penalty: z
+      .number()
+      .optional()
+      .describe("Penalty applied to repeated tokens."),
   })
   .strict();
 
 export const completionParamsSchema = z.object({
-  history: z.array(
-    z.object({
-      role: z.string(),
-      content: z.string(),
-      attachments: z.array(attachmentSchema).optional(),
-    }),
-  ),
-  modelId: z.string(),
-  kvCache: kvCacheSchema.optional(),
+  history: z
+    .array(
+      z.object({
+        role: z
+          .string()
+          .describe(
+            'Message role (e.g., `"user"`, `"assistant"`, `"system"`).',
+          ),
+        content: z.string().describe("Message content."),
+        attachments: z
+          .array(attachmentSchema)
+          .optional()
+          .describe("Optional file attachments for multimodal models."),
+      }),
+    )
+    .describe("Array of conversation messages sent to the model."),
+  modelId: z
+    .string()
+    .describe("The identifier of the model to use for completion."),
+  kvCache: kvCacheSchema
+    .optional()
+    .describe(
+      "KV cache configuration — `true` to auto-generate a cache key from history, a string to use a custom key, or `false`/`undefined` to disable.",
+    ),
 });
 
 export const completionClientParamsSchema = completionParamsSchema.extend({
-  tools: z.array(toolSchema).optional(),
-  stream: z.boolean(),
+  tools: z
+    .array(toolSchema)
+    .optional()
+    .describe(
+      "Optional array of tools (full `Tool` objects or Zod-schema `ToolInput` definitions) the model can call.",
+    ),
+  stream: z
+    .boolean()
+    .describe(
+      "Whether to stream tokens (`true`) or return the complete response once (`false`).",
+    ),
   kvCache: kvCacheSchema.optional(),
-  generationParams: generationParamsSchema.optional(),
+  generationParams: generationParamsSchema
+    .optional()
+    .describe("Optional sampling / generation parameters."),
+  captureThinking: z
+    .boolean()
+    .optional()
+    .describe(
+      "When `true`, capture and emit reasoning/thinking deltas separately from content deltas; requires a model that frames its thinking output.",
+    ),
+  emitRawDeltas: z
+    .boolean()
+    .optional()
+    .describe(
+      "When `true`, also emit raw per-token deltas in the event stream in addition to normalized `contentDelta` events.",
+    ),
 });
 
 export const completionStreamRequestSchema =
@@ -47,22 +118,13 @@ export const completionStreamRequestSchema =
     type: z.literal("completionStream"),
   });
 
-export const completionStatsSchema = z.object({
-  timeToFirstToken: z.number().optional(),
-  tokensPerSecond: z.number().optional(),
-  cacheTokens: z.number().optional(),
-  backendDevice: z.enum(["cpu", "gpu"]).optional(),
-});
-
-export const completionStreamResponseSchema = z.object({
-  type: z.literal("completionStream"),
-  token: z.string(),
-  done: z.boolean().optional(),
-  stats: completionStatsSchema.optional(),
-  toolCallEvent: toolCallEventSchema.optional(),
-  toolCalls: z.array(toolCallSchema).optional(),
-  error: z.string().optional(),
-});
+export const completionStreamResponseSchema = z
+  .object({
+    type: z.literal("completionStream"),
+    done: z.boolean().optional(),
+    events: z.array(completionEventSchema),
+  })
+  .strict();
 
 export type GenerationParams = z.infer<typeof generationParamsSchema>;
 export type CompletionParams = z.infer<typeof completionParamsSchema>;
@@ -76,4 +138,3 @@ export type CompletionStreamResponse = z.infer<
   typeof completionStreamResponseSchema
 >;
 export type Attachment = z.infer<typeof attachmentSchema>;
-export type CompletionStats = z.infer<typeof completionStatsSchema>;

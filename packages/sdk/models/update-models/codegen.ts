@@ -3,21 +3,36 @@ import type { ProcessedModel } from "./types";
 
 export function generateModelsFileContent(models: ProcessedModel[]): string {
   const usedNames = new Set<string>();
+  const named = new Map<ProcessedModel, string>();
+
+  const exportable = models.filter((m) => !m.isCompanionOnly);
+  const companionOnly = models.filter((m) => m.isCompanionOnly);
+
+  for (const m of exportable) {
+    named.set(m, assignName(m, usedNames));
+  }
+  for (const m of companionOnly) {
+    named.set(m, assignName(m, usedNames));
+  }
 
   const modelsWithNames = models.map((m) => ({
     ...m,
-    name: generateExportName({
-      path: m.registryPath,
-      engine: m.engine,
-      name: m.modelName,
-      quantization: m.quantization,
-      params: m.params,
-      tags: m.tags,
-      usedNames,
-    }),
+    name: named.get(m)!,
   }));
 
   return generateFileContentWithNames(modelsWithNames);
+}
+
+function assignName(m: ProcessedModel, usedNames: Set<string>): string {
+  return generateExportName({
+    path: m.registryPath,
+    engine: m.engine,
+    name: m.modelName,
+    quantization: m.quantization,
+    params: m.params,
+    tags: m.tags,
+    usedNames,
+  });
 }
 
 function generateFileContentWithNames(
@@ -46,13 +61,19 @@ function generateFileContentWithNames(
         entry += `,\n    shardMetadata: ${JSON.stringify(m.shardMetadata)}`;
       }
 
+      if (m.companionSet) {
+        entry += `,\n    companionSet: ${JSON.stringify(m.companionSet)}`;
+      }
+
       entry += "\n  }";
       return entry;
     })
     .join(",\n");
 
   const exports = modelsWithNames
-    .map((m, i) => {
+    .filter((m) => !m.isCompanionOnly)
+    .map((m) => {
+      const i = modelsWithNames.indexOf(m);
       return `export const ${m.name} = {
   name: "${m.name}",
   src: \`registry://\${models[${i}].registrySource}/\${models[${i}].registryPath}\`,
@@ -100,6 +121,23 @@ export type RegistryItem = {
     blobBlockLength: number;
     blobByteOffset: number;
   }[];
+  companionSet?: {
+    setKey: string;
+    primaryKey: string;
+    files: readonly {
+      key: string;
+      registryPath: string;
+      registrySource: string;
+      targetName: string;
+      expectedSize: number;
+      sha256Checksum: string;
+      blobCoreKey: string;
+      blobBlockOffset: number;
+      blobBlockLength: number;
+      blobByteOffset: number;
+      primary?: boolean;
+    }[];
+  };
 };
 
 export type ModelConstant = {
@@ -128,17 +166,33 @@ ${entries}
 // These contain all metadata and can be used directly: loadModel({ modelSrc: WHISPER_TINY, ... })
 ${exports}
 
-// Helper function to get model by name
+/**
+ * Looks up a model in the built-in catalog by its constant name.
+ *
+ * @param name - The model constant name (e.g. \`"WHISPER_TINY"\`) to look up.
+ * @returns The matching \`RegistryItem\`, or \`undefined\` when no catalog entry has that name.
+ */
 export function getModelByName(name: string): RegistryItem | undefined {
   return models.find((model) => model.name === name);
 }
 
-// Helper function to get model by registry path
+/**
+ * Looks up a model in the built-in catalog by its registry path.
+ *
+ * @param registryPath - Registry-relative path of the model to look up.
+ * @returns The matching \`RegistryItem\`, or \`undefined\` when no catalog entry has that registry path.
+ */
 export function getModelByPath(registryPath: string): RegistryItem | undefined {
   return models.find((model) => model.registryPath === registryPath);
 }
 
-// Helper function for blob-based lookups
+/**
+ * Looks up a model in the built-in catalog by model file ID and blob core key.
+ *
+ * @param modelId - The model file ID to match against the catalog.
+ * @param blobCoreKey - The Hyperdrive blob core key to match against the catalog.
+ * @returns The matching \`RegistryItem\`, or \`undefined\` when no catalog entry has both the given \`modelId\` and \`blobCoreKey\`.
+ */
 export function getModelBySrc(modelId: string, blobCoreKey: string): RegistryItem | undefined {
   return models.find((model) => model.modelId === modelId && model.blobCoreKey === blobCoreKey);
 }
