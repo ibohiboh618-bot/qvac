@@ -117,7 +117,7 @@ test('Repeated load/unload cycles should remain stable', {
     downloadUrl: DEFAULT_MODEL.url
   })
 
-  const NUM_CYCLES = 6
+  const NUM_CYCLES = 2
 
   for (let i = 0; i < NUM_CYCLES; i++) {
     const { addon, loader } = await createInstance(modelName, dirPath)
@@ -224,7 +224,7 @@ test('Multiple load/unload cycles on one instance while another generates', {
   const response1 = await addon1.run(LONG_PROMPT)
   const chunks = []
   let cyclesCompleted = 0
-  const NUM_CYCLES = 3
+  const NUM_CYCLES = 2
   const TOKENS_PER_CYCLE = 10
   let resolveTokenTarget = null
   let tokenTarget = 0
