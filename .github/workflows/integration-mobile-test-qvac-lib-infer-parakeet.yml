@@ -1484,6 +1484,77 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+      # ─── Mobile performance report (additive) ───
+      # Scrapes [PERF_REPORT_START]...[PERF_REPORT_END] markers (or chunked
+      # [PERF_CHUNK] sequences) from the downloaded Device Farm logs into a
+      # canonical perf-report.json that scripts/perf-report/aggregate.js
+      # already understands. Same shape as the OCR mobile pipeline so the
+      # weekly Performance Report workflow can pick parakeet up automatically.
+      - name: Extract performance report from mobile logs
+        if: always() && steps.schedule_run.outputs.run_arn_1
+        run: |
+          ARTIFACT_DIR="${GITHUB_WORKSPACE}/devicefarm-logs/${{ matrix.platform }}"
+          CONSOLE_DIR="${GITHUB_WORKSPACE}/console-logs/${{ matrix.platform }}"
+          OUTPUT_DIR="${GITHUB_WORKSPACE}/perf-results/${{ matrix.platform }}"
+          mkdir -p "$OUTPUT_DIR"
+
+          SEARCH_DIR=""
+          if [ -d "$CONSOLE_DIR" ] && [ -n "$(ls -A "$CONSOLE_DIR" 2>/dev/null)" ]; then
+            SEARCH_DIR="$CONSOLE_DIR"
+          elif [ -d "$ARTIFACT_DIR" ] && [ -n "$(ls -A "$ARTIFACT_DIR" 2>/dev/null)" ]; then
+            SEARCH_DIR="$ARTIFACT_DIR"
+          fi
+
+          if [ -z "$SEARCH_DIR" ]; then
+            echo "No console-logs/ or devicefarm-logs/ available — skipping perf extraction"
+            exit 0
+          fi
+
+          echo "Scanning $SEARCH_DIR for [PERF_REPORT_START] / [PERF_CHUNK] markers..."
+          node "${GITHUB_WORKSPACE}/addon/scripts/perf-report/extract-from-log.js" \
+            "$SEARCH_DIR" \
+            "$OUTPUT_DIR/performance-report.json" \
+            --run-number "${{ github.run_number }}" || true
+
+          if find "$OUTPUT_DIR" -name "performance-report.json" -type f -size +0 | head -1 | grep -q .; then
+            echo "Perf report extracted; rendering markdown + HTML..."
+            node "${GITHUB_WORKSPACE}/addon/scripts/perf-report/aggregate.js" \
+              --dir "$OUTPUT_DIR" \
+              --output "$OUTPUT_DIR/performance-report.md" \
+              --output-html "$OUTPUT_DIR/performance-report.html" \
+              --output-json "$OUTPUT_DIR/performance-summary.json" || true
+          else
+            echo "No perf-report.json produced — markers were not present in this run's logs."
+            echo "(This is expected on the first run if no integration test has been wired"
+            echo " yet to call recordParakeetStats(); failing soft so the job keeps green.)"
+          fi
+
+      - name: Append performance summary to job step summary
+        if: always() && steps.schedule_run.outputs.run_arn_1
+        run: |
+          OUTPUT_DIR="${GITHUB_WORKSPACE}/perf-results/${{ matrix.platform }}"
+          REPORT_MD="$OUTPUT_DIR/performance-report.md"
+          if [ -s "$REPORT_MD" ]; then
+            echo "## Mobile Performance — Parakeet (${{ matrix.platform }})" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_MD" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No mobile performance report rendered for parakeet on ${{ matrix.platform }}." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload mobile performance report
+        if: always() && steps.schedule_run.outputs.run_arn_1
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report-parakeet-${{ matrix.platform }}-${{ github.run_number }}
+          path: |
+            perf-results/${{ matrix.platform }}/**/performance-report.json
+            perf-results/${{ matrix.platform }}/performance-report.html
+            perf-results/${{ matrix.platform }}/performance-report.md
+            perf-results/${{ matrix.platform }}/performance-summary.json
+          retention-days: 90
+          if-no-files-found: ignore
+
       - name: Upload Full Device Farm Logs
         if: always() && steps.schedule_run.outputs.run_arn_1
         uses: actions/upload-artifact@v4

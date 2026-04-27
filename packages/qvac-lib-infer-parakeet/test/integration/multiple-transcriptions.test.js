@@ -11,7 +11,8 @@ const {
   getTestPaths,
   ensureModel,
   getNamedPathsConfig,
-  isMobile
+  isMobile,
+  recordParakeetStats
 } = require('./helpers.js')
 
 const platform = detectPlatform()
@@ -61,11 +62,14 @@ test('Multiple consecutive transcriptions should work without errors', { timeout
 
   let parakeet = null
   const allResults = []
+  // JobEnded payloads carry the C++ runtime stats (RTF, encoder/decoder ms,
+  // tokens/sec, audio duration). We collect them per run so the shared perf
+  // reporter can emit one row per transcription.
+  const receivedStats = []
 
   try {
     console.log('=== Creating instance and loading model ===')
 
-    // Output callback to track all transcriptions
     function outputCallback (handle, event, id, output, error) {
       if (event === 'Output' && Array.isArray(output)) {
         for (const segment of output) {
@@ -73,6 +77,8 @@ test('Multiple consecutive transcriptions should work without errors', { timeout
             allResults.push({ jobId: id, segment })
           }
         }
+      } else if (event === 'JobEnded' && output) {
+        receivedStats.push({ jobId: id, stats: output })
       }
     }
 
@@ -135,9 +141,29 @@ test('Multiple consecutive transcriptions should work without errors', { timeout
       console.log(`   Time: ${runTime}ms`)
       console.log(`   Segments: ${runResults.length}`)
       console.log(`   Text preview: "${runText.substring(0, 80)}${runText.length > 80 ? '...' : ''}"`)
+
+      // Capture this run's JobEnded stats (most recent one belongs to us
+      // because the output callback observes events in order). Wire into
+      // the shared perf reporter so the CI step summary surfaces RTF,
+      // encoder/decoder timing, tokens-per-second per device.
+      const jobStats = receivedStats.length > 0
+        ? receivedStats[receivedStats.length - 1].stats
+        : null
+      if (jobStats) {
+        try {
+          recordParakeetStats(`[CPU] multi-transcribe run ${run}`, jobStats, {
+            wallMs: runTime,
+            output: runText
+          })
+        } catch (err) {
+          console.log(`   [perf] recordParakeetStats failed: ${err.message}`)
+        }
+        if (typeof jobStats.realTimeFactor === 'number') {
+          console.log(`   RTF: ${jobStats.realTimeFactor.toFixed(4)}`)
+        }
+      }
       console.log('')
 
-      // Small delay between runs (helps with memory cleanup)
       if (run < NUM_TRANSCRIPTIONS) {
         await new Promise(resolve => setTimeout(resolve, 200))
       }
