@@ -221,6 +221,48 @@ function makeClassifier (overrides) {
   return new ImageClassifier(opts)
 }
 
+// Time (ms) to wait after `unload()` for libuv to drain in-flight
+// `uv_async_send` callbacks against the dying `OutputCallBackJs`.
+// Larger on mobile because Device Farm runners are slower and the
+// in-flight job (image decode + ggml compute) can still be running
+// when the JS thread reaches the next test's setup.
+const UNLOAD_DRAIN_MS = isMobile ? 2000 : 1000
+
+// Standard teardown. Always use this in a test's `finally` block in
+// place of a bare `await classifier.unload()`.
+//
+// Why the post-unload sleep: there is a use-after-free race in the
+// upstream `qvac_lib_inference_addon_cpp::~OutputCallBackJs`
+// destructor -- it deletes its JS refs synchronously while the
+// `uv_close` it issues on its async handle is asynchronous. A
+// `uv_async_send` queued by the worker thread just before the
+// destructor runs fires on the next libuv iteration against the
+// already-freed instance, dereferencing dead `js_ref_t*` slots and
+// crashing in `js_open_handle_scope`. We have observed this as
+// SIGSEGV (linux-x64/-arm64, darwin-arm64), `Fatal signal 11`
+// (Android logcat), and `EXC_BAD_ACCESS @ 0x1a0` (iOS crash report)
+// across CI runs.
+//
+// Other addons in this monorepo paper over the same race in their
+// integration suites with the same sleep-after-unload pattern, see
+//   ocr-onnx/test/integration/lifecycle.test.js:56,85,115
+//   ocr-onnx/test/integration/full-ocr-suite.test.js:107,115,123
+//   qvac-lib-infer-llamacpp-llm/test/integration/sliding-context.test.js:163,355
+// We mirror that until the upstream destructor is patched to defer
+// JS-ref deletion into the `uv_close` callback (where it is safe
+// because libuv guarantees the close-callback only fires after every
+// pending async event for that handle has drained).
+async function cleanupClassifier (classifier) {
+  if (!classifier) return
+  try {
+    await classifier.unload()
+  } catch (_) {
+    // already unloaded / destroyed -- not a teardown error worth
+    // failing a test over
+  }
+  await new Promise(resolve => setTimeout(resolve, UNLOAD_DRAIN_MS))
+}
+
 function recordMetric (label, totalTimeMs, input) {
   _perfReporter.record(label, {
     total_time_ms: Math.round(totalTimeMs)
@@ -262,5 +304,6 @@ module.exports = {
   recordMetric,
   recordLoadTime,
   resolveModelPath,
-  makeClassifier
+  makeClassifier,
+  cleanupClassifier
 }
