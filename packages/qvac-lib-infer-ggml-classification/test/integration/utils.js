@@ -221,17 +221,22 @@ function makeClassifier (overrides) {
   return new ImageClassifier(opts)
 }
 
-// Time (ms) to wait after `unload()` for libuv to drain in-flight
-// `uv_async_send` callbacks against the dying `OutputCallBackJs`.
-// Larger on mobile because Device Farm runners are slower and the
-// in-flight job (image decode + ggml compute) can still be running
-// when the JS thread reaches the next test's setup.
-const UNLOAD_DRAIN_MS = isMobile ? 2000 : 1000
+// Drain budget around `unload()` to dodge the upstream
+// `OutputCallBackJs` use-after-free race. Two-phase budget because
+// the race opens at TWO points, not one (see cleanupClassifier
+// comment for the timeline). Values bumped after CI run
+// 25070800838 showed darwin-arm64 (139 SIGSEGV) and iOS
+// (EXC_BAD_ACCESS @ 0x1a0 in jsOutputCallback) still crashing
+// with the previous 1s/2s budget; they now match what
+// ocr-onnx/test/integration/full-ocr-suite.test.js uses on the
+// same upstream race (~2s desktop, up to 20s on macOS CI).
+const PRE_UNLOAD_YIELD_MS = isMobile ? 1000 : 500
+const UNLOAD_DRAIN_MS = isMobile ? 3000 : 2000
 
 // Standard teardown. Always use this in a test's `finally` block in
 // place of a bare `await classifier.unload()`.
 //
-// Why the post-unload sleep: there is a use-after-free race in the
+// Why the two-phase sleep: there is a use-after-free race in the
 // upstream `qvac_lib_inference_addon_cpp::~OutputCallBackJs`
 // destructor -- it deletes its JS refs synchronously while the
 // `uv_close` it issues on its async handle is asynchronous. A
@@ -240,11 +245,23 @@ const UNLOAD_DRAIN_MS = isMobile ? 2000 : 1000
 // already-freed instance, dereferencing dead `js_ref_t*` slots and
 // crashing in `js_open_handle_scope`. We have observed this as
 // SIGSEGV (linux-x64/-arm64, darwin-arm64), `Fatal signal 11`
-// (Android logcat), and `EXC_BAD_ACCESS @ 0x1a0` (iOS crash report)
-// across CI runs.
+// (Android logcat), and `EXC_BAD_ACCESS @ 0x1a0` (iOS crash report,
+// run 25070800838) across CI runs.
+//
+// In our addon the race is asymmetric vs other addons because
+// `await classifier.classify()` resolves on the FIRST `Output`
+// event, while the worker thread keeps queuing follow-up events
+// (`RuntimeStats`, `JobCompleted`) for a few ms afterwards. If we
+// call `unload()` immediately after the user-facing Promise
+// resolves, those follow-up `uv_async_send`s land in the queue
+// AT or DURING `~OutputCallBackJs` -- precisely when the JS refs
+// are being deleted. The pre-unload yield drains them while the
+// instance is still alive; the post-unload sleep absorbs whatever
+// still slips through.
 //
 // Other addons in this monorepo paper over the same race in their
-// integration suites with the same sleep-after-unload pattern, see
+// integration suites with the same sleep-around-unload pattern,
+// see
 //   ocr-onnx/test/integration/lifecycle.test.js:56,85,115
 //   ocr-onnx/test/integration/full-ocr-suite.test.js:107,115,123
 //   qvac-lib-infer-llamacpp-llm/test/integration/sliding-context.test.js:163,355
@@ -254,12 +271,22 @@ const UNLOAD_DRAIN_MS = isMobile ? 2000 : 1000
 // pending async event for that handle has drained).
 async function cleanupClassifier (classifier) {
   if (!classifier) return
+  // Phase 1 -- pre-unload yield. Lets the worker thread's
+  // post-classify follow-up events (RuntimeStats, JobCompleted)
+  // fire through the live OutputCallBackJs before destruction
+  // begins.
+  await new Promise(resolve => setTimeout(resolve, PRE_UNLOAD_YIELD_MS))
   try {
     await classifier.unload()
   } catch (_) {
     // already unloaded / destroyed -- not a teardown error worth
     // failing a test over
   }
+  // Phase 2 -- post-unload drain. Any uv_async_send the worker
+  // queued in the very last instant before joining still needs
+  // libuv time to fire (and be silently swallowed by stopped_)
+  // before the next test allocates a fresh instance and reuses
+  // the freed slab.
   await new Promise(resolve => setTimeout(resolve, UNLOAD_DRAIN_MS))
 }
 
