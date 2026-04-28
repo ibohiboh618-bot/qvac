@@ -125,5 +125,17 @@ test('load -> unload -> load cycles do not leak handles', async function (t) {
     const r = await classifier.classify(loadImage('meal_1.jpg'))
     t.ok(Array.isArray(r), `cycle ${i}: classify works`)
     await classifier.unload()
+    // Sleep to let libuv drain pending async callbacks from the
+    // outgoing OutputCallBackJs before we allocate the next instance
+    // -- works around a use-after-free in upstream
+    // qvac-lib-inference-addon-cpp::~OutputCallBackJs (queued
+    // uv_async_send callbacks fire after the destructor has deleted
+    // the JS refs). Same pattern as
+    //   ocr-onnx/test/integration/lifecycle.test.js:56,85,115
+    //   ocr-onnx/test/integration/full-ocr-suite.test.js:107,115,123
+    //   qvac-lib-infer-llamacpp-llm/test/integration/sliding-context.test.js:163,355
+    // To be removed once the upstream destructor is patched to defer
+    // JS-ref deletion until after uv_close completes.
+    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
 })
