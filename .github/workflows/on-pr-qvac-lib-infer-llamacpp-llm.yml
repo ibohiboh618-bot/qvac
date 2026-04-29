@@ -13,8 +13,8 @@ on:
       - feature-*
       - tmp-*
     paths:
-      - "packages/qvac-lib-infer-ggml-classification/**"
-      - ".github/workflows/*ggml-classification*.yml"
+      - "packages/classification-ggml/**"
+      - ".github/workflows/*classification-ggml*.yml"
   workflow_dispatch:
 
 permissions:
@@ -24,7 +24,7 @@ permissions:
   id-token: write
 
 env:
-  PKG_DIR: packages/qvac-lib-infer-ggml-classification
+  PKG_DIR: packages/classification-ggml
 
 jobs:
   authorize:
@@ -55,8 +55,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           filters: |
             pkg:
-              - "packages/qvac-lib-infer-ggml-classification/**"
-              - ".github/workflows/*ggml-classification*.yml"
+              - "packages/classification-ggml/**"
+              - ".github/workflows/*classification-ggml*.yml"
 
   sanity-checks:
     needs: [authorize, changes]
@@ -74,7 +74,7 @@ jobs:
           secret-token: ${{ secrets.GITHUB_TOKEN }}
           pat-token: ${{ secrets.PAT_TOKEN }}
           run-integration: ${{ needs.authorize.outputs.allowed == 'true' }}
-          workdir: packages/qvac-lib-infer-ggml-classification
+          workdir: packages/classification-ggml
 
   ts-checks:
     needs: [authorize, changes, sanity-checks]
@@ -106,7 +106,7 @@ jobs:
     with:
       sha: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
       pr_head_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      workdir: packages/qvac-lib-infer-ggml-classification
+      workdir: packages/classification-ggml
 
   prebuild:
     permissions:
@@ -119,7 +119,7 @@ jobs:
       always() &&
       needs.authorize.outputs.allowed == 'true' &&
       (needs.changes.outputs.pkg == 'true' || github.event_name == 'workflow_dispatch')
-    uses: ./.github/workflows/prebuilds-qvac-lib-infer-ggml-classification.yml
+    uses: ./.github/workflows/prebuilds-classification-ggml.yml
     secrets: inherit
     with:
       repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -135,7 +135,7 @@ jobs:
       contents: read
       packages: read
       id-token: write
-    uses: ./.github/workflows/integration-test-qvac-lib-infer-ggml-classification.yml
+    uses: ./.github/workflows/integration-test-classification-ggml.yml
     secrets: inherit
     with:
       repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -152,7 +152,7 @@ jobs:
       always() &&
       needs.authorize.outputs.allowed == 'true' &&
       (needs.changes.outputs.pkg == 'true' || github.event_name == 'workflow_dispatch')
-    uses: ./.github/workflows/integration-mobile-test-qvac-lib-infer-ggml-classification.yml
+    uses: ./.github/workflows/integration-mobile-test-classification-ggml.yml
     secrets: inherit
     with:
       repository: ${{ github.event.pull_request.head.repo.full_name }}
