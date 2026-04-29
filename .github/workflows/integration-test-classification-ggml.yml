@@ -88,6 +88,18 @@ jobs:
           path: ${{ env.PKG_DIR }}/prebuilds
           merge-multiple: true
 
+      # === [TEMP] Marshalling probe -- diagnostic only, runs on win32 only.
+      # The probe is independent diagnostic scaffolding for the
+      # win32-x64 first-`js_create_double`-returns-0 bug; it never gates
+      # the build (continue-on-error: true). Removal: see the checklist
+      # at the top of `addon/src/js-interface/marshal_probe.hpp`.
+      - name: Run marshalling probe (diagnostic, win32 only)
+        if: ${{ matrix.platform == 'win32' }}
+        continue-on-error: true
+        working-directory: ${{ env.PKG_DIR }}
+        run: bare scripts/marshal-probe.js
+      # === [/TEMP] ===
+
       - name: Run JS integration tests
         working-directory: ${{ env.PKG_DIR }}
         env:
