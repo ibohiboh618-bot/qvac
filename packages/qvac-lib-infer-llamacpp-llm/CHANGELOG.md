@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.17.1] - 2026-04-28
+
+This patch release adds per-request structured-output support to the LLM addon: callers can now constrain a single completion to either a JSON Schema or a raw GBNF grammar without reloading the model. Back-port of the same change being prepared for `main` in [#1787](https://github.com/tetherto/qvac/pull/1787); shipped here on top of `0.17.0` so it can be consumed by SDK lines that have not yet migrated to `0.18.x`.
+
+### Added
+
+#### Per-request `json_schema` and `grammar` in `generationParams`
+
+`RunOptions.generationParams` accepts two new optional fields:
+
+- **`json_schema`** — JSON Schema applied to a single `run()` call. Accepts either a JSON Schema object literal or a pre-stringified JSON Schema. Internally converted to GBNF via llama.cpp's `json_schema_to_grammar()`, the same converter used by the load-time `--json-schema` config key.
+- **`grammar`** — raw GBNF string applied to a single `run()` call. Useful for non-JSON outputs (regex-like DSLs, CSV, custom syntaxes). Mirrors the load-time `--grammar` config key.
+
+The two are mutually exclusive — passing both throws a `TypeError` at the JS boundary. When either is set, the sampler is re-initialized for that request and the prior (typically load-time) grammar is restored automatically afterwards. Both `TextLlmContext` and `MtmdLlmContext` are wired through, so multimodal models get the same per-request hook as text-only ones.
+
+```js
+// JSON Schema (recommended for structured output)
+await model.run(prompt, {
+  generationParams: {
+    json_schema: {
+      type: 'object',
+      properties: { name: { type: 'string' }, age: { type: 'integer' } },
+      required: ['name', 'age']
+    }
+  }
+})
+
+// GBNF (non-JSON outputs)
+await model.run(prompt, {
+  generationParams: {
+    grammar: 'root ::= ("yes" | "no")'
+  }
+})
+```
+
+A new `nlohmann-json` vcpkg dependency is pulled in (header-only) so the addon can call `json_schema_to_grammar()` directly without shipping a JSON-Schema-to-GBNF converter on the JS side. Bad GBNF / unparseable JSON Schema surfaces as `InvalidArgument` with the saved sampler restored, so a malformed per-request schema cannot leave the model in a broken state.
+
+## Pull Requests
+
+- [#1787](https://github.com/tetherto/qvac/pull/1787) - feat[api]: per-request grammar / json_schema in llm-llamacpp generationParams (forward-port to `main`)
+
 ## [0.17.0] - 2026-04-21
 
 ### Changed
