@@ -28,12 +28,6 @@ namespace jsu = qvac_lib_inference_addon_cpp::js;
 using qvac_errors::StatusError;
 using qvac_errors::general_error::InvalidArgument;
 
-// Win32-x64 burn-one workaround: the first `js_create_double` of the
-// process returns 0.0 on Azure CI runners (bare-runtime / V8 cold
-// path, no local repro). Discarded `js_create_double(env, 0.0, ...)`
-// below primes the path. See `remote_logs/issues_report.md` for full
-// repro details and the upstream-bug summary.
-
 /// Handler mapping ClassifyOutput → JS array of { label, confidence }.
 ///
 /// Implementation notes:
@@ -66,7 +60,8 @@ struct JsClassifyOutputHandler
                 return v != nullptr && v[0] == '1';
               }();
 
-              // Win32 burn-one (see file-level note + issues_report.md).
+              // Win32-x64 burn-one workaround: the first `js_create_double` of the
+              // process returns 0.0 on Azure CI runners only.
               {
                 js_value_t* dummy = nullptr;
                 (void)js_create_double(this->env_, 0.0, &dummy);
