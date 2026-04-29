@@ -33,7 +33,7 @@ const BASE_CONFIG = {
   temp: '0.7',
   seed: '1',
   verbosity: '2',
-  no_mmap: 'true'
+  no_mmap: 'false'
 }
 
 const FOLLOW_UP_MESSAGE = { role: 'user', content: 'Reference the cached conversation and confirm the color again.' }

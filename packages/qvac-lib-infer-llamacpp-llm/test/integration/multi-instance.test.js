@@ -45,7 +45,7 @@ async function createInstance (modelName, dirPath, overrides = {}) {
     ctx_size: '1024',
     n_predict: '64',
     verbosity: '2',
-    no_mmap: 'true',
+    no_mmap: 'false',
     ...(platform === 'android' ? { openclCacheDir: dirPath } : {}),
     ...overrides
   }

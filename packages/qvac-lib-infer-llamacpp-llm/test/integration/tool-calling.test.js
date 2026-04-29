@@ -40,7 +40,7 @@ const BASE_CONFIG = {
   n_predict: '1024',
   verbosity: '2',
   tools: 'true',
-  no_mmap: 'true'
+  no_mmap: 'false'
 }
 
 const prompt1Base = [

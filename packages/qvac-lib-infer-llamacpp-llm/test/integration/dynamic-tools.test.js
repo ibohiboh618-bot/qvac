@@ -29,7 +29,7 @@ const BASE_CONFIG = {
   verbosity: '2',
   tools: 'true',
   tools_at_end: 'true',
-  no_mmap: 'true'
+  no_mmap: 'false'
 }
 
 const TOOL_A = {
