@@ -251,9 +251,13 @@ class TranslationNmtcpp {
     if (otherConfig.gpu_device === undefined && otherConfig.gpuDevice !== undefined) {
       otherConfig.gpu_device = otherConfig.gpuDevice
     }
+    if (otherConfig.op_offload_min_batch === undefined && otherConfig.opOffloadMinBatch !== undefined) {
+      otherConfig.op_offload_min_batch = otherConfig.opOffloadMinBatch
+    }
     delete otherConfig.useGPU
     delete otherConfig.gpuBackend
     delete otherConfig.gpuDevice
+    delete otherConfig.opOffloadMinBatch
 
     if (otherConfig.backendsDir === undefined) {
       otherConfig.backendsDir = path.join(__dirname, 'prebuilds')

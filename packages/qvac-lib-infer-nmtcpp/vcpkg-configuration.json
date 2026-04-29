@@ -1,8 +1,9 @@
 {
   "default-registry": {
     "kind": "git",
-    "baseline": "c5955445a221df255d2204be964647c08c82c28f",
-    "repository": "https://github.com/tetherto/qvac-registry-vcpkg.git"
+    "baseline": "76bfe6ba5dd3a0ff2840eb9d86b3296d9b89434e",
+    "repository": "https://github.com/iancris/qvac-registry-vcpkg.git",
+    "reference": "feat/QVAC-18064-fabric-opencl-fix"
   },
   "registries": [
     {

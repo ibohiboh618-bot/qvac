@@ -52,6 +52,8 @@ public:
 
   void setGpuDevice(int gpuDevice);
 
+  void setOpOffloadMinBatch(int opOffloadMinBatch);
+
   std::unordered_map<std::string, std::variant<double, int64_t, std::string>>
   getConfig() const;
 
@@ -129,6 +131,8 @@ private:
   std::string gpuBackend_;
 
   int gpuDevice_ = 0;
+
+  int opOffloadMinBatch_ = -1;
 
   // Cached at load() time; cleared on unload(). Avoids mutex + ggml traversal
   // on every getActiveBackendName() call since the active backend is immutable
