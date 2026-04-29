@@ -56,8 +56,14 @@
 #include <js.h>
 #include <uv.h>
 
-// MXCSR / x87 control-word probes are MSVC/x86-x64 specific.
-#if defined(_MSC_VER) || defined(__clang__)
+// MXCSR / x87 control-word probes are Win32 + x86/x64 specific. The probe
+// matters only for the win32-x64 first-`js_create_double` bug; on every
+// other platform (linux/darwin/ios/android, x86_64 or arm64) we return
+// zero stubs. Gating strictly on `_WIN32` (and not `__clang__`, which is
+// also defined on linux/darwin clang where `<intrin.h>` and
+// `_control87` do NOT exist) keeps the prebuild matrix green on every
+// non-Windows runner.
+#if defined(_WIN32)
 #include <float.h>
 #include <intrin.h>
 #endif
@@ -66,10 +72,9 @@ namespace qvac_lib_infer_ggml_classification::probe {
 
 namespace detail {
 
-// Read MXCSR (SSE FP state) and x87 control word. Returns 0 on platforms
-// where we can't read them.
+// Read MXCSR (SSE FP state) and x87 control word. Stubs return 0 off-Win32.
 inline unsigned int read_mxcsr() {
-#if defined(_MSC_VER) || defined(__clang__)
+#if defined(_WIN32) && (defined(_M_X64) || defined(_M_IX86))
   return _mm_getcsr();
 #else
   return 0;
@@ -77,7 +82,7 @@ inline unsigned int read_mxcsr() {
 }
 
 inline unsigned int read_x87() {
-#if defined(_MSC_VER) || defined(__clang__)
+#if defined(_WIN32)
   unsigned int cw = 0;
   _control87(0, 0); // returns current word; we discard, just want a probe
   return cw;
