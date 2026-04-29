@@ -28,41 +28,59 @@ namespace jsu = qvac_lib_inference_addon_cpp::js;
 using qvac_errors::StatusError;
 using qvac_errors::general_error::InvalidArgument;
 
-// NOTE on previously-applied workarounds (intentionally removed for
-// consistency with other addons; pending a single upstream fix in
-// qvac-lib-inference-addon-cpp / bare-runtime):
+// NOTE on two upstream issues this binding has had to work around,
+// pending a single upstream fix in qvac-lib-inference-addon-cpp /
+// bare-runtime. Each was independently surfaced by CI; their fixes
+// are deliberately asymmetric because their nature is different.
 //
-//   1. `DeferredOutputCallBackJs` wrapper -- deferred destruction of
-//      the upstream `OutputCallBackJs` to a `uv_check_t` to avoid a
-//      use-after-free race against pending `uv_async_send` callbacks.
-//      The race is in `~OutputCallBackJs` (queue/OutputCallbackJs.hpp,
+//   1. `OutputCallBackJs` use-after-free race (worked around in
+//      tests, NOT in this file).
+//      Race is in `~OutputCallBackJs` (queue/OutputCallbackJs.hpp,
 //      lines 48-58): JS refs are deleted synchronously while the
 //      async handle's `uv_close` is still pending, so a queued
 //      `jsOutputCallback` can fire afterwards against dead refs.
 //      Reproduced in CI as SIGSEGV on linux-x64 / darwin-arm64 /
 //      android / ios across rapid ImageClassifier create/destroy
-//      cycles. Other addons in this repo work around the same race
-//      empirically by sleeping 1-20s after `unload()` in their
-//      tests (see ocr-onnx/test/integration/lifecycle.test.js:56,85,
+//      cycles (CI runs 24891210942, 24892803959, 25062157099,
+//      25070800838). Local C++ workaround
+//      (`DeferredOutputCallBackJs` wrapper) was removed for
+//      consistency with how other addons in this monorepo cope
+//      with the same upstream bug -- they paper over it by
+//      sleeping after every `unload()` in their integration tests
+//      (see ocr-onnx/test/integration/lifecycle.test.js:56,85,
 //      115; full-ocr-suite.test.js:107,115,123;
 //      qvac-lib-infer-llamacpp-llm/test/integration/sliding-context.test.js:
-//      163,355). We adopt the same approach in
-//      `test/integration/error-cases.test.js` until upstream lands.
+//      163,355). We adopted that pattern in
+//      `test/integration/utils.js::cleanupClassifier()`
+//      (two-phase: 500-1000ms pre-unload yield to drain in-flight
+//      worker events, plus 2000-3000ms post-unload sleep). CI run
+//      25074595106 confirmed the test-side workaround is
+//      sufficient on every platform that uses `OutputCallBackJs`.
 //
-//   2. Win32 "burn-one" `js_create_double(env, 0.0, &dummy)` at the
-//      top of `JsClassifyOutputHandler`'s lambda -- the very first
-//      `js_create_double` call after entering an `OutputCallBackJs`
-//      callback returned 0.0 on win32-x64 (clang-cl + bare-runtime +
-//      V8) regardless of the input value. Other addons accidentally
-//      dodge this either because (a) their first emitted number is
-//      naturally 0 (whisper/parakeet segment.start), (b) their tests
-//      assert only `typeof === 'number'` / `!isNaN` (llamacpp-llm
-//      stats checks), (c) the first emitted number is never asserted
-//      on (ocr-onnx bounding-box coords), or (d) they do not emit
-//      numbers at all (lib-infer-diffusion). We are dropping the
-//      workaround here to keep the addon consistent; win32-x64 CI is
-//      expected to start failing on the first per-image confidence
-//      until the upstream marshalling layer is patched.
+//   2. Win32 first-`js_create_double` returns 0.0 (worked around
+//      below in `JsClassifyOutputHandler`).
+//      On win32-x64 (clang-cl + bare-runtime + V8) the very first
+//      `js_create_double` call after entering an
+//      `OutputCallBackJs` callback returns 0.0 regardless of the
+//      input value. Subsequent calls in the same handle scope are
+//      correct. Reproduced as test failure on `meal_1.jpg`
+//      ("sorted desc [0]>=[1]" with confidence[0] = 0.0) in CI
+//      runs 24851301107, 24891210942, 24897445066, 24900278513,
+//      25002820522, 25062157099, 25070800838, 25074595106.
+//      No test-side workaround is possible: the bug corrupts a
+//      semantically-critical value (the highest-confidence class
+//      after sort). Other addons accidentally dodge it only
+//      because (a) their first emitted number happens to be 0
+//      (whisper/parakeet segment.start), (b) they assert only
+//      `typeof === 'number'` / `!isNaN` (llamacpp-llm stats),
+//      (c) they never assert the value (ocr-onnx bounding-box
+//      coords), or (d) they do not emit numbers at all
+//      (lib-infer-diffusion). The local C++ "burn one" workaround
+//      in the lambda below consumes the broken first slot so the
+//      per-element marshalling that follows is correct on every
+//      platform; cost is one ephemeral js_number per classify()
+//      call. To be removed once the upstream marshalling layer is
+//      patched.
 
 /// Handler mapping ClassifyOutput → JS array of { label, confidence }.
 ///
@@ -95,6 +113,25 @@ struct JsClassifyOutputHandler
                 const char* v = std::getenv("QVAC_CLASSIFICATION_TRACE");
                 return v != nullptr && v[0] == '1';
               }();
+
+              // ----- WIN32 MARSHALLING WORKAROUND -----
+              // See note 2 in the file-level comment above. The very
+              // first `js_create_double` call after entering this
+              // lambda on win32-x64 (clang-cl + bare-runtime + V8)
+              // returns 0.0 regardless of the input value. We burn
+              // that broken slot with a throwaway call so the
+              // per-element `Number::create` calls below produce the
+              // correct value at index 0. The throwaway value is
+              // intentionally never wired into the array; cost is
+              // one ephemeral js_number per classify() call. To be
+              // removed once the upstream bare-runtime marshalling
+              // layer is patched.
+              {
+                js_value_t* dummy = nullptr;
+                (void)js_create_double(this->env_, 0.0, &dummy);
+                (void)dummy;
+              }
+              // ----------------------------------------
 
               for (size_t i = 0; i < cppOut.results.size(); ++i) {
                 // Read into named locals BEFORE creating any JS values.
