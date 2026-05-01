@@ -7,7 +7,7 @@ endif()
 
 option(BUILD_TESTING "Build tests" OFF)
 option(USE_BERGAMOT "Enable Bergamot backend support" ON)
-option(USE_OPENCL "Prefer/allow OpenCL backend for GPU inference" ON)
+option(USE_OPENCL "Prefer/allow OpenCL backend for GPU inference" OFF)
 
 if(BUILD_TESTING)
   list(APPEND VCPKG_MANIFEST_FEATURES "tests")
