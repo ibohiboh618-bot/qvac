@@ -19,10 +19,6 @@
 #include <codecvt>
 #endif
 
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
-
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
 #include "ggml.h"
@@ -146,24 +142,10 @@ static buft_list_t make_buft_list(const nmt_context_params& params) {
       params.use_gpu, params.gpu_backend, params.gpu_device, "make_buft_list");
   if (selected_dev != nullptr) {
     const char* selDevName = ggml_backend_dev_name(selected_dev);
-#ifdef __ANDROID__
-    __android_log_print(
-        ANDROID_LOG_INFO,
-        "ggml-nmt",
-        "make_buft_list: selected GPU device '%s'",
-        selDevName ? selDevName : "(null)");
-#endif
     ggml_backend_buffer_type_t buft =
         ggml_backend_dev_buffer_type(selected_dev);
     if (buft != nullptr) {
       buft_list.emplace_back(selected_dev, buft);
-#ifdef __ANDROID__
-      __android_log_print(
-          ANDROID_LOG_INFO,
-          "ggml-nmt",
-          "make_buft_list: GPU buft added for '%s'",
-          selDevName ? selDevName : "(null)");
-#endif
       QLOG(
           qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
           "  -> Added GPU buft to buft_list");

@@ -364,26 +364,6 @@ bool NmtLazyInitializeBackend::initializeLocked(
   // the process after ggml_backend_load_all* returns) and regardless of
   // whether a backendsDir was provided.
   nmtInstallCallbacksInLoadedBackendSos();
-
-  {
-    size_t devCount = ggml_backend_dev_count();
-    __android_log_print(
-        ANDROID_LOG_INFO,
-        "ggml-nmt",
-        "Backend loading complete: %zu devices registered",
-        devCount);
-    for (size_t i = 0; i < devCount; ++i) {
-      ggml_backend_dev_t d = ggml_backend_dev_get(i);
-      const char* n = d ? ggml_backend_dev_name(d) : "(null)";
-      __android_log_print(
-          ANDROID_LOG_INFO,
-          "ggml-nmt",
-          "  Device[%zu]: %s (type=%d)",
-          i,
-          n,
-          d ? static_cast<int>(ggml_backend_dev_type(d)) : -1);
-    }
-  }
 #endif
 
   g_initialized = true;
