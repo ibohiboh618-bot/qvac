@@ -344,8 +344,7 @@ bool NmtLazyInitializeBackend::initializeLocked(
                   Priority::INFO,
                   "Loading backends from directory: " +
                       sanitizePrintableAscii(backendsDirPath.string()));
-              ggml_backend_load_all_from_path(
-                  backendsDirPath.string().c_str());
+              ggml_backend_load_all_from_path(backendsDirPath.string().c_str());
 #ifdef BACKENDS_SUBDIR
             }
 #endif
