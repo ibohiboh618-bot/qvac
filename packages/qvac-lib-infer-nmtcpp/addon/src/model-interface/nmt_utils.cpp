@@ -81,7 +81,9 @@ bool ggml_graph_compute_helper(
 
 #ifdef __ANDROID__
   __android_log_print(
-      ANDROID_LOG_INFO, "ggml-nmt", "graph_compute: %d backends, about to compute",
+      ANDROID_LOG_INFO,
+      "ggml-nmt",
+      "graph_compute: %d backends, about to compute",
       ggml_backend_sched_get_n_backends(sched));
 #endif
 
@@ -90,7 +92,10 @@ bool ggml_graph_compute_helper(
 
 #ifdef __ANDROID__
   __android_log_print(
-      ANDROID_LOG_INFO, "ggml-nmt", "graph_compute: result=%s", t ? "OK" : "FAIL");
+      ANDROID_LOG_INFO,
+      "ggml-nmt",
+      "graph_compute: result=%s",
+      t ? "OK" : "FAIL");
 #endif
 
   if (!t || sched_reset) {

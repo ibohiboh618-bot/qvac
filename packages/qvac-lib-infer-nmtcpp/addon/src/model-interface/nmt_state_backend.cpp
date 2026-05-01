@@ -406,16 +406,20 @@ static ggml_backend_t nmt_backend_init_gpu(const nmt_context_params& params) {
           (devName ? devName : "(null)"));
 #ifdef __ANDROID__
   __android_log_print(
-      ANDROID_LOG_INFO, "ggml-nmt",
-      "nmt_backend_init_gpu: init device '%s'", devName ? devName : "(null)");
+      ANDROID_LOG_INFO,
+      "ggml-nmt",
+      "nmt_backend_init_gpu: init device '%s'",
+      devName ? devName : "(null)");
 #endif
 
   ggml_backend_t result = ggml_backend_dev_init(dev, nullptr);
 
 #ifdef __ANDROID__
   __android_log_print(
-      ANDROID_LOG_INFO, "ggml-nmt",
-      "nmt_backend_init_gpu: device init %s", result ? "OK" : "FAILED");
+      ANDROID_LOG_INFO,
+      "ggml-nmt",
+      "nmt_backend_init_gpu: device init %s",
+      result ? "OK" : "FAILED");
 #endif
   if (!result) {
     QLOG(
@@ -526,14 +530,16 @@ nmt_backend_init(const nmt_context_params& params) {
 
 #ifdef __ANDROID__
     __android_log_print(
-        ANDROID_LOG_INFO, "ggml-nmt",
+        ANDROID_LOG_INFO,
+        "ggml-nmt",
         "nmt_backend_init: init ACCEL device '%s'",
         dev_name ? dev_name : "(null)");
 #endif
     ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
 #ifdef __ANDROID__
     __android_log_print(
-        ANDROID_LOG_INFO, "ggml-nmt",
+        ANDROID_LOG_INFO,
+        "ggml-nmt",
         "nmt_backend_init: ACCEL device init %s",
         backend ? "OK" : "FAILED");
 #endif

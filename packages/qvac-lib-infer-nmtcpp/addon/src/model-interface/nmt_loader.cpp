@@ -148,7 +148,8 @@ static buft_list_t make_buft_list(const nmt_context_params& params) {
     const char* selDevName = ggml_backend_dev_name(selected_dev);
 #ifdef __ANDROID__
     __android_log_print(
-        ANDROID_LOG_INFO, "ggml-nmt",
+        ANDROID_LOG_INFO,
+        "ggml-nmt",
         "make_buft_list: selected GPU device '%s'",
         selDevName ? selDevName : "(null)");
 #endif
@@ -158,7 +159,8 @@ static buft_list_t make_buft_list(const nmt_context_params& params) {
       buft_list.emplace_back(selected_dev, buft);
 #ifdef __ANDROID__
       __android_log_print(
-          ANDROID_LOG_INFO, "ggml-nmt",
+          ANDROID_LOG_INFO,
+          "ggml-nmt",
           "make_buft_list: GPU buft added for '%s'",
           selDevName ? selDevName : "(null)");
 #endif
