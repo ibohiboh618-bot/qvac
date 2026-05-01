@@ -82,6 +82,13 @@ public:
    */
   std::string getActiveBackendName() const;
 
+  /**
+   * Returns the human-readable device description (e.g. "NVIDIA GeForce RTX
+   * 5070", "Intel(R) UHD Graphics") for the active GPU backend, or an empty
+   * string when no GPU backend is loaded.
+   */
+  std::string getActiveBackendDescription() const;
+
 public: // overrides
   std::string getName() const override;
 
@@ -138,6 +145,7 @@ private:
   // on every getActiveBackendName() call since the active backend is immutable
   // after load().
   std::string activeBackendName_;
+  std::string activeBackendDescription_;
 
   std::unordered_map<std::string, std::variant<double, int64_t, std::string>>
       config_;

@@ -183,6 +183,19 @@ class TranslationNmtcpp {
   }
 
   /**
+   * Returns the human-readable device description for the active GPU backend
+   * (e.g. 'NVIDIA GeForce RTX 5070', 'Intel(R) UHD Graphics').
+   * Returns '' when no GPU backend is loaded or model is unloaded.
+   * @returns {string}
+   */
+  getActiveBackendDescription () {
+    if (!this.addon) {
+      return ''
+    }
+    return this.addon.getActiveBackendDescription()
+  }
+
+  /**
    * Checks if this is a Bergamot model
    * @private
    * @returns {boolean}

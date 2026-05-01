@@ -224,7 +224,8 @@ for (let gpuIdx = 0; gpuIdx < MAX_GPU_DEVICE_PROBES; gpuIdx++) {
       return
     }
 
-    const label = `[GPU:${device.index} ${device.name}]`
+    const descTag = device.description ? ' ' + device.description : ''
+    const label = `[GPU:${device.index} ${device.name}${descTag}]`
     t.ok(modelPath, `${label} IndicTrans model path should be available`)
     t.comment(`${label} Model path: ` + modelPath)
     t.comment('Platform: ' + platform + ', isMobile: ' + isMobile)
@@ -370,7 +371,7 @@ test('IndicTrans CPU vs GPU output parity (EN->Hindi, beam=1)', { timeout: TEST_
   }
 
   t.comment('Discovered GPU devices: ' +
-    devices.map(d => `${d.name} (index ${d.index})`).join(', '))
+    devices.map(d => `${d.name}${d.description ? ' (' + d.description + ')' : ''} [index ${d.index}]`).join(', '))
 
   const logger = createLogger()
 
@@ -394,7 +395,8 @@ test('IndicTrans CPU vs GPU output parity (EN->Hindi, beam=1)', { timeout: TEST_
   t.comment(`[PARITY] CPU -> "${cpuOut}"`)
 
   for (const device of devices) {
-    const parityLabel = `[PARITY:${device.index} ${device.name}]`
+    const parityDesc = device.description ? ' ' + device.description : ''
+    const parityLabel = `[PARITY:${device.index} ${device.name}${parityDesc}]`
     let gpuRun
     try {
       gpuRun = await runSingleTranslation(t, {
@@ -457,7 +459,7 @@ test('IndicTrans backend comparison [Vulkan vs OpenCL]', { timeout: TEST_TIMEOUT
   }
 
   t.comment('Discovered backends: ' +
-    backends.map(b => b.name + ' (' + b.backend + ')').join(', '))
+    backends.map(b => b.name + (b.description ? ' (' + b.description + ')' : '') + ' [' + b.backend + ']').join(', '))
 
   const modelPath = await ensureIndicTransModel()
   const logger = createLogger()

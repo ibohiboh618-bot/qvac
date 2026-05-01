@@ -861,12 +861,13 @@ async function _probeGpuDevices () {
       })
       await model.load()
       const name = model.getActiveBackendName()
+      const description = model.getActiveBackendDescription()
       await model.unload()
 
       if (name === 'CPU' || name === 'Unloaded' || name === 'Bergamot-CPU') {
         break
       }
-      devices.push({ index: idx, name })
+      devices.push({ index: idx, name, description })
     } catch (err) {
       _logger.warn('[discoverGpuDevices] probe at gpu_device=' + idx +
         ' failed: ' + (err && err.message ? err.message : String(err)))
@@ -897,6 +898,11 @@ async function _probeGpuDevices () {
   if (unique.length < devices.length) {
     _logger.info('[discoverGpuDevices] Deduplicated ' + devices.length +
       ' backends → ' + unique.length + ' unique physical GPU(s)')
+  }
+
+  if (unique.length > 0) {
+    _logger.info('[discoverGpuDevices] Discovered GPUs: ' +
+      unique.map(d => d.name + (d.description ? ' (' + d.description + ')' : '')).join(', '))
   }
 
   return unique
@@ -939,6 +945,7 @@ async function _probeGpuBackends () {
       })
       await model.load()
       const name = model.getActiveBackendName()
+      const description = model.getActiveBackendDescription()
       await model.unload()
 
       if (name === 'CPU' || name === 'Unloaded' || name === 'Bergamot-CPU') {
@@ -946,8 +953,9 @@ async function _probeGpuBackends () {
           ' resolved to CPU — skipping')
         continue
       }
-      backends.push({ index: 0, name, backend: backendType.label })
+      backends.push({ index: 0, name, description, backend: backendType.label })
       _logger.info('[discoverGpuBackends] Found: ' + name +
+        (description ? ' (' + description + ')' : '') +
         ' via gpu_backend=' + backendType.gpuBackend)
     } catch (err) {
       _logger.warn('[discoverGpuBackends] gpu_backend=' + backendType.gpuBackend +

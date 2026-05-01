@@ -245,27 +245,22 @@ ggml_backend_dev_t nmt_select_gpu_device(
   }
 #endif
 
-  // Mode 2b: fallback to any non-CPU compute device (skipping OpenCL when
-  // the build-time guard is off — Adreno 830 mitigation).
-  // When falling through from Mode 2a (OpenCL preference didn't find enough
-  // devices), reset the ordinal to 0 — the caller's gpu_device referred to
-  // the OpenCL device namespace, not the full device list.
+  // Mode 2b: fallback to any non-CPU, non-OpenCL compute device.
+  // OpenCL is always skipped here because Mode 2a already handles it when
+  // QVAC_NMTCPP_USE_OPENCL is defined, and it's unwanted when the guard is
+  // off. This ensures gpu_device ordinals map to distinct physical GPUs
+  // (Vulkan/CUDA/Metal) without OpenCL duplicates occupying slots.
   if (dev == nullptr) {
 #ifdef QVAC_NMTCPP_USE_OPENCL
     if (oclDeviceFoundButBuftNull) {
       std::ostringstream oss;
       oss << "[" << log_prefix
           << "] Mode 2a OpenCL device found but buffer type was null — "
-             "falling through to Mode 2b with ordinal 0";
+             "falling through to Mode 2b";
       QLOG(qvac_lib_inference_addon_cpp::logger::Priority::WARNING, oss.str());
     }
 #endif
-    const int fallback_ordinal =
-#ifdef QVAC_NMTCPP_USE_OPENCL
-        0;
-#else
-        gpu_device;
-#endif
+    const int fallback_ordinal = gpu_device;
     int cnt2 = 0;
     for (size_t i = 0; i < devCount; ++i) {
       ggml_backend_dev_t dev_cur = ggml_backend_dev_get(i);
@@ -277,11 +272,9 @@ ggml_backend_dev_t nmt_select_gpu_device(
       if (dev_type == GGML_BACKEND_DEVICE_TYPE_CPU) {
         continue;
       }
-#ifndef QVAC_NMTCPP_USE_OPENCL
       if (nmt_name_contains_ci(name, "opencl")) {
         continue;
       }
-#endif
       if (cnt2 == fallback_ordinal) {
         ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(dev_cur);
         if (buft != nullptr) {
