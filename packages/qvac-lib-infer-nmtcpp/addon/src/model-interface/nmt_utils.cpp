@@ -13,6 +13,10 @@
 #include <windows.h>
 #endif
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 #include "nmt.hpp"
 #include "qvac-lib-inference-addon-cpp/Logger.hpp"
 
@@ -67,15 +71,27 @@ bool ggml_graph_compute_helper(
     ggml_backend_reg_t reg = dev ? ggml_backend_dev_backend_reg(dev) : nullptr;
 
     auto* fn_set_n_threads =
-        (ggml_backend_set_n_threads_t)ggml_backend_reg_get_proc_address(
-            reg, "ggml_backend_set_n_threads");
+        reg ? (ggml_backend_set_n_threads_t)ggml_backend_reg_get_proc_address(
+                  reg, "ggml_backend_set_n_threads")
+            : nullptr;
     if (fn_set_n_threads) {
       fn_set_n_threads(backend, n_threads);
     }
   }
 
+#ifdef __ANDROID__
+  __android_log_print(
+      ANDROID_LOG_INFO, "ggml-nmt", "graph_compute: %d backends, about to compute",
+      ggml_backend_sched_get_n_backends(sched));
+#endif
+
   const bool t =
       (ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS);
+
+#ifdef __ANDROID__
+  __android_log_print(
+      ANDROID_LOG_INFO, "ggml-nmt", "graph_compute: result=%s", t ? "OK" : "FAIL");
+#endif
 
   if (!t || sched_reset) {
     ggml_backend_sched_reset(sched);

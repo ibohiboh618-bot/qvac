@@ -12,6 +12,10 @@
 #include <ggml-backend.h>
 #include <ggml.h>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 #include "nmt.hpp"
 #include "nmt_graph_decoder.hpp"
 #include "nmt_graph_encoder.hpp"
@@ -395,7 +399,24 @@ static ggml_backend_t nmt_backend_init_gpu(const nmt_context_params& params) {
     return nullptr;
   }
 
+  const char* devName = ggml_backend_dev_name(dev);
+  QLOG(
+      qvac_lib_inference_addon_cpp::logger::Priority::INFO,
+      std::string("[nmt_backend_init_gpu] About to init device: ") +
+          (devName ? devName : "(null)"));
+#ifdef __ANDROID__
+  __android_log_print(
+      ANDROID_LOG_INFO, "ggml-nmt",
+      "nmt_backend_init_gpu: init device '%s'", devName ? devName : "(null)");
+#endif
+
   ggml_backend_t result = ggml_backend_dev_init(dev, nullptr);
+
+#ifdef __ANDROID__
+  __android_log_print(
+      ANDROID_LOG_INFO, "ggml-nmt",
+      "nmt_backend_init_gpu: device init %s", result ? "OK" : "FAILED");
+#endif
   if (!result) {
     QLOG(
         qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
@@ -503,7 +524,19 @@ nmt_backend_init(const nmt_context_params& params) {
       continue;
     }
 
+#ifdef __ANDROID__
+    __android_log_print(
+        ANDROID_LOG_INFO, "ggml-nmt",
+        "nmt_backend_init: init ACCEL device '%s'",
+        dev_name ? dev_name : "(null)");
+#endif
     ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+#ifdef __ANDROID__
+    __android_log_print(
+        ANDROID_LOG_INFO, "ggml-nmt",
+        "nmt_backend_init: ACCEL device init %s",
+        backend ? "OK" : "FAILED");
+#endif
     if (!backend) {
       continue;
     }
