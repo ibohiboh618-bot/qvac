@@ -101,74 +101,11 @@ async function downloadFile (url, destPath) {
 }
 
 /**
- * Parses a dotted version string (e.g. "2.1") into a numeric tuple suitable
- * for lexicographic comparison. Non-numeric parts collapse to 0 so we never
- * throw on unexpected metadata.
- */
-function _parseVersion (v) {
-  if (typeof v !== 'string') return [0]
-  return v.split('.').map(p => Number.parseInt(p, 10) || 0)
-}
-
-/** Returns positive when `a` is newer than `b`, negative when older, 0 when equal. */
-function _compareVersion (a, b) {
-  const av = _parseVersion(a)
-  const bv = _parseVersion(b)
-  const len = Math.max(av.length, bv.length)
-  for (let i = 0; i < len; i++) {
-    const ai = av[i] || 0
-    const bi = bv[i] || 0
-    if (ai !== bi) return ai - bi
-  }
-  return 0
-}
-
-/**
- * Groups Firefox `translations-models` records by their canonical filename
- * (the same `model.<pair>.intgemm.alphas.bin` / `vocab.<pair>.spm` /
- * `lex.<pair>.s2t.bin` shows up once per published version), then keeps the
- * highest-version record for each filename.
- *
- * This is the variant-pinning logic that protects callers from accidentally
- * landing on the legacy v1.0 (a.k.a. "tiny") models — which are still served
- * from the Firefox CDN for backward compatibility but produce detokenised
- * output with a stray space before sentence-final punctuation
- * ("Ciao mondo !" instead of "Ciao mondo!"). The v2.x records correspond to
- * the "base-memory" variant Mozilla currently recommends for Firefox itself.
- */
-function _selectNewestPerFilename (records) {
-  const byFilename = new Map()
-  for (const record of records) {
-    const att = record.attachment
-    if (!att || !att.location) continue
-    const filename = record.name || att.filename || path.basename(att.location)
-    const existing = byFilename.get(filename)
-    if (!existing || _compareVersion(record.version, existing.version) > 0) {
-      byFilename.set(filename, record)
-    }
-  }
-  return Array.from(byFilename.values())
-}
-
-/**
  * Downloads Bergamot model files from Mozilla's Firefox Remote Settings CDN.
  * This is the same source Firefox itself uses for translation models.
- *
- * @param {string} srcLang Source language code (e.g. 'en')
- * @param {string} dstLang Target language code (e.g. 'it')
- * @param {string} destDir Directory to write files into
- * @param {Object} [options]
- * @param {string} [options.minVersion]
- *   Lower bound on the Firefox record `version` field. Records older than
- *   this are dropped. Defaults to '2.0' to exclude the legacy v1.x ("tiny")
- *   variant whose detokenisation regresses sentence-final punctuation. Pass
- *   '0' or null to disable the filter (e.g. for explicit legacy regression
- *   testing).
  */
-async function downloadBergamotFromFirefox (srcLang, dstLang, destDir, options = {}) {
+async function downloadBergamotFromFirefox (srcLang, dstLang, destDir) {
   const fetch = require('bare-fetch')
-
-  const minVersion = options.minVersion === undefined ? '2.0' : options.minVersion
 
   console.log(`[bergamot-fetcher] Downloading ${srcLang}-${dstLang} from Firefox Remote Settings CDN...`)
 
@@ -177,7 +114,7 @@ async function downloadBergamotFromFirefox (srcLang, dstLang, destDir, options =
   const body = await res.json()
   const records = body.data || []
 
-  let pairRecords = records.filter(
+  const pairRecords = records.filter(
     r => r.fromLang === srcLang && r.toLang === dstLang && r.attachment
   )
 
@@ -188,32 +125,24 @@ async function downloadBergamotFromFirefox (srcLang, dstLang, destDir, options =
     )
   }
 
-  if (minVersion) {
-    const filtered = pairRecords.filter(r => _compareVersion(r.version, minVersion) >= 0)
-    if (filtered.length === 0) {
-      throw new Error(
-        `No Firefox Translations model for ${srcLang}-${dstLang} satisfies minVersion=${minVersion}. ` +
-        'Pass `{ minVersion: null }` to opt into legacy variants explicitly.'
-      )
-    }
-    pairRecords = filtered
-  }
-
-  const selected = _selectNewestPerFilename(pairRecords)
-  console.log(
-    `[bergamot-fetcher] Selected ${selected.length} files (` +
-    selected.map(r => `${r.name || r.attachment?.filename}@v${r.version}`).join(', ') +
-    ')'
-  )
-
   fs.mkdirSync(destDir, { recursive: true })
 
-  // Records have already been narrowed to one entry per filename (the
-  // newest version satisfying `minVersion`), so a simple iteration is
-  // enough — no need for a runtime `seenFilenames` guard.
-  for (const record of selected) {
+  // Firefox's translations-models collection exposes multiple variants per
+  // language pair (production + dev/beta), several of which share the same
+  // `filename`. Without dedup we'd download (and overwrite) the same file
+  // 2–3× per invocation — a real case observed on Samsung Device Farm: a
+  // `runPivotBergamot` test spent 20 min redundantly re-fetching ~30MB
+  // .intgemm variants and timed out. Process one filename per invocation,
+  // taking the first matching record.
+  const seenFilenames = new Set()
+  for (const record of pairRecords) {
     const att = record.attachment
+    if (!att || !att.location) continue
+
     const filename = record.name || att.filename || path.basename(att.location)
+    if (seenFilenames.has(filename)) continue
+    seenFilenames.add(filename)
+
     const url = `${FIREFOX_ATTACHMENT_BASE}/${att.location}`
     const dest = path.join(destDir, filename)
 
@@ -223,7 +152,7 @@ async function downloadBergamotFromFirefox (srcLang, dstLang, destDir, options =
       continue
     }
 
-    console.log(`[bergamot-fetcher]   Downloading ${filename} (v${record.version})...`)
+    console.log(`[bergamot-fetcher]   Downloading ${filename}...`)
     const bytes = await downloadFile(url, dest)
     console.log(`[bergamot-fetcher]   ✓ ${filename} (${(bytes / 1024 / 1024).toFixed(1)}MB)`)
   }
@@ -249,21 +178,15 @@ async function downloadBergamotFromFirefox (srcLang, dstLang, destDir, options =
  * @param {string} srcLang  Source language code (e.g. 'en')
  * @param {string} dstLang  Target language code (e.g. 'it')
  * @param {string} destDir  Directory to store model files
- * @param {Object} [options]
- * @param {string|null} [options.minVersion]
- *   Forwarded to `downloadBergamotFromFirefox`. Defaults to '2.0' (excludes
- *   the legacy v1.x "tiny" Bergamot variant whose detokenisation regresses
- *   sentence-final punctuation). Pass `null` to opt back into legacy
- *   variants explicitly.
  * @returns {Promise<string>} Resolved path to the model directory
  */
-async function ensureBergamotModelFiles (srcLang, dstLang, destDir, options = {}) {
+async function ensureBergamotModelFiles (srcLang, dstLang, destDir) {
   if (hasBergamotModelFiles(destDir)) {
     console.log(`[bergamot-fetcher] Model already available at ${destDir}`)
     return destDir
   }
 
-  return await downloadBergamotFromFirefox(srcLang, dstLang, destDir, options)
+  return await downloadBergamotFromFirefox(srcLang, dstLang, destDir)
 }
 
 // ============================================================================
