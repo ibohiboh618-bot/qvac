@@ -136,6 +136,60 @@ export const bergamotEnEsStreaming = createBergamotTest(
   { validation: "contains-any", contains: ["buenos", "días", "cómo"] },
 );
 
+// --- EN → IT (bergamot-en-it) ---
+//
+// Direct EN→IT coverage was missing from this suite — `BERGAMOT_EN_IT` was
+// only exercised as the pivot leg of `bergamot-es-it-pivot`, so the consumer
+// path that loads the EN→IT bergamot model directly went unchecked. This
+// matches a real consumer (Keet) wallet/translation integration that
+// regressed when the wrong Bergamot variant (tiny vs base-memory) shipped
+// behind the registry path, producing detokenised output with whitespace
+// before terminal punctuation ("Ciao mondo !" instead of "Ciao mondo!").
+//
+// `bergamotEnItNoSpacedPunctuation` below is the regression guard: a regex
+// expectation with a negative lookahead that fails the moment any space
+// precedes `!`, `?`, `.`, or `,` in the output. Word-level `contains-any`
+// validations elsewhere in this file are punctuation-blind and would not
+// catch this class of detokenisation regression.
+
+export const bergamotEnItBasic = createBergamotTest(
+  "translation-bergamot-en-it-basic",
+  "Hello, how are you today?",
+  "bergamot-en-it",
+  { validation: "contains-any", contains: ["ciao", "come", "stai", "oggi"] },
+  15000,
+  ["smoke"],
+);
+
+export const bergamotEnItLongText = createBergamotTest(
+  "translation-bergamot-en-it-long-text",
+  "The weather is beautiful today. I decided to go for a walk in the park.",
+  "bergamot-en-it",
+  { validation: "contains-any", contains: ["tempo", "parco", "passeggiata", "bello"] },
+  20000,
+);
+
+export const bergamotEnItStreaming = createBergamotTest(
+  "translation-bergamot-en-it-streaming",
+  "Good morning, how are you?",
+  "bergamot-en-it",
+  { validation: "contains-any", contains: ["buongiorno", "come", "stai"] },
+);
+
+export const bergamotEnItNoSpacedPunctuation: TestDefinition = {
+  testId: "translation-bergamot-en-it-no-spaced-punctuation",
+  params: { text: "Hello world!", resource: "bergamot-en-it" },
+  expectation: {
+    validation: "regex",
+    pattern: "^(?!.*\\s[!?.,]).+$",
+  },
+  metadata: {
+    category: "translation-bergamot",
+    dependency: "bergamot-en-it",
+    estimatedDurationMs: 15000,
+  },
+};
+
 // --- ES → IT via EN pivot (bergamot-es-it-pivot) ---
 
 export const bergamotPivotBasic = createBergamotTest(
@@ -172,6 +226,12 @@ export const translationBergamotTests = [
   bergamotEnEsLongText,
   bergamotEnEsQuestion,
   bergamotEnEsStreaming,
+  // EN → IT (matches Keet consumer path; no-spaced-punctuation is the
+  // regression guard for the tiny-variant Bergamot detokenisation bug)
+  bergamotEnItBasic,
+  bergamotEnItLongText,
+  bergamotEnItStreaming,
+  bergamotEnItNoSpacedPunctuation,
   // ES → IT via EN pivot
   bergamotPivotBasic,
   bergamotPivotStreaming,

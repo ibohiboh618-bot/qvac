@@ -57,6 +57,26 @@ const {
 
 const BERGAMOT_FIXTURE = path.resolve(__dirname, 'fixtures/bergamot.quality.json')
 
+/**
+ * Detokenisation regression guard for Bergamot output.
+ *
+ * The legacy v1.x ("tiny") Bergamot variant — and any future regression in
+ * the C++ post-processing path — emits a stray space before sentence-final
+ * punctuation ("Ciao mondo !" instead of "Ciao mondo!"). Our model-size
+ * guard in `ensureBergamotModel` already rejects the v1.x model on disk;
+ * this assertion is the second line of defence on the actual translated
+ * string so a future regression that produces the same output shape from
+ * a different code path also fails CI.
+ */
+function assertNoSpacedPunctuation (t, label, output) {
+  const m = /\s[!?.,]/.exec(output)
+  t.absent(
+    m,
+    `${label} Bergamot output must not contain whitespace before terminal punctuation ` +
+    `(got: ${JSON.stringify(output)}${m ? `, match=${JSON.stringify(m[0])}` : ''})`
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Per-GPU-device tests (mobile only).  On desktop only the CPU test runs.
 // ---------------------------------------------------------------------------
@@ -130,6 +150,7 @@ if (isMobile) {
         }))
 
         t.ok(metrics.fullOutput.length > 0, `${label} translation should not be empty`)
+        assertNoSpacedPunctuation(t, label, metrics.fullOutput)
         t.pass(`${label} Bergamot translation completed successfully`)
       } catch (e) {
         t.fail(`${label} Bergamot test failed: ` + e.message)
@@ -207,6 +228,7 @@ test('Bergamot backend [CPU] - English to Italian translation', { timeout: TEST_
     }))
 
     t.ok(metrics.fullOutput.length > 0, `${label} translation should not be empty`)
+    assertNoSpacedPunctuation(t, label, metrics.fullOutput)
     t.pass(`${label} Bergamot translation completed successfully`)
   } catch (e) {
     t.fail(`${label} Bergamot test failed: ` + e.message)

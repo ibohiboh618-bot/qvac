@@ -497,37 +497,94 @@ async function ensureIndicTransModel () {
 }
 
 /**
+ * Lower bound on the Firefox Bergamot model record `version` field.
+ *
+ * Firefox's `translations-models` Remote Settings collection exposes both the
+ * legacy v1.x ("tiny") variant — whose detokeniser inserts a stray space
+ * before sentence-final punctuation ("Ciao mondo !" instead of
+ * "Ciao mondo!") — and the current v2.x ("base-memory") variant. The integration
+ * test pins to v2.0+ so we always exercise the variant we ship to consumers
+ * and the regression that prompted this guard cannot silently come back.
+ *
+ * Set the `BERGAMOT_FIREFOX_MIN_VERSION` env var to override locally (use
+ * `0` to opt back into v1.x for explicit legacy regression checks).
+ */
+const BERGAMOT_FIREFOX_MIN_VERSION = process.env.BERGAMOT_FIREFOX_MIN_VERSION ?? '2.0'
+
+/**
+ * Lower bound on the on-disk size (bytes) of the Bergamot `.intgemm` model
+ * file. Tiny v1.x weighs ~17MB; base-memory v2.x is ~32MB. Anything under this
+ * threshold means we accidentally landed on the broken legacy variant.
+ *
+ * The check runs against the actual file we just resolved (cached or freshly
+ * downloaded) so it also catches a stale v1.x model left in the cache from
+ * a pre-fix run.
+ */
+const BERGAMOT_INTGEMM_MIN_BYTES = 25 * 1024 * 1024
+
+/**
  * Ensures Bergamot model is available
  *
  * Download priority:
  *   1. Check local path (../../model/bergamot/enit/)
- *   2. Fallback: download directly from Firefox Remote Settings CDN
+ *   2. Fallback: download directly from Firefox Remote Settings CDN, pinned
+ *      to the v2.0+ ("base-memory") variant.
  *
  * @returns {Promise<string>} Path to Bergamot model directory
- * @throws {Error} If model files not found/available
+ * @throws {Error} If model files not found/available, or if the resolved
+ *   `.intgemm` model on disk is smaller than `BERGAMOT_INTGEMM_MIN_BYTES`
+ *   (which means the legacy "tiny" variant snuck in).
  */
 async function ensureBergamotModel () {
   const { ensureBergamotModelFiles } = require('@qvac/translation-nmtcpp/lib/bergamot-model-fetcher')
 
+  let modelDir
+
   // Check pre-existing local model first
   const relativeDir = '../../model/bergamot/enit'
-  const modelDir = path.resolve(__dirname, relativeDir)
+  const localDir = path.resolve(__dirname, relativeDir)
 
-  if (fs.existsSync(modelDir)) {
-    const files = fs.readdirSync(modelDir)
+  if (fs.existsSync(localDir)) {
+    const files = fs.readdirSync(localDir)
     const hasIntgemm = files.some(f => f.includes('.intgemm'))
     const hasVocab = files.some(f => f.includes('.spm'))
 
     if (hasIntgemm && hasVocab) {
-      return modelDir
+      modelDir = localDir
     }
   }
 
-  // Not found locally — download from Firefox CDN
-  const writableRoot = isMobile ? (global.testDir || '/tmp') : path.resolve(__dirname, '../..')
-  const destDir = path.join(writableRoot, 'model', 'bergamot', 'enit')
+  if (!modelDir) {
+    // Not found locally — download from Firefox CDN, pinned to the
+    // base-memory (v2.x) variant.
+    const writableRoot = isMobile ? (global.testDir || '/tmp') : path.resolve(__dirname, '../..')
+    const destDir = path.join(writableRoot, 'model', 'bergamot', 'enit')
+    modelDir = await ensureBergamotModelFiles('en', 'it', destDir, {
+      minVersion: BERGAMOT_FIREFOX_MIN_VERSION === '0' ? null : BERGAMOT_FIREFOX_MIN_VERSION
+    })
+  }
 
-  return ensureBergamotModelFiles('en', 'it', destDir)
+  // Variant guard: reject the tiny v1.x .intgemm file (~17MB) that ships
+  // alongside base-memory on the same Firefox CDN. Anything below ~25MB is
+  // structurally too small to be base-memory and produces the
+  // " <punctuation>" detokenisation regression in production.
+  const files = fs.readdirSync(modelDir)
+  const intgemmFile = files.find(f => f.includes('.intgemm') && f.endsWith('.bin'))
+  if (!intgemmFile) {
+    throw new Error(`Bergamot model directory ${modelDir} has no .intgemm .bin file`)
+  }
+  const intgemmStat = fs.statSync(path.join(modelDir, intgemmFile))
+  if (intgemmStat.size < BERGAMOT_INTGEMM_MIN_BYTES) {
+    throw new Error(
+      `Bergamot ${intgemmFile} is ${(intgemmStat.size / 1024 / 1024).toFixed(1)}MB ` +
+      `(expected >= ${(BERGAMOT_INTGEMM_MIN_BYTES / 1024 / 1024).toFixed(0)}MB for base-memory v2.x). ` +
+      'The legacy v1.x "tiny" Bergamot variant detokenises sentence-final punctuation incorrectly ' +
+      '("Ciao mondo !" instead of "Ciao mondo!"). Delete the stale model dir and re-run, or set ' +
+      'BERGAMOT_FIREFOX_MIN_VERSION=2.0 (default) so the fetcher pins the correct variant.'
+    )
+  }
+
+  return modelDir
 }
 
 // ============================================================================

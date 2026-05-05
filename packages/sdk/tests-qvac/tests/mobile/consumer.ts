@@ -177,6 +177,16 @@ resources.define("bergamot-en-es", {
   },
 });
 
+resources.define("bergamot-en-it", {
+  constant: BERGAMOT_EN_IT,
+  type: "nmt",
+  config: {
+    engine: "Bergamot",
+    from: "en",
+    to: "it",
+  },
+});
+
 resources.define("bergamot-es-it-pivot", {
   constant: BERGAMOT_ES_EN,
   type: "nmt",
