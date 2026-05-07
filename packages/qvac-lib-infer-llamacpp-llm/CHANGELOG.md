@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.99.1] - TEST_MODE_DO_NOT_MERGE
+
+Throwaway version + temporarily renamed package
+`@qvac/llm-llamacpp-firstpub-test-DO-NOT-USE` to exercise the
+auto-decide block's first-publish path (npm view returns E404 ->
+expect chosen dist-tag = `latest`). Branch will be deleted.
+
 ## [0.19.1] - 2026-04-30
 
 ### Fixed

@@ -231,13 +231,16 @@ jobs:
           name: prebuilds
           path: packages/qvac-lib-infer-llamacpp-llm/prebuilds
 
-      - name: Scope package as @qvac for npm
+      - name: Scope package as @qvac for npm (DISABLED for first_publish test)
         working-directory: packages/qvac-lib-infer-llamacpp-llm
         shell: bash
         run: |
           set -euo pipefail
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const want='@qvac/llm-llamacpp';if(p.name!==want){p.name=want;fs.writeFileSync('package.json',JSON.stringify(p,null,2));console.log('Set name to',p.name);}else{console.log('Already',p.name);}"
-          node -e "console.log('Effective package name (publish-npm):', JSON.parse(require('fs').readFileSync('package.json','utf8')).name)"
+          # TEST_MODE_DO_NOT_MERGE: rename step disabled so the test branch's
+          # alternate package name (e.g. @qvac/llm-llamacpp-firstpub-test) is
+          # preserved into publish-npm, exercising the E404 first-publish path.
+          echo "[TEST_MODE_DO_NOT_MERGE] rename step disabled"
+          node -e "console.log('Effective package name (publish-npm, unchanged):', JSON.parse(require('fs').readFileSync('package.json','utf8')).name)"
 
       - name: Publish to NPM Package Registry
         id: publish
