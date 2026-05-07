@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.99.0] - TEST_MODE_DO_NOT_MERGE
+
+Throwaway version for npm-decide validation. Branch will be deleted.
+
 ## [0.19.1] - 2026-04-30
 
 ### Fixed
