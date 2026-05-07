@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.99] - TEST_MODE_DO_NOT_MERGE
+
+Throwaway version for npm-decide validation (backport scenario:
+0.13.99 < live latest 0.19.1, expect chosen dist-tag = `v0.13`).
+Branch will be deleted.
+
 ## [0.19.1] - 2026-04-30
 
 ### Fixed
