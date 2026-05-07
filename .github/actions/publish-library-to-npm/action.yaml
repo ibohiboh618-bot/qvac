@@ -237,20 +237,29 @@ runs:
 
         ACCESS="public"
 
-        if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
-          echo "Version $VERSION already exists for $PACKAGE_NAME on npm, skipping publish"
-          # NEW: explicitly mark skipped and leave published_version empty
-          echo "npm_publish_skipped=true" >> "$GITHUB_OUTPUT"
-          echo "npm_published_version=" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
+        # TEST_MODE_DO_NOT_MERGE: duplicate-version skip is disabled so the
+        # decide-tag block can be exercised across multiple workflow_dispatch
+        # invocations on the same test branch without the second run bailing
+        # out early on the version-already-exists guard.
+        # if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+        #   echo "Version $VERSION already exists for $PACKAGE_NAME on npm, skipping publish"
+        #   echo "npm_publish_skipped=true" >> "$GITHUB_OUTPUT"
+        #   echo "npm_published_version=" >> "$GITHUB_OUTPUT"
+        #   exit 0
+        # fi
 
-        if ([ "${EVENT_NAME}" = "push" ] || [ "${EVENT_NAME}" = "workflow_dispatch" ]) && [ "$ACCESS" = "public" ]; then
-          echo "Publishing with provenance statements"
-          npm publish --tag "$TAG" --access "$ACCESS" --provenance
-        else
-          npm publish --tag "$TAG" --access "$ACCESS"
-        fi
+        # TEST_MODE_DO_NOT_MERGE: real `npm publish` calls replaced with
+        # echoes so the auto-decide block runs end-to-end without touching
+        # the registry. The chosen $TAG is the actual artefact under test.
+        echo "[TEST_MODE_DO_NOT_MERGE] would: npm publish --tag \"$TAG\" --access \"$ACCESS\" [--provenance]"
+        echo "[TEST_MODE_DO_NOT_MERGE] EVENT_NAME=$EVENT_NAME, ACCESS=$ACCESS"
+        echo "[TEST_MODE_DO_NOT_MERGE] PACKAGE_NAME=$PACKAGE_NAME, VERSION=$VERSION"
+        # if ([ "${EVENT_NAME}" = "push" ] || [ "${EVENT_NAME}" = "workflow_dispatch" ]) && [ "$ACCESS" = "public" ]; then
+        #   echo "Publishing with provenance statements"
+        #   npm publish --tag "$TAG" --access "$ACCESS" --provenance
+        # else
+        #   npm publish --tag "$TAG" --access "$ACCESS"
+        # fi
 
         echo "npm publish completed successfully"
 
