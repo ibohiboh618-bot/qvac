@@ -112,7 +112,12 @@ jobs:
           package-json-path: packages/qvac-lib-infer-llamacpp-llm/package.json
           changelog-path: packages/qvac-lib-infer-llamacpp-llm/CHANGELOG.md
 
-  # Build prebuilds (build + merge only, no publishing)
+  # TEST_MODE_DO_NOT_MERGE: build stubbed to a 30s no-op so the npm-decide
+  # composite can be exercised end-to-end without a 60+ minute prebuild matrix.
+  # The auto-decide logic does not inspect prebuild contents -- it only reads
+  # package.json and queries `npm view`. The downstream publish-npm step
+  # downloads the artifact but does not execute it because `npm publish` is
+  # also stubbed in this branch (see the publish-library-to-npm composite).
   build:
     needs: publish-logic
     if: >-
@@ -120,15 +125,20 @@ jobs:
       needs.publish-logic.outputs.publish_release == 'true' ||
       needs.publish-logic.outputs.publish_feature == 'true' ||
       needs.publish-logic.outputs.publish_tmp == 'true'
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      packages: write
-      pull-requests: write
-      id-token: write
-    uses: ./.github/workflows/prebuilds-qvac-lib-infer-llamacpp-llm.yml
-    secrets: inherit
-    with:
-      workdir: "packages/qvac-lib-infer-llamacpp-llm"
+      contents: read
+    steps:
+      - name: Create empty prebuilds dir (TEST_MODE)
+        shell: bash
+        run: |
+          mkdir -p prebuilds
+          echo "TEST_MODE: empty prebuilds artifact (real prebuild matrix is stubbed for npm-decide validation)" > prebuilds/README.md
+      - name: Upload empty prebuilds artifact (TEST_MODE)
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
+        with:
+          name: prebuilds
+          path: prebuilds
 
   # Publish to GitHub Package Registry (GPR) for non-release branches
   publish-gpr:
