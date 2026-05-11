@@ -8,7 +8,7 @@ on:
       - feature-*
       - tmp-*
     paths:
-      - "packages/transcription-whispercpp/**"
+      - "packages/qvac-lib-infer-whispercpp/**"
       - ".github/workflows/*whispercpp*.yml"
 
   workflow_dispatch:
@@ -98,9 +98,9 @@ jobs:
           base-ref: ${{ github.ref_name }}
           base-sha: ${{ github.event.before }}
           head-sha: ${{ github.sha }}
-          package-slug: transcription-whispercpp
-          package-json-path: packages/transcription-whispercpp/package.json
-          changelog-path: packages/transcription-whispercpp/CHANGELOG.md
+          package-slug: qvac-lib-infer-whispercpp
+          package-json-path: packages/qvac-lib-infer-whispercpp/package.json
+          changelog-path: packages/qvac-lib-infer-whispercpp/CHANGELOG.md
 
   build:
     needs: publish-logic
@@ -119,7 +119,7 @@ jobs:
     with:
       repository: ${{ github.repository }}
       ref: ${{ github.ref }}
-      workdir: "packages/transcription-whispercpp"
+      workdir: "packages/qvac-lib-infer-whispercpp"
 
   publish-gpr:
     needs: [build, publish-logic]
@@ -135,7 +135,7 @@ jobs:
       contents: read
       packages: write
     env:
-      WORKDIR: packages/transcription-whispercpp
+      WORKDIR: packages/qvac-lib-infer-whispercpp
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
@@ -209,7 +209,7 @@ jobs:
       packages: write
       id-token: write
     env:
-      WORKDIR: packages/transcription-whispercpp
+      WORKDIR: packages/qvac-lib-infer-whispercpp
     steps:
       - name: Validate npm_tag input
         if: inputs.npm_tag != ''
@@ -268,7 +268,7 @@ jobs:
       release_name: "QVAC Transcription Whisper Addon"
       published_version: ${{ needs.publish-npm.outputs.published_version }}
       prev_sha: ${{ github.event.before }}
-      workdir: "packages/transcription-whispercpp"
+      workdir: "packages/qvac-lib-infer-whispercpp"
 
   post-build-gate:
     name: Post-Build Gate
@@ -303,7 +303,7 @@ jobs:
     with:
       repository: ${{ github.repository }}
       ref: ${{ github.sha }}
-      workdir: "packages/transcription-whispercpp"
+      workdir: "packages/qvac-lib-infer-whispercpp"
 
   mobile-integration-tests:
     uses: ./.github/workflows/integration-mobile-test-transcription-whispercpp.yml
@@ -337,4 +337,4 @@ jobs:
             -f language=english \
             -f model_size=tiny \
             -f streaming_mode=false \
-            -f workdir=packages/transcription-whispercpp
+            -f workdir=packages/qvac-lib-infer-whispercpp

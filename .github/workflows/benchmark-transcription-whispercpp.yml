@@ -75,10 +75,10 @@ on:
         type: number
         default: -1
       workdir:
-        description: 'Package working directory in monorepo (e.g., packages/transcription-whispercpp)'
+        description: 'Package working directory in monorepo (e.g., packages/qvac-lib-infer-whispercpp)'
         required: false
         type: string
-        default: 'packages/transcription-whispercpp'
+        default: 'packages/qvac-lib-infer-whispercpp'
 
 permissions:
   contents: read

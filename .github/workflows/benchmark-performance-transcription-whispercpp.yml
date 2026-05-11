@@ -101,7 +101,7 @@ jobs:
         run: |
           node scripts/perf-report/aggregate-whisper-rtf.js \
             --dir benchmark-artifacts/desktop \
-            --manual-dir packages/transcription-whispercpp/benchmarks/manual-results \
+            --manual-dir packages/qvac-lib-infer-whispercpp/benchmarks/manual-results \
             --output benchmark-artifacts/whisper-performance-findings.md \
             --output-json benchmark-artifacts/whisper-performance-findings.json
 

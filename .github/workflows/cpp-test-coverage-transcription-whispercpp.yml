@@ -9,16 +9,16 @@ on:
       repository:
         type: string
       workdir:
-        description: 'Package working directory in monorepo (e.g., packages/transcription-whispercpp)'
+        description: 'Package working directory in monorepo (e.g., packages/qvac-lib-infer-whispercpp)'
         required: false
-        default: 'packages/transcription-whispercpp'
+        default: 'packages/qvac-lib-infer-whispercpp'
         type: string
   workflow_dispatch:
     inputs:
       workdir:
-        description: 'Package working directory in monorepo (e.g., packages/transcription-whispercpp)'
+        description: 'Package working directory in monorepo (e.g., packages/qvac-lib-infer-whispercpp)'
         required: false
-        default: 'packages/transcription-whispercpp'
+        default: 'packages/qvac-lib-infer-whispercpp'
         type: string
 
 env:
