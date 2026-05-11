@@ -5,7 +5,7 @@ on:
     types:
       - closed
     paths:
-      - "packages/tts-onnx/**"
+      - "packages/qvac-lib-infer-onnx-tts/**"
       - ".github/workflows/*onnx-tts*.yml"
   workflow_dispatch:
     inputs:

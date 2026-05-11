@@ -8,7 +8,7 @@ on:
       - feature-*
       - tmp-*
     paths:
-      - "packages/tts-onnx/**"
+      - "packages/qvac-lib-infer-onnx-tts/**"
       - ".github/workflows/*onnx-tts*.yml"
 
   workflow_dispatch:
@@ -100,9 +100,9 @@ jobs:
           base-ref: ${{ github.ref_name }}
           base-sha: ${{ github.event.before }}
           head-sha: ${{ github.sha }}
-          package-slug: tts-onnx
-          package-json-path: packages/tts-onnx/package.json
-          changelog-path: packages/tts-onnx/CHANGELOG.md
+          package-slug: qvac-lib-infer-onnx-tts
+          package-json-path: packages/qvac-lib-infer-onnx-tts/package.json
+          changelog-path: packages/qvac-lib-infer-onnx-tts/CHANGELOG.md
 
   build:
     needs: publish-logic
@@ -121,7 +121,7 @@ jobs:
     with:
       repository: ${{ github.repository }}
       ref: ${{ github.ref }}
-      workdir: packages/tts-onnx
+      workdir: packages/qvac-lib-infer-onnx-tts
 
   publish-gpr:
     needs: [build, publish-logic]
@@ -136,7 +136,7 @@ jobs:
       contents: read
       packages: write
     env:
-      WORKDIR: packages/tts-onnx
+      WORKDIR: packages/qvac-lib-infer-onnx-tts
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
@@ -173,7 +173,7 @@ jobs:
       packages: write
       id-token: write
     env:
-      WORKDIR: packages/tts-onnx
+      WORKDIR: packages/qvac-lib-infer-onnx-tts
     steps:
       - name: Validate npm_tag input
         if: inputs.npm_tag != ''
@@ -228,7 +228,7 @@ jobs:
       release_name: "QVAC TTS ONNX Addon"
       published_version: ${{ needs.publish-npm.outputs.published_version }}
       prev_sha: ${{ github.event.before }}
-      workdir: packages/tts-onnx
+      workdir: packages/qvac-lib-infer-onnx-tts
 
   post-build-gate:
     name: Post-Build Gate

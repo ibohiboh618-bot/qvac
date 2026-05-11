@@ -7,7 +7,7 @@ on:
       workdir:
         description: "Working directory inside the repo (monorepo package path)"
         required: false
-        default: "packages/tts-onnx"
+        default: "packages/qvac-lib-infer-onnx-tts"
         type: string
 
   workflow_call:
@@ -24,7 +24,7 @@ on:
         description: "Working directory inside the repo (monorepo package path)"
         type: string
         required: false
-        default: "packages/tts-onnx"
+        default: "packages/qvac-lib-infer-onnx-tts"
 
 permissions:
   contents: read
