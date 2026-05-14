@@ -1,5 +1,6 @@
 import { ModelType } from "./model-types";
 import {
+  ADDON_CLASSIFICATION,
   ADDON_DIFFUSION,
   ADDON_EMBEDDING,
   ADDON_LLM,
@@ -26,6 +27,7 @@ export const ENGINE_TO_ADDON = {
   [ModelType.onnxOcr]: "ocr",
   [ModelType.parakeetTranscription]: "parakeet",
   [ModelType.sdcppGeneration]: "diffusion",
+  [ModelType.ggmlClassification]: "classification",
   "onnx-vad": "vad",
 } as const satisfies Record<ModelRegistryEngine, ModelRegistryEntryAddon>;
 
@@ -52,6 +54,8 @@ const LEGACY_ENGINE_TO_CANONICAL: Record<string, ModelRegistryEngine> = {
   ocr: ModelType.onnxOcr,
   [ADDON_DIFFUSION]: ModelType.sdcppGeneration,
   diffusion: ModelType.sdcppGeneration,
+  [ADDON_CLASSIFICATION]: ModelType.ggmlClassification,
+  classification: ModelType.ggmlClassification,
 };
 
 // Resolves any engine string (legacy or canonical) to a validated canonical engine.

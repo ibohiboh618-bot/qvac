@@ -29,12 +29,14 @@ import {
   ttsModelTypeSchema,
   ocrModelTypeSchema,
   diffusionModelTypeSchema,
+  classificationModelTypeSchema,
   ModelType,
   ModelTypeAliases,
   type CanonicalModelType,
   type ModelTypeInput,
 } from "./model-types";
 import { sdcppConfigSchema } from "./sdcpp-config";
+import { classificationConfigSchema } from "./classification";
 
 // Set of all built-in model types (canonical + aliases) for catch-all exclusion
 const builtInModelTypes = new Set([
@@ -112,6 +114,14 @@ export const loadBuiltinModelOptionsBaseSchema = z.union([
       ...loadModelCommonFields,
       modelType: diffusionModelTypeSchema,
       modelConfig: sdcppConfigSchema.strict().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...loadModelCommonFields,
+      modelSrc: modelSrcInputSchema.optional(),
+      modelType: classificationModelTypeSchema,
+      modelConfig: classificationConfigSchema.strict().optional(),
     })
     .strict(),
 ]);
@@ -280,6 +290,24 @@ const loadModelOptionsToRequestBaseSchema = z.union([
       modelType: ModelType.sdcppGeneration,
       modelSrc: modelInputToSrcSchema.parse(data.modelSrc),
       modelName: modelInputToNameSchema.parse(data.modelSrc),
+      modelConfig: data.modelConfig ?? {},
+      seed: data.seed ?? false,
+      withProgress: data.withProgress ?? !!data.onProgress,
+      delegate: data.delegate,
+    })),
+  z
+    .object({
+      ...loadModelRequestCommonFields,
+      modelSrc: modelSrcInputSchema.optional(),
+      modelType: classificationModelTypeSchema,
+      modelConfig: classificationConfigSchema.strict().optional(),
+    })
+    .strict()
+    .transform((data) => ({
+      type: "loadModel" as const,
+      modelType: ModelType.ggmlClassification,
+      modelSrc: data.modelSrc ? modelInputToSrcSchema.parse(data.modelSrc) : "",
+      modelName: data.modelSrc ? modelInputToNameSchema.parse(data.modelSrc) : undefined,
       modelConfig: data.modelConfig ?? {},
       seed: data.seed ?? false,
       withProgress: data.withProgress ?? !!data.onProgress,

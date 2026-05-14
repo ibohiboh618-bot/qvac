@@ -382,6 +382,13 @@ export const PLUGIN_DIFFUSION =
   "@qvac/sdk/sdcpp-generation/plugin" as const;
 
 /**
+ * Image classification plugin (GGML / MobileNetV3-Small).
+ * Provides: image classification with bundled 3-class model (food / report / other).
+ */
+export const PLUGIN_CLASSIFICATION =
+  "@qvac/sdk/ggml-classification/plugin" as const;
+
+/**
  * All built-in SDK plugins.
  *
  * @example
@@ -399,6 +406,7 @@ export const SDK_DEFAULT_PLUGINS = [
   PLUGIN_TTS,
   PLUGIN_OCR,
   PLUGIN_DIFFUSION,
+  PLUGIN_CLASSIFICATION,
 ] as const;
 
 export type BuiltinPlugin = (typeof SDK_DEFAULT_PLUGINS)[number];
@@ -430,3 +438,6 @@ export const ADDON_OCR = "@qvac/ocr-onnx" as const;
 
 /** Native addon package for image generation (stable-diffusion.cpp) */
 export const ADDON_DIFFUSION = "@qvac/diffusion-cpp" as const;
+
+/** Native addon package for image classification (GGML / MobileNetV3) */
+export const ADDON_CLASSIFICATION = "@qvac/classification-ggml" as const;

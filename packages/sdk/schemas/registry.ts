@@ -12,6 +12,7 @@ const modelRegistryEntryAddonSchema = z.enum([
   "ocr",
   "parakeet",
   "diffusion",
+  "classification",
   "other",
 ]);
 
@@ -29,6 +30,7 @@ export const modelRegistryEngineSchema = z.enum([
   ModelType.onnxOcr,
   ModelType.parakeetTranscription,
   ModelType.sdcppGeneration,
+  ModelType.ggmlClassification,
   "onnx-vad",
 ]);
 

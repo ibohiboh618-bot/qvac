@@ -15,6 +15,7 @@ export const ModelType = {
   parakeetTranscription: "parakeet-transcription",
   onnxOcr: "onnx-ocr",
   sdcppGeneration: "sdcpp-generation",
+  ggmlClassification: "ggml-classification",
 } as const;
 
 // === INTERNAL: Alias keys (backward compat names) ===
@@ -27,6 +28,7 @@ const AliasKeys = {
   tts: "tts",
   ocr: "ocr",
   diffusion: "diffusion",
+  classification: "classification",
 } as const;
 
 // === INTERNAL: Aliases (backward compat mapping) ===
@@ -43,6 +45,7 @@ export const ModelTypeAliases = {
   [AliasKeys.tts]: ModelType.onnxTts,
   [AliasKeys.ocr]: ModelType.onnxOcr,
   [AliasKeys.diffusion]: ModelType.sdcppGeneration,
+  [AliasKeys.classification]: ModelType.ggmlClassification,
 } as const;
 
 // === TYPES ===
@@ -229,4 +232,18 @@ export const diffusionModelTypeSchema = modelTypeInputSchema
   );
 export type DiffusionModelTypeInput = z.infer<
   typeof diffusionModelTypeSchema
+>;
+
+/**
+ * Image Classification model type schema.
+ * - Alias: `"classification"` → resolves to `"ggml-classification"`
+ * - Canonical: `"ggml-classification"`
+ */
+export const classificationModelTypeSchema = modelTypeInputSchema
+  .extract([AliasKeys.classification, ModelType.ggmlClassification])
+  .describe(
+    'Classification model type: "classification" (alias) or "ggml-classification" (canonical)',
+  );
+export type ClassificationModelTypeInput = z.infer<
+  typeof classificationModelTypeSchema
 >;
