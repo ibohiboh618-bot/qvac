@@ -1,0 +1,224 @@
+<h1>Dynamic Tooling &amp; KV Cache Management</h1>
+
+<p>Your local LLM now receives a tailored toolbox for every interaction, with automatic KV cache clearing to maintain high-speed inference.</p>
+
+<p>Agentic applications tend to grow tool catalogs quickly. A personal assistant might have weather, calendar, file search, notes, reminders, device actions, workspace search, and app-specific commands. But any single user turn usually needs only a small slice of that toolbox.</p>
+
+<p>When every possible tool is sent on every turn, local inference pays for it. The model has more prompt to prefill, the active context gets noisier, and long-running conversations become harder to keep fast. If the app tries to swap tools mid-session, cache reuse can also become fragmented because the prompt shape changed.</p>
+
+<p>QVAC now gives application developers a better primitive: dynamic tools with KV cache compaction.</p>
+
+<h2>What Changed</h2>
+
+<p>SDK users can load an LLM with dynamic tools enabled:</p>
+
+<pre><code class="language-typescript">const modelId = await loadModel({
+  modelSrc: QWEN3_1_7B_INST_Q4,
+  modelType: "llm",
+  modelConfig: {
+    ctx_size: 4096,
+    tools: true,
+    toolsMode: "dynamic",
+  },
+});</code></pre>
+
+<p>After that, each <code>completion()</code> call can provide only the tools relevant to the current turn while continuing to use the same <code>kvCache</code> key.</p>
+
+<p>Under the hood, the SDK maps dynamic mode to the LLM addon's <code>tools_compact</code> behavior. Tool definitions are anchored after the latest user or tool message. When the model finishes a tool-call chain, the transient tool block, intermediate assistant tool-call messages, and tool responses are compacted out of the KV cache. The conversation can continue from the useful parts: the user prompt and the final assistant answer.</p>
+
+<p>That means a local app can keep one fast conversation cache without pinning one giant toolbox to the whole session.</p>
+
+<h2>A Same-Session Example</h2>
+
+<p>Imagine a personal assistant app. The user first asks about the weather, then asks for a horoscope, then asks for today's date. In a static setup, the app may be tempted to send every possible assistant tool all the time, even though each turn only needs one narrow capability.</p>
+
+<p>With dynamic tools, the app can rotate the available tools by turn:</p>
+
+<pre><code class="language-typescript">const kvCache = "assistant-session-123";
+
+const weatherRun = completion({
+  modelId,
+  kvCache,
+  stream: true,
+  history: [
+    { role: "system", content: "You are a helpful personal assistant." },
+    { role: "user", content: "What's the weather in Tokyo?" },
+  ],
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get current weather for a city",
+      parameters: weatherSchema,
+    },
+  ],
+});
+
+const weatherFinal = await weatherRun.final;
+const previousAssistantAnswer =
+  weatherFinal.cacheableAssistantContent ?? weatherFinal.contentText;
+
+const horoscopeRun = completion({
+  modelId,
+  kvCache,
+  stream: true,
+  history: [
+    { role: "assistant", content: previousAssistantAnswer },
+    { role: "user", content: "Now check my horoscope for Aquarius." },
+  ],
+  tools: [
+    {
+      name: "get_horoscope",
+      description: "Get today's horoscope for an astrological sign",
+      parameters: horoscopeSchema,
+    },
+  ],
+});
+
+const horoscopeFinal = await horoscopeRun.final;</code></pre>
+
+<p>The important part is that both turns use the same <code>kvCache</code> key, but each turn gets a different tool list. The weather tool does not have to remain active just because the previous turn needed it. The horoscope turn gets its own small toolbox.</p>
+
+<p>The full SDK example in <code>packages/sdk/examples/llamacpp-dynamic-tools.ts</code> shows this pattern across weather, horoscope, and date tools, including the follow-up completion loop used after tool results are added to history.</p>
+
+<h2>A Tool-Chain Example</h2>
+
+<p>Dynamic tools also help when the model needs several tool calls before it can answer. Consider a local travel assistant:</p>
+
+<pre><code>User: "Plan dinner near my hotel tonight."
+
+The model can issue a chain:
+1. get_current_location
+2. search_nearby_restaurants
+3. check_open_hours
+4. create_calendar_hold
+5. final answer</code></pre>
+
+<p>While that chain is active, the model still needs the tool definitions and intermediate tool responses. The KV cache may temporarily look like this:</p>
+
+<pre><code>[system]
+-&gt; [user: plan dinner]
+-&gt; [tools: location, restaurant search, hours, calendar]
+-&gt; [assistant: call get_current_location]
+-&gt; [tool: current location]
+-&gt; [assistant: call search_nearby_restaurants]
+-&gt; [tool: restaurant candidates]
+-&gt; [assistant: call check_open_hours]
+-&gt; [tool: open restaurants]
+-&gt; [assistant: call create_calendar_hold]
+-&gt; [tool: hold created]
+-&gt; [assistant: final dinner plan]</code></pre>
+
+<p>Once the assistant returns the final answer, the chain has done its job. Dynamic tooling compacts the cache back to the durable conversation state:</p>
+
+<pre><code>[system]
+-&gt; [user: plan dinner]
+-&gt; [assistant: final dinner plan]</code></pre>
+
+<p>The next user turn can now bring a different toolbox, such as file search or note-taking tools, without carrying the restaurant-search chain forward in active KV context. The user still sees the final dinner plan in the conversation, but the local model does not keep re-paying for the transient tool definitions and raw tool outputs.</p>
+
+<h2>What This Means On Device</h2>
+
+<p>The exact numbers depend on the model, quantization, prompt template, tool schemas, and device. But the practical shape is easy to estimate.</p>
+
+<p>For the dinner-planning example, assume the app has a broad assistant catalog with 12 tools, and each tool definition averages 250 to 500 prompt tokens once descriptions and JSON schemas are included. A static broad toolbox can add roughly 3,000 to 6,000 tool tokens to the session. The actual dinner task only needs four tools, or about 1,000 to 2,000 tool tokens.</p>
+
+<p>That difference matters most for time to first token. On a mobile-class device, prompt prefill is often the part users feel before the model starts responding. If avoiding a broad toolbox saves 2,000 to 4,000 tokens of prompt work, then at an illustrative 100 to 400 prompt tokens per second, that is roughly 5 to 40 seconds of TTFT pressure removed on turns where the app would otherwise need to re-prefill or re-prime a broad tool context.</p>
+
+<p>It also matters for memory and storage. KV cache cost scales with token count, model size, layer count, KV precision, and context settings. A useful mental model is:</p>
+
+<pre><code>cache pressure ~= cached tokens * KV bytes per token</code></pre>
+
+<p>For small local LLMs, KV cache can still land in the tens to low hundreds of KB per cached token depending on configuration. That means 1,000 to 3,000 transient tool-chain tokens can translate into tens or hundreds of MB of RAM while active, and similar pressure when persisted to device storage. Dynamic compaction removes those transient tool definitions and raw tool outputs after the final answer, keeping the cache focused on durable conversation state.</p>
+
+<p>These are not benchmark claims. They are planning numbers for app developers: if the product is mobile-first, every unnecessary tool token competes with TTFT, RAM, battery, and cache storage.</p>
+
+<h2>Why This Helps Context Efficiency</h2>
+
+<p>The benefit is easiest to see by comparing common agentic flows:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Flow</th>
+      <th>Tool Scope</th>
+      <th>Context Behavior</th>
+      <th>Best Fit</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Static broad toolbox</td>
+      <td>Many tools available every turn</td>
+      <td>Tool definitions can add repeated prefill cost and context noise</td>
+      <td>Short sessions, stable tool sets, simple integrations</td>
+    </tr>
+    <tr>
+      <td>Forked agent flow</td>
+      <td>A branch inherits or copies context</td>
+      <td>Useful isolation, but the branch may duplicate context and later needs reconciliation</td>
+      <td>Exploring alternate reasoning paths or experiments</td>
+    </tr>
+    <tr>
+      <td>Spawned agent flow</td>
+      <td>A specialized worker gets its own task context</td>
+      <td>Clean delegation, but usually with orchestration overhead and a separate execution context</td>
+      <td>Background tasks, parallel work, specialized subagents</td>
+    </tr>
+    <tr>
+      <td>QVAC dynamic tools</td>
+      <td>Only relevant tools for the current turn</td>
+      <td>One local conversation cache continues while transient tool chains are compacted</td>
+      <td>Application runtimes where the same user session stays active but tools change by screen, permission, route, or task</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Fork and spawn are powerful orchestration patterns in products like Claude and Cursor. They are useful when work should happen in another reasoning branch or another worker. QVAC dynamic tooling solves a different layer of the problem: the inference/runtime layer inside an app that wants the same local model session to continue, but does not want every tool to follow every turn.</p>
+
+<p>In other words, fork and spawn organize agents. Dynamic tools plus KV compaction organize what the model has to carry while it is generating.</p>
+
+<h2>What Happens Under the Hood</h2>
+
+<p>With <code>toolsMode: "dynamic"</code>, tools are not treated as a permanent session header. They are attached near the turn that needs them. During a tool-call chain, the tool definitions stay available so the model can request one or more tool calls and then consume the tool responses.</p>
+
+<p>Right now, this compact dynamic-tools path is supported for Qwen3 models. On other model architectures, the underlying <code>tools_compact</code> flag is ignored by the LLM addon.</p>
+
+<p>Conceptually, a completed chain starts like this:</p>
+
+<pre><code>[user] -&gt; [tools] -&gt; [assistant tool call] -&gt; [tool response] -&gt; [assistant final]</code></pre>
+
+<p>After the chain resolves, the cache is compacted to the durable conversation result:</p>
+
+<pre><code>[user] -&gt; [assistant final]</code></pre>
+
+<p>This keeps the KV cache focused on conversation state rather than transient execution details. The next turn can reuse the conversation cache and provide a different tool block.</p>
+
+<p>There is one important constraint: compacted tool responses are not preserved for future reasoning. That is usually what you want for ephemeral calls like "what is today's date?" or "what is the current weather?" If a tool fetched content the model must reason about later, the app should either re-run the tool when needed or summarize the important result into the conversation.</p>
+
+<h2>When To Use Dynamic Tools</h2>
+
+<p>Use dynamic tools when:</p>
+
+<ul>
+  <li>You are running a supported Qwen3 LLM.</li>
+  <li>The app has a large or changing tool catalog.</li>
+  <li>Different screens, routes, workspaces, or permission scopes expose different actions.</li>
+  <li>Tool responses are mostly ephemeral and can be re-fetched.</li>
+  <li>Long conversations should stay fast through KV cache reuse.</li>
+  <li>Local-first inference should avoid repeated full-history and full-tool prefill.</li>
+</ul>
+
+<p>Use static tools when:</p>
+
+<ul>
+  <li>The conversation is short.</li>
+  <li>The same small tool set is needed for most turns.</li>
+  <li>The model needs to keep reasoning over previous raw tool responses.</li>
+  <li>The simplicity of one stable session toolbox is more valuable than per-turn specialization.</li>
+</ul>
+
+<h2>The Developer Impact</h2>
+
+<p>Dynamic tooling makes local agents feel less like prompt stuffing and more like an application runtime. The app decides what tools make sense right now. The model receives a smaller, more relevant toolbox. The KV cache keeps the durable conversation fast, while completed tool-call chains are cleaned up automatically.</p>
+
+<p>For users, the result is a local LLM that can feel more adaptive without giving up the responsiveness that KV caching makes possible.</p>
