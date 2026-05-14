@@ -82,7 +82,7 @@ const horoscopeFinal = await horoscopeRun.final;
 
 The important part is that both turns use the same `kvCache` key, but each turn gets a different tool list. The weather tool does not have to remain active just because the previous turn needed it. The horoscope turn gets its own small toolbox.
 
-The full SDK example in `packages/sdk/examples/llamacpp-dynamic-tools.ts` shows this pattern across weather, horoscope, and date tools, including the follow-up completion loop used after tool results are added to history.
+A full runnable SDK example uses this same pattern across weather, horoscope, and date tools, including the follow-up completion loop used after tool results are added to history.
 
 ## A Tool-Chain Example
 
@@ -128,7 +128,36 @@ The next user turn can now bring a different toolbox, such as file search or not
 
 ## What This Means On Device
 
-The exact numbers depend on the model, quantization, prompt template, tool schemas, and device. But the practical shape is easy to estimate.
+The exact numbers depend on the model, quantization, prompt template, tool schemas, and device. To make this concrete, here are sample measurements from a four-turn on-device assistant workload on a MacBook M4 Pro using a Qwen3 1.7B Instruct Q4 model. The same prompts were run across static and dynamic tool modes, with both a broad-catalog case and a per-turn-required-tools case.
+
+### Sample bench: static broad toolbox vs dynamic narrow toolbox
+
+| turn | static tools | dynamic tools | static TTFT ms | dynamic TTFT ms | static cache tokens | dynamic cache tokens | static t/s | dynamic t/s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 12 | 3 | 894.1 | 342.0 | 1526 | 62 | 141.5 | 150.5 |
+| 2 | 12 | 2 | 38.6 | 322.8 | 1749 | 287 | 139.5 | 149.9 |
+| 3 | 12 | 3 | 192.1 | 362.6 | 2248 | 517 | 136.5 | 146.7 |
+| 4 | 12 | 1 | 94.0 | 246.7 | 2569 | 736 | 132.7 | 144.8 |
+
+### Sample bench: static per-turn required tools vs dynamic per-turn required tools
+
+| turn | static tools | dynamic tools | static TTFT ms | dynamic TTFT ms | static cache tokens | dynamic cache tokens | static t/s | dynamic t/s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 3 | 3 | 351.4 | 344.5 | 686 | 62 | 150.3 | 150.1 |
+| 2 | 2 | 2 | 359.6 | 319.0 | 773 | 287 | 149.4 | 150.1 |
+| 3 | 3 | 3 | 524.3 | 363.3 | 1081 | 517 | 146.7 | 144.8 |
+| 4 | 1 | 1 | 550.9 | 247.3 | 1107 | 736 | 146.2 | 146.1 |
+
+These are sample values, not universal benchmark claims. The useful pattern is:
+
+- Dynamic compaction keeps cache tokens lower across turns, so the active context stays smaller.
+- Smaller active context tends to preserve or slightly improve inference throughput (`tokensPerSecond`) in these runs.
+- Dynamic mode can show higher TTFT on later turns when compared with static system tools that were already prefetched into cache, because dynamic mode reintroduces per-turn tool blocks.
+- The first turn can still favor dynamic mode strongly when the alternative is a broad static catalog with many irrelevant tools.
+- When both modes receive only required tools per turn, dynamic still keeps cache growth lower and can keep TTFT flatter later in the conversation.
+- For smaller local models, narrowing the per-turn tool surface can also improve call quality: selecting from 2 to 3 relevant tools is often easier than selecting from 12 mixed tools, which can reduce wrong-tool picks and improve end-to-end task reliability.
+
+So the trade-off is explicit: dynamic mode buys context efficiency and often steadier decode performance, while static broad headers can win TTFT on warmed turns precisely because they keep the full tool header resident.
 
 For the dinner-planning example, assume the app has a broad assistant catalog with 12 tools, and each tool definition averages 250 to 500 prompt tokens once descriptions and JSON schemas are included. A static broad toolbox can add roughly 3,000 to 6,000 tool tokens to the session. The actual dinner task only needs four tools, or about 1,000 to 2,000 tool tokens.
 
