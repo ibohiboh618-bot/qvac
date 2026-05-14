@@ -11,148 +11,187 @@ cumulative `feat/QVAC-18297-fiber-updates` branch that stacks all three.
 | **RC3** | `feat/QVAC-18297-rc3-fa-dk512` | `054141103` | add Metal Flash Attention `dk512_dv512` kernel instantiations |
 | **All RCs** | `feat/QVAC-18297-fiber-updates` | (RC2 + RC1 + RC3 stacked) | cumulative composition for production merge |
 
-Primary comparison anchor: fiber-8189 Mac M4 rows in `metal-baseline.md §2`
-(parsed JSON at `results/parsed/fiber-mac-2026-05-13T1856.json`).
-
-> **Peak RSS column deliberately omitted** — the four 2026-05-14 run groups
-> did not wrap the binary with `/usr/bin/time -l`, so `rss_mb` /
-> `peak_mem_mb` are absent from the parsed JSONs. They will be captured in
-> the next run; see `QVAC-18297-plan.md § Benchmark Methodology Notes`.
+Primary comparison anchor: a fresh same-thermal Fiber baseline captured in
+the run group `2026-05-14T2310` (clean-rebuild, `/usr/bin/time -l` wrapped). The original
+`metal-baseline.md §2` Fiber row (`fiber-mac-2026-05-13T1856.json`) is kept
+as a cross-day reference in `## Appendix A`.
 
 ---
 
 # Primary Results Matrix
 
 All values are 3-run median, elephant.jpg, Mac M4, full 8-model × 2-backend
-matrix. Matrix format mirrors `metal-baseline.md §2`. **"All RCs" = the
-cumulative `feat/QVAC-18297-fiber-updates` branch** (RC2 + RC1 + RC3 stacked).
-The RC1, RC3, and "All RCs" rows are from `cmake --build … --clean-first`
-builds (clean rebuilds); the Fiber row is from `metal-baseline.md`; the RC2
-row is the first-build measurement validated by a same-binary control rerun.
+matrix. Matrix format mirrors `metal-baseline.md §2` (same 10 columns, units,
+and precision). **"All RCs" = the cumulative `feat/QVAC-18297-fiber-updates`
+branch** (RC2 + RC1 + RC3 stacked).
 
-**Source JSONs** (one per branch):
+**Run group**: `2026-05-14T2310`. Every variant — including the Fiber baseline — was
+built with `cmake --build … --target llama-mtmd-cli llama-bench -j --clean-first`
+and every invocation was wrapped with `/usr/bin/time -l` so that `rss_mb` and
+`peak_mem_mb` populate. See `QVAC-18297-plan.md § Benchmark Methodology Notes`
+for why these two protocol items matter; prior run groups that violated either
+are preserved in Appendices A–D.
 
-| Branch | Source JSON | Build |
-|---|---|---|
-| Fiber | `results/parsed/fiber-mac-2026-05-13T1856.json` | tetherto/temp-8189, 2026-05-13 |
-| RC2 | `results/parsed/mac-rc2-mul-mat-opt-2026-05-14T1116.json` | first build in orchestrator (no preceding stale state); validated by `rc2-control-rerun` |
-| RC1 | `results/parsed/mac-rc1-rerun-2026-05-14T1710.json` | `cmake --build … --clean-first` |
-| RC3 | `results/parsed/mac-rc3-rerun-2026-05-14T1830.json` | `cmake --build … --clean-first` |
-| All RCs | `results/parsed/mac-fiber-updates-rerun-2026-05-14T1940.json` | `cmake --build … --clean-first` |
+**Source JSONs** (one per branch, same TS):
+
+| Branch | Source JSON |
+|---|---|
+| Fiber | `results/parsed/mac-fiber-baseline-rss-2026-05-14T2310.json` |
+| RC2 | `results/parsed/mac-rc2-rerun-rss-2026-05-14T2310.json` |
+| RC1 | `results/parsed/mac-rc1-rerun-rss-2026-05-14T2310.json` |
+| RC3 | `results/parsed/mac-rc3-rerun-rss-2026-05-14T2310.json` |
+| All RCs | `results/parsed/mac-fiber-updates-rerun-rss-2026-05-14T2310.json` |
+
+**Reading the tables**: each non-Fiber cell shows the value with the
+percentage change vs the same-row Fiber cell in parentheses. Sign convention:
+**positive Δ% = improvement** (lower latency, higher t/s, lower memory).
+**Bold** marks the **best value per metric** within each (Backend, Model,
+Quant) group — i.e. the clear winner across the 5 branches for that
+particular metric. The Fiber row is bolded when Fiber itself is the best.
 
 ## Mac M4 — Metal × elephant.jpg
 
-| Branch | Backend | Model | Quant | Vision (ms) | Prefill (t/s) | Decode (t/s) | TTFT (ms) | Total (ms) |
-|--------|---------|-------|-------|------------:|--------------:|-------------:|----------:|-----------:|
-| Fiber | Metal | Gemma4-E2B | Q4_K_M | 804 | 177.33 | 31.45 | 2,406 | 10,130 |
-| RC2 | Metal | Gemma4-E2B | Q4_K_M | 644 | 257.42 | 41.89 | 1,747 | 7,703 |
-| RC1 | Metal | Gemma4-E2B | Q4_K_M | 624 | 258.28 | 42.48 | 1,724 | 7,491 |
-| RC3 | Metal | Gemma4-E2B | Q4_K_M | 627 | 260.41 | 52.43 | 1,718 | 6,337 |
-| All RCs | Metal | Gemma4-E2B | Q4_K_M | 630 | 260.31 | 52.48 | 1,721 | 6,327 |
-| Fiber | Metal | Gemma4-E2B | Q8_0 | 785 | 184.94 | 21.79 | 2,321 | 13,646 |
-| RC2 | Metal | Gemma4-E2B | Q8_0 | 674 | 231.07 | 25.92 | 1,903 | 11,475 |
-| RC1 | Metal | Gemma4-E2B | Q8_0 | 760 | 222.29 | 25.63 | 2,038 | 11,802 |
-| RC3 | Metal | Gemma4-E2B | Q8_0 | 699 | 227.81 | 30.27 | 1,946 | 10,073 |
-| All RCs | Metal | Gemma4-E2B | Q8_0 | 673 | 235.65 | 30.16 | 1,878 | 10,043 |
-| Fiber | Metal | Gemma4-E4B | Q4_K_M | 877 | 109.69 | 16.78 | 3,466 | 18,303 |
-| RC2 | Metal | Gemma4-E4B | Q4_K_M | 733 | 141.51 | 18.83 | 2,740 | 16,046 |
-| RC1 | Metal | Gemma4-E4B | Q4_K_M | 800 | 133.55 | 19.31 | 2,927 | 15,692 |
-| RC3 | Metal | Gemma4-E4B | Q4_K_M | 749 | 132.97 | 23.88 | 2,885 | 13,298 |
-| All RCs | Metal | Gemma4-E4B | Q4_K_M | 722 | 142.45 | 24.13 | 2,716 | 13,046 |
-| Fiber | Metal | Gemma4-E4B | Q8_0 | 807 | 141.72 | 12.66 | 2,811 | 23,329 |
-| RC2 | Metal | Gemma4-E4B | Q8_0 | 833 | 133.77 | 13.06 | 2,956 | 22,406 |
-| RC1 | Metal | Gemma4-E4B | Q8_0 | 743 | 161.64 | 14.94 | 2,500 | 19,970 |
-| RC3 | Metal | Gemma4-E4B | Q8_0 | 748 | 165.42 | 17.63 | 2,465 | 17,404 |
-| All RCs | Metal | Gemma4-E4B | Q8_0 | 739 | 163.62 | 16.98 | 2,475 | 17,904 |
-| Fiber | Metal | Qwen3.5-2B | Q4_K_M | 470 | 253.23 | 32.56 | 1,516 | 9,181 |
-| RC2 | Metal | Qwen3.5-2B | Q4_K_M | 493 | 232.53 | 32.39 | 1,633 | 9,230 |
-| RC1 | Metal | Qwen3.5-2B | Q4_K_M | 475 | 240.82 | 38.54 | 1,575 | 7,891 |
-| RC3 | Metal | Qwen3.5-2B | Q4_K_M | 473 | 241.56 | 36.53 | 1,570 | 8,301 |
-| All RCs | Metal | Qwen3.5-2B | Q4_K_M | 480 | 237.85 | 40.00 | 1,594 | 7,661 |
-| Fiber | Metal | Qwen3.5-2B | Q8_0 | 484 | 249.70 | 25.28 | 1,545 | 11,446 |
-| RC2 | Metal | Qwen3.5-2B | Q8_0 | 499 | 242.81 | 25.59 | 1,590 | 11,320 |
-| RC1 | Metal | Qwen3.5-2B | Q8_0 | 541 | 214.20 | 29.99 | 1,778 | 9,934 |
-| RC3 | Metal | Qwen3.5-2B | Q8_0 | 444 | 286.06 | 29.23 | 1,370 | 9,873 |
-| All RCs | Metal | Qwen3.5-2B | Q8_0 | 453 | 279.19 | 32.34 | 1,402 | 9,026 |
-| Fiber | Metal | Qwen3.5-4B | Q4_K_M | 571 | 125.22 | 15.46 | 2,687 | 19,006 |
-| RC2 | Metal | Qwen3.5-4B | Q4_K_M | 614 | 110.32 | 14.54 | 3,016 | 20,193 |
-| RC1 | Metal | Qwen3.5-4B | Q4_K_M | 550 | 131.99 | 17.89 | 2,558 | 16,555 |
-| RC3 | Metal | Qwen3.5-4B | Q4_K_M | 560 | 130.68 | 17.70 | 2,588 | 16,706 |
-| All RCs | Metal | Qwen3.5-4B | Q4_K_M | 542 | 140.33 | 18.44 | 2,430 | 15,901 |
-| Fiber | Metal | Qwen3.5-4B | Q8_0 | 633 | 111.00 | 13.15 | 3,020 | 22,246 |
-| RC2 | Metal | Qwen3.5-4B | Q8_0 | 650 | 111.45 | 12.03 | 3,028 | 24,033 |
-| RC1 | Metal | Qwen3.5-4B | Q8_0 | 573 | 124.01 | 14.25 | 2,710 | 20,201 |
-| RC3 | Metal | Qwen3.5-4B | Q8_0 | 544 | 137.88 | 14.53 | 2,466 | 19,767 |
-| All RCs | Metal | Qwen3.5-4B | Q8_0 | 540 | 138.12 | 15.23 | 2,459 | 18,874 |
+| Branch | Backend | Model | Quant | Vision (ms) | Prefill (t/s) | Decode (t/s) | TTFT (ms) | Total (ms) | Peak RSS (MB) |
+|--------|---------|-------|-------|------------:|--------------:|-------------:|----------:|-----------:|--------------:|
+| Fiber | Metal | Gemma4-E2B | Q4_K_M | **624** | **258.09** | 42.48 | **1,724** | 7,488 | 1,250 |
+| RC2 | Metal | Gemma4-E2B | Q4_K_M | 655 (-5.0%) | 237.11 (-8.1%) | 39.45 (-7.1%) | 1,853 (-7.4%) | 8,038 (-7.3%) | 1,249 (+0.1%) |
+| RC1 | Metal | Gemma4-E2B | Q4_K_M | 657 (-5.3%) | 243.49 (-5.7%) | 39.73 (-6.5%) | 1,823 (-5.7%) | 7,968 (-6.4%) | 1,249 (±0.0%) |
+| RC3 | Metal | Gemma4-E2B | Q4_K_M | 638 (-2.2%) | 250.96 (-2.8%) | **49.45 (+16.4%)** | 1,770 (-2.6%) | **6,689 (+10.7%)** | **1,249 (+0.1%)** |
+| All RCs | Metal | Gemma4-E2B | Q4_K_M | 650 (-4.2%) | 247.08 (-4.3%) | 48.96 (+15.3%) | 1,799 (-4.4%) | 6,743 (+9.9%) | 1,249 (±0.0%) |
+| Fiber | Metal | Gemma4-E2B | Q8_0 | **628** | **263.18** | **30.70** | **1,707** | **9,806** | 1,250 |
+| RC2 | Metal | Gemma4-E2B | Q8_0 | 724 (-15.3%) | 207.49 (-21.2%) | 25.18 (-18.0%) | 2,093 (-22.6%) | 11,986 (-22.2%) | **1,250 (±0.0%)** |
+| RC1 | Metal | Gemma4-E2B | Q8_0 | 722 (-15.0%) | 211.27 (-19.7%) | 25.52 (-16.9%) | 2,066 (-21.0%) | 11,691 (-19.2%) | 1,250 (±0.0%) |
+| RC3 | Metal | Gemma4-E2B | Q8_0 | 732 (-16.6%) | 211.59 (-19.6%) | 29.39 (-4.3%) | 2,074 (-21.5%) | 10,423 (-6.3%) | 1,250 (±0.0%) |
+| All RCs | Metal | Gemma4-E2B | Q8_0 | 723 (-15.1%) | 224.37 (-14.7%) | 29.90 (-2.6%) | 1,989 (-16.5%) | 10,191 (-3.9%) | 1,250 (±0.0%) |
+| Fiber | Metal | Gemma4-E4B | Q4_K_M | **724** | 141.57 | 20.54 | **2,730** | 14,903 | 1,331 |
+| RC2 | Metal | Gemma4-E4B | Q4_K_M | 747 (-3.2%) | **142.05 (+0.3%)** | 19.12 (-6.9%) | 2,746 (-0.6%) | 15,851 (-6.4%) | 1,331 (±0.0%) |
+| RC1 | Metal | Gemma4-E4B | Q4_K_M | 783 (-8.1%) | 135.44 (-4.3%) | 19.26 (-6.2%) | 2,880 (-5.5%) | 15,940 (-7.0%) | 1,331 (±0.0%) |
+| RC3 | Metal | Gemma4-E4B | Q4_K_M | 830 (-14.6%) | 131.02 (-7.5%) | 23.30 (+13.4%) | 2,998 (-9.8%) | 13,584 (+8.9%) | 1,331 (±0.0%) |
+| All RCs | Metal | Gemma4-E4B | Q4_K_M | 774 (-6.9%) | 136.06 (-3.9%) | **24.01 (+16.9%)** | 2,861 (-4.8%) | **13,040 (+12.5%)** | **1,331 (±0.0%)** |
+| Fiber | Metal | Gemma4-E4B | Q8_0 | **739** | **165.68** | 15.61 | **2,453** | 19,164 | 1,336 |
+| RC2 | Metal | Gemma4-E4B | Q8_0 | 793 (-7.3%) | 154.31 (-6.9%) | 14.10 (-9.7%) | 2,633 (-7.3%) | 21,091 (-10.1%) | **1,335 (±0.0%)** |
+| RC1 | Metal | Gemma4-E4B | Q8_0 | 785 (-6.2%) | 154.46 (-6.8%) | 14.02 (-10.2%) | 2,624 (-7.0%) | 21,270 (-11.0%) | 1,335 (±0.0%) |
+| RC3 | Metal | Gemma4-E4B | Q8_0 | 777 (-5.1%) | 160.44 (-3.2%) | 16.95 (+8.6%) | 2,547 (-3.8%) | 17,963 (+6.3%) | 1,336 (±0.0%) |
+| All RCs | Metal | Gemma4-E4B | Q8_0 | 773 (-4.6%) | 153.08 (-7.6%) | **17.45 (+11.8%)** | 2,628 (-7.1%) | **17,621 (+8.0%)** | 1,335 (±0.0%) |
+| Fiber | Metal | Qwen3.5-2B | Q4_K_M | 470 | 245.95 | 36.14 | 1,547 | 8,351 | 946 |
+| RC2 | Metal | Qwen3.5-2B | Q4_K_M | 484 (-3.0%) | 236.83 (-3.7%) | 36.19 (+0.1%) | 1,603 (-3.6%) | 8,382 (-0.4%) | 946 (±0.0%) |
+| RC1 | Metal | Qwen3.5-2B | Q4_K_M | 476 (-1.3%) | 240.79 (-2.1%) | 40.79 (+12.9%) | 1,577 (-1.9%) | 7,536 (+9.8%) | **946 (±0.0%)** |
+| RC3 | Metal | Qwen3.5-2B | Q4_K_M | 478 (-1.7%) | 248.30 (+1.0%) | 36.26 (+0.3%) | 1,545 (+0.1%) | 8,332 (+0.2%) | 946 (-0.1%) |
+| All RCs | Metal | Qwen3.5-2B | Q4_K_M | **455 (+3.2%)** | **271.54 (+10.4%)** | **42.40 (+17.3%)** | **1,431 (+7.5%)** | **7,163 (+14.2%)** | 946 (±0.0%) |
+| Fiber | Metal | Qwen3.5-2B | Q8_0 | 484 | 240.60 | 28.81 | 1,585 | 10,202 | 946 |
+| RC2 | Metal | Qwen3.5-2B | Q8_0 | 505 (-4.3%) | 223.54 (-7.1%) | 28.80 (±0.0%) | 1,690 (-6.6%) | 10,268 (-0.7%) | 946 (±0.0%) |
+| RC1 | Metal | Qwen3.5-2B | Q8_0 | **467 (+3.5%)** | **251.90 (+4.7%)** | 31.74 (+10.2%) | **1,519 (+4.2%)** | 9,301 (+8.8%) | **946 (±0.0%)** |
+| RC3 | Metal | Qwen3.5-2B | Q8_0 | 486 (-0.4%) | 236.22 (-1.8%) | 28.55 (-0.9%) | 1,608 (-1.4%) | 10,278 (-0.7%) | 947 (-0.1%) |
+| All RCs | Metal | Qwen3.5-2B | Q8_0 | 497 (-2.7%) | 241.34 (+0.3%) | **32.00 (+11.1%)** | 1,595 (-0.6%) | **9,251 (+9.3%)** | 946 (±0.0%) |
+| Fiber | Metal | Qwen3.5-4B | Q4_K_M | 591 | 122.07 | 17.56 | 2,762 | 17,119 | 1,071 |
+| RC2 | Metal | Qwen3.5-4B | Q4_K_M | 613 (-3.7%) | 117.23 (-4.0%) | 17.46 (-0.6%) | 2,874 (-4.0%) | 17,209 (-0.5%) | 1,071 (±0.0%) |
+| RC1 | Metal | Qwen3.5-4B | Q4_K_M | 562 (+4.9%) | 128.95 (+5.6%) | 17.99 (+2.4%) | 2,617 (+5.2%) | 16,350 (+4.5%) | **1,068 (+0.3%)** |
+| RC3 | Metal | Qwen3.5-4B | Q4_K_M | 594 (-0.5%) | 119.74 (-1.9%) | 17.45 (-0.6%) | 2,807 (-1.6%) | 17,163 (-0.3%) | 1,071 (±0.0%) |
+| All RCs | Metal | Qwen3.5-4B | Q4_K_M | **551 (+6.8%)** | **135.34 (+10.9%)** | **18.02 (+2.6%)** | **2,509 (+9.2%)** | **16,328 (+4.6%)** | 1,069 (+0.2%) |
+| Fiber | Metal | Qwen3.5-4B | Q8_0 | 566 | 129.46 | 14.28 | 2,613 | 20,214 | 1,072 |
+| RC2 | Metal | Qwen3.5-4B | Q8_0 | 613 (-8.3%) | 118.15 (-8.7%) | 14.31 (+0.2%) | 2,856 (-9.3%) | 20,282 (-0.3%) | 1,072 (±0.0%) |
+| RC1 | Metal | Qwen3.5-4B | Q8_0 | 548 (+3.2%) | 136.55 (+5.5%) | 14.77 (+3.4%) | 2,489 (+4.8%) | 19,551 (+3.3%) | **1,069 (+0.2%)** |
+| RC3 | Metal | Qwen3.5-4B | Q8_0 | 565 (+0.2%) | 128.81 (-0.5%) | 14.39 (+0.8%) | 2,622 (-0.4%) | 20,041 (+0.9%) | 1,072 (±0.0%) |
+| All RCs | Metal | Qwen3.5-4B | Q8_0 | **544 (+3.9%)** | **140.29 (+8.4%)** | **14.98 (+4.9%)** | **2,433 (+6.9%)** | **19,116 (+5.4%)** | 1,073 (-0.1%) |
 
 ## Mac M4 — CPU × elephant.jpg
 
-| Branch | Backend | Model | Quant | Vision (ms) | Prefill (t/s) | Decode (t/s) | TTFT (ms) | Total (ms) |
-|--------|---------|-------|-------|------------:|--------------:|-------------:|----------:|-----------:|
-| Fiber | CPU | Gemma4-E2B | Q4_K_M | 2,256 | 415.57 | 38.08 | 2,939 | 9,462 |
-| RC2 | CPU | Gemma4-E2B | Q4_K_M | 2,186 | 423.12 | 38.57 | 2,857 | 9,296 |
-| RC1 | CPU | Gemma4-E2B | Q4_K_M | 2,153 | 429.23 | 38.59 | 2,815 | 9,269 |
-| RC3 | CPU | Gemma4-E2B | Q4_K_M | 2,135 | 431.05 | 38.72 | 2,794 | 9,248 |
-| All RCs | CPU | Gemma4-E2B | Q4_K_M | 2,191 | 433.13 | 38.73 | 2,847 | 9,267 |
-| Fiber | CPU | Gemma4-E2B | Q8_0 | 2,538 | 364.83 | 21.09 | 3,316 | 15,229 |
-| RC2 | CPU | Gemma4-E2B | Q8_0 | 1,921 | 428.98 | 25.23 | 2,583 | 12,551 |
-| RC1 | CPU | Gemma4-E2B | Q8_0 | 1,959 | 313.96 | 25.43 | 2,864 | 13,565 |
-| RC3 | CPU | Gemma4-E2B | Q8_0 | 1,948 | 428.63 | 25.33 | 2,611 | 12,587 |
-| All RCs | CPU | Gemma4-E2B | Q8_0 | 1,919 | 429.03 | 25.50 | 2,581 | 12,494 |
-| Fiber | CPU | Gemma4-E4B | Q4_K_M | 5,736 | 329.61 | 14.83 | 6,598 | 23,830 |
-| RC2 | CPU | Gemma4-E4B | Q4_K_M | 4,217 | 367.63 | 17.32 | 4,990 | 19,767 |
-| RC1 | CPU | Gemma4-E4B | Q4_K_M | 3,999 | 318.38 | 17.91 | 4,891 | 19,802 |
-| RC3 | CPU | Gemma4-E4B | Q4_K_M | 3,992 | 369.37 | 18.65 | 4,761 | 18,535 |
-| All RCs | CPU | Gemma4-E4B | Q4_K_M | 4,073 | 365.92 | 18.55 | 4,849 | 18,823 |
-| Fiber | CPU | Gemma4-E4B | Q8_0 | 4,311 | 260.51 | 11.45 | 5,401 | 28,489 |
-| RC2 | CPU | Gemma4-E4B | Q8_0 | 3,842 | 275.95 | 12.20 | 4,871 | 26,850 |
-| RC1 | CPU | Gemma4-E4B | Q8_0 | 3,640 | 260.35 | 12.52 | 4,731 | 25,925 |
-| RC3 | CPU | Gemma4-E4B | Q8_0 | 3,251 | 255.10 | 12.75 | 4,364 | 25,658 |
-| All RCs | CPU | Gemma4-E4B | Q8_0 | 3,151 | 269.97 | 12.73 | 4,203 | 25,332 |
-| Fiber | CPU | Qwen3.5-2B | Q4_K_M | 2,134 | 111.75 | 33.99 | 4,505 | 10,184 |
-| RC2 | CPU | Qwen3.5-2B | Q4_K_M | 2,140 | 110.15 | 33.87 | 4,546 | 10,226 |
-| RC1 | CPU | Qwen3.5-2B | Q4_K_M | 1,954 | 120.56 | 31.42 | 4,152 | 10,568 |
-| RC3 | CPU | Qwen3.5-2B | Q4_K_M | 1,879 | 127.68 | 40.87 | 3,955 | 8,522 |
-| All RCs | CPU | Qwen3.5-2B | Q4_K_M | 1,770 | 134.97 | 32.91 | 3,733 | 10,055 |
-| Fiber | CPU | Qwen3.5-2B | Q8_0 | 1,686 | 139.67 | 28.00 | 3,583 | 11,224 |
-| RC2 | CPU | Qwen3.5-2B | Q8_0 | 1,754 | 134.53 | 27.78 | 3,724 | 11,417 |
-| RC1 | CPU | Qwen3.5-2B | Q8_0 | 1,532 | 153.25 | 22.68 | 3,261 | 13,240 |
-| RC3 | CPU | Qwen3.5-2B | Q8_0 | 1,431 | 165.06 | 30.38 | 3,036 | 10,250 |
-| All RCs | CPU | Qwen3.5-2B | Q8_0 | 1,442 | 163.43 | 25.53 | 3,063 | 11,820 |
-| Fiber | CPU | Qwen3.5-4B | Q4_K_M | 5,108 | 46.98 | 16.45 | 10,749 | 21,438 |
-| RC2 | CPU | Qwen3.5-4B | Q4_K_M | 5,716 | 42.18 | 15.64 | 11,999 | 22,911 |
-| RC1 | CPU | Qwen3.5-4B | Q4_K_M | 4,741 | 50.49 | 14.05 | 9,990 | 23,686 |
-| RC3 | CPU | Qwen3.5-4B | Q4_K_M | 4,503 | 52.83 | 19.12 | 9,519 | 18,642 |
-| All RCs | CPU | Qwen3.5-4B | Q4_K_M | 4,258 | 55.69 | 14.11 | 9,016 | 23,594 |
-| Fiber | CPU | Qwen3.5-4B | Q8_0 | 4,031 | 58.37 | 13.25 | 8,571 | 24,063 |
-| RC2 | CPU | Qwen3.5-4B | Q8_0 | 4,878 | 49.17 | 12.74 | 10,267 | 25,718 |
-| RC1 | CPU | Qwen3.5-4B | Q8_0 | 3,008 | 64.70 | 10.61 | 7,104 | 29,549 |
-| RC3 | CPU | Qwen3.5-4B | Q8_0 | 3,278 | 68.88 | 13.55 | 7,125 | 23,065 |
-| All RCs | CPU | Qwen3.5-4B | Q8_0 | 2,987 | 64.46 | 10.36 | 7,098 | 30,191 |
+| Branch | Backend | Model | Quant | Vision (ms) | Prefill (t/s) | Decode (t/s) | TTFT (ms) | Total (ms) | Peak RSS (MB) |
+|--------|---------|-------|-------|------------:|--------------:|-------------:|----------:|-----------:|--------------:|
+| Fiber | CPU | Gemma4-E2B | Q4_K_M | **2,181** | **428.11** | **38.99** | **2,844** | **9,225** | 2,562 |
+| RC2 | CPU | Gemma4-E2B | Q4_K_M | 2,289 (-5.0%) | 413.65 (-3.4%) | 38.09 (-2.3%) | 2,976 (-4.6%) | 9,478 (-2.7%) | **2,561 (±0.0%)** |
+| RC1 | CPU | Gemma4-E2B | Q4_K_M | 2,341 (-7.3%) | 414.29 (-3.2%) | 38.14 (-2.2%) | 3,027 (-6.4%) | 9,536 (-3.4%) | 2,562 (±0.0%) |
+| RC3 | CPU | Gemma4-E2B | Q4_K_M | 2,244 (-2.9%) | 416.82 (-2.6%) | 38.00 (-2.5%) | 2,925 (-2.8%) | 9,461 (-2.6%) | 2,562 (±0.0%) |
+| All RCs | CPU | Gemma4-E2B | Q4_K_M | 2,265 (-3.9%) | 410.50 (-4.1%) | 38.17 (-2.1%) | 2,957 (-4.0%) | 9,522 (-3.2%) | 2,562 (±0.0%) |
+| Fiber | CPU | Gemma4-E2B | Q8_0 | **1,864** | **414.16** | **25.29** | **2,550** | **12,800** | 3,575 |
+| RC2 | CPU | Gemma4-E2B | Q8_0 | 1,951 (-4.7%) | 400.77 (-3.2%) | 22.49 (-11.1%) | 2,660 (-4.3%) | 13,855 (-8.2%) | **3,575 (±0.0%)** |
+| RC1 | CPU | Gemma4-E2B | Q8_0 | 1,971 (-5.7%) | 400.32 (-3.3%) | 22.40 (-11.4%) | 2,680 (-5.1%) | 14,041 (-9.7%) | 3,575 (±0.0%) |
+| RC3 | CPU | Gemma4-E2B | Q8_0 | 2,035 (-9.2%) | 389.95 (-5.8%) | 22.46 (-11.2%) | 2,763 (-8.4%) | 14,030 (-9.6%) | 3,575 (±0.0%) |
+| All RCs | CPU | Gemma4-E2B | Q8_0 | 2,038 (-9.3%) | 396.93 (-4.2%) | 22.55 (-10.8%) | 2,753 (-8.0%) | 13,916 (-8.7%) | 3,575 (±0.0%) |
+| Fiber | CPU | Gemma4-E4B | Q4_K_M | 4,086 | 357.26 | **19.42** | 4,881 | **18,606** | **4,091** |
+| RC2 | CPU | Gemma4-E4B | Q4_K_M | 4,150 (-1.6%) | 357.51 (+0.1%) | 17.67 (-9.0%) | 4,944 (-1.3%) | 19,489 (-4.7%) | 4,091 (±0.0%) |
+| RC1 | CPU | Gemma4-E4B | Q4_K_M | 4,186 (-2.4%) | 354.55 (-0.8%) | 17.55 (-9.6%) | 4,987 (-2.2%) | 19,635 (-5.5%) | 4,091 (±0.0%) |
+| RC3 | CPU | Gemma4-E4B | Q4_K_M | 4,222 (-3.3%) | 353.71 (-1.0%) | 17.69 (-8.9%) | 5,025 (-2.9%) | 19,378 (-4.1%) | 4,092 (±0.0%) |
+| All RCs | CPU | Gemma4-E4B | Q4_K_M | **4,072 (+0.3%)** | **369.07 (+3.3%)** | 18.49 (-4.8%) | **4,842 (+0.8%)** | 18,657 (-0.3%) | 4,091 (±0.0%) |
+| Fiber | CPU | Gemma4-E4B | Q8_0 | **3,065** | 251.85 | **12.76** | **4,193** | **25,071** | **6,152** |
+| RC2 | CPU | Gemma4-E4B | Q8_0 | 3,466 (-13.1%) | 245.30 (-2.6%) | 12.55 (-1.6%) | 4,624 (-10.3%) | 25,743 (-2.7%) | 6,152 (±0.0%) |
+| RC1 | CPU | Gemma4-E4B | Q8_0 | 3,597 (-17.4%) | 232.28 (-7.8%) | 12.49 (-2.1%) | 4,820 (-15.0%) | 26,093 (-4.1%) | 6,152 (±0.0%) |
+| RC3 | CPU | Gemma4-E4B | Q8_0 | 3,557 (-16.1%) | 250.46 (-0.6%) | 12.56 (-1.6%) | 4,691 (-11.9%) | 26,038 (-3.9%) | 6,153 (±0.0%) |
+| All RCs | CPU | Gemma4-E4B | Q8_0 | 3,218 (-5.0%) | **265.87 (+5.6%)** | 12.72 (-0.3%) | 4,286 (-2.2%) | 25,091 (-0.1%) | 6,153 (±0.0%) |
+| Fiber | CPU | Qwen3.5-2B | Q4_K_M | 1,814 | 131.00 | **43.02** | 3,837 | **8,218** | **2,176** |
+| RC2 | CPU | Qwen3.5-2B | Q4_K_M | 1,896 (-4.5%) | 125.94 (-3.9%) | 40.48 (-5.9%) | 4,000 (-4.3%) | 8,622 (-4.9%) | 2,176 (±0.0%) |
+| RC1 | CPU | Qwen3.5-2B | Q4_K_M | 1,966 (-8.4%) | 121.59 (-7.2%) | 32.64 (-24.1%) | 4,145 (-8.0%) | 10,216 (-24.3%) | 2,176 (±0.0%) |
+| RC3 | CPU | Qwen3.5-2B | Q4_K_M | 1,936 (-6.7%) | 123.37 (-5.8%) | 40.18 (-6.6%) | 4,084 (-6.4%) | 8,733 (-6.3%) | 2,177 (±0.0%) |
+| All RCs | CPU | Qwen3.5-2B | Q4_K_M | **1,808 (+0.3%)** | **132.98 (+1.5%)** | 33.70 (-21.7%) | **3,801 (+0.9%)** | 9,790 (-19.1%) | 2,177 (±0.0%) |
+| Fiber | CPU | Qwen3.5-2B | Q8_0 | **1,469** | **161.88** | **30.14** | **3,106** | **10,331** | 2,873 |
+| RC2 | CPU | Qwen3.5-2B | Q8_0 | 1,569 (-6.8%) | 151.47 (-6.4%) | 30.14 (±0.0%) | 3,319 (-6.8%) | 10,372 (-0.4%) | **2,872 (±0.0%)** |
+| RC1 | CPU | Qwen3.5-2B | Q8_0 | 1,495 (-1.8%) | 158.30 (-2.2%) | 25.09 (-16.8%) | 3,169 (-2.0%) | 12,119 (-17.3%) | 2,873 (±0.0%) |
+| RC3 | CPU | Qwen3.5-2B | Q8_0 | 1,550 (-5.5%) | 152.33 (-5.9%) | 30.13 (±0.0%) | 3,290 (-5.9%) | 10,451 (-1.2%) | 2,873 (±0.0%) |
+| All RCs | CPU | Qwen3.5-2B | Q8_0 | 1,481 (-0.8%) | 159.57 (-1.4%) | 25.39 (-15.8%) | 3,142 (-1.1%) | 11,942 (-15.6%) | 2,873 (±0.0%) |
+| Fiber | CPU | Qwen3.5-4B | Q4_K_M | 4,372 | 54.47 | 18.70 | 9,237 | 18,716 | **3,712** |
+| RC2 | CPU | Qwen3.5-4B | Q4_K_M | 4,439 (-1.5%) | 53.77 (-1.3%) | 18.66 (-0.2%) | 9,367 (-1.4%) | 18,860 (-0.8%) | 3,712 (±0.0%) |
+| RC1 | CPU | Qwen3.5-4B | Q4_K_M | 4,335 (+0.8%) | 54.98 (+0.9%) | 14.56 (-22.1%) | 9,155 (+0.9%) | 22,615 (-20.8%) | 3,712 (±0.0%) |
+| RC3 | CPU | Qwen3.5-4B | Q4_K_M | **4,317 (+1.3%)** | **55.04 (+1.0%)** | **18.74 (+0.2%)** | **9,132 (+1.1%)** | **18,715 (±0.0%)** | 3,712 (±0.0%) |
+| All RCs | CPU | Qwen3.5-4B | Q4_K_M | 4,318 (+1.2%) | 54.83 (+0.7%) | 14.78 (-21.0%) | 9,151 (+0.9%) | 22,235 (-18.8%) | 3,712 (±0.0%) |
+| Fiber | CPU | Qwen3.5-4B | Q8_0 | 3,116 | 64.08 | 13.71 | 7,251 | 24,046 | 5,375 |
+| RC2 | CPU | Qwen3.5-4B | Q8_0 | 3,652 (-17.2%) | 62.05 (-3.2%) | 13.72 (+0.1%) | 7,923 (-9.3%) | **23,265 (+3.2%)** | **5,374 (±0.0%)** |
+| RC1 | CPU | Qwen3.5-4B | Q8_0 | 3,509 (-12.6%) | 61.46 (-4.1%) | 10.90 (-20.5%) | 7,821 (-7.9%) | 28,331 (-17.8%) | 5,374 (±0.0%) |
+| RC3 | CPU | Qwen3.5-4B | Q8_0 | **3,077 (+1.3%)** | 64.58 (+0.8%) | **13.84 (+0.9%)** | **7,180 (+1.0%)** | 23,923 (+0.5%) | 5,374 (±0.0%) |
+| All RCs | CPU | Qwen3.5-4B | Q8_0 | 3,325 (-6.7%) | **64.84 (+1.2%)** | 10.97 (-20.0%) | 7,412 (-2.2%) | 28,024 (-16.5%) | 5,374 (±0.0%) |
 
 ## Per-branch artifacts
 
-| Branch | Raw logs | Parsed JSON | Metal System Trace (Gemma4-E2B-Q4) | Metal System Trace (Qwen3.5-2B-Q4) | Orchestrator log |
-|---|---|---|---|---|---|
-| Fiber | `results/raw/fiber-mac-2026-05-13T1856/` | `results/parsed/fiber-mac-2026-05-13T1856.json` | — | — | — |
-| RC2 | `results/raw/mac-rc2-mul-mat-opt-2026-05-14T1116/` | `results/parsed/mac-rc2-mul-mat-opt-2026-05-14T1116.json` | `results/traces/rc2-mul-mat-opt-gemma4-e2b-q4km-2026-05-14T1116.trace` | `results/traces/rc2-mul-mat-opt-qwen35-2b-q4km-2026-05-14T1116.trace` | `results/orchestrator-logs/rc-isolation-2026-05-14T1116.log` |
-| RC1 | `results/raw/mac-rc1-rerun-2026-05-14T1710/` | `results/parsed/mac-rc1-rerun-2026-05-14T1710.json` | `results/traces/rc1-rerun-gemma4-e2b-q4km-2026-05-14T1710.trace` | `results/traces/rc1-rerun-qwen35-2b-q4km-2026-05-14T1710.trace` | `results/orchestrator-logs/rc1-rerun-2026-05-14T1710.log` |
-| RC3 | `results/raw/mac-rc3-rerun-2026-05-14T1830/` | `results/parsed/mac-rc3-rerun-2026-05-14T1830.json` | `results/traces/rc3-rerun-gemma4-e2b-q4km-2026-05-14T1830.trace` | `results/traces/rc3-rerun-qwen35-2b-q4km-2026-05-14T1830.trace` | `results/orchestrator-logs/rc3-rerun-2026-05-14T1830.log` |
-| All RCs | `results/raw/mac-fiber-updates-rerun-2026-05-14T1940/` | `results/parsed/mac-fiber-updates-rerun-2026-05-14T1940.json` | `results/traces/fiber-updates-rerun-gemma4-e2b-q4km-2026-05-14T1940.trace` | `results/traces/fiber-updates-rerun-qwen35-2b-q4km-2026-05-14T1940.trace` | `results/orchestrator-logs/fiber-updates-rerun-2026-05-14T1940.log` |
+| Branch | Raw logs (VLM) | Parsed JSON (VLM) | Text-only raw | Metal System Trace (Gemma4-E2B-Q4) | Metal System Trace (Qwen3.5-2B-Q4) | Orchestrator log |
+|---|---|---|---|---|---|---|
+| Fiber | `results/raw/mac-fiber-baseline-rss-2026-05-14T2310/` | `results/parsed/mac-fiber-baseline-rss-2026-05-14T2310.json` | `results/raw/text-only-fiber-baseline-rss-2026-05-14T2310/` | `results/traces/fiber-baseline-rss-gemma4-e2b-q4km-2026-05-14T2310.trace` | `results/traces/fiber-baseline-rss-qwen35-2b-q4km-2026-05-14T2310.trace` | `results/orchestrator-logs/rerun-all-rss-2026-05-14T2310.log` |
+| RC2 | `results/raw/mac-rc2-rerun-rss-2026-05-14T2310/` | `results/parsed/mac-rc2-rerun-rss-2026-05-14T2310.json` | `results/raw/text-only-rc2-rerun-rss-2026-05-14T2310/` | `results/traces/rc2-rerun-rss-gemma4-e2b-q4km-2026-05-14T2310.trace` | `results/traces/rc2-rerun-rss-qwen35-2b-q4km-2026-05-14T2310.trace` | (same) |
+| RC1 | `results/raw/mac-rc1-rerun-rss-2026-05-14T2310/` | `results/parsed/mac-rc1-rerun-rss-2026-05-14T2310.json` | `results/raw/text-only-rc1-rerun-rss-2026-05-14T2310/` | `results/traces/rc1-rerun-rss-gemma4-e2b-q4km-2026-05-14T2310.trace` | `results/traces/rc1-rerun-rss-qwen35-2b-q4km-2026-05-14T2310.trace` | (same) |
+| RC3 | `results/raw/mac-rc3-rerun-rss-2026-05-14T2310/` | `results/parsed/mac-rc3-rerun-rss-2026-05-14T2310.json` | `results/raw/text-only-rc3-rerun-rss-2026-05-14T2310/` | `results/traces/rc3-rerun-rss-gemma4-e2b-q4km-2026-05-14T2310.trace` | `results/traces/rc3-rerun-rss-qwen35-2b-q4km-2026-05-14T2310.trace` | (same) |
+| All RCs | `results/raw/mac-fiber-updates-rerun-rss-2026-05-14T2310/` | `results/parsed/mac-fiber-updates-rerun-rss-2026-05-14T2310.json` | `results/raw/text-only-fiber-updates-rerun-rss-2026-05-14T2310/` | `results/traces/fiber-updates-rerun-rss-gemma4-e2b-q4km-2026-05-14T2310.trace` | `results/traces/fiber-updates-rerun-rss-qwen35-2b-q4km-2026-05-14T2310.trace` | (same) |
 
-The "Fiber" row's `results/raw/fiber-mac-2026-05-13T1856/` is the
-metal-baseline.md baseline run; trace and orchestrator-log artifacts predate
-this study and are not republished here.
+The single orchestrator log `results/orchestrator-logs/rerun-all-rss-2026-05-14T2310.log`
+covers all 5 variants. Combined text-only medians are aggregated at
+`results/parsed/text-only-all-2026-05-14T2310.json`.
+
+---
+
+# Text-Only LLM Regression Check
+
+Per the QVAC-18297 DoD (`≤ 2% text-only regression`), each RC variant's
+text-only decode throughput was compared against the fresh same-thermal
+Fiber baseline using `llama-bench -p 256 -n 256 -ngl 99` on the two primary
+models. Per-rep median of 4 repetitions reported.
+
+| Branch | Model | pp256 (t/s) | tg256 (t/s) | Δ tg256 vs Fiber | Pass (≤2%) |
+|--------|-------|------------:|------------:|-----------------:|:----------:|
+| Fiber | Gemma4-E2B-Q4_K_M | 544.10 | 37.64 | — | — |
+| Fiber | Qwen3.5-2B-Q4_K_M | 482.68 | 24.00 | — | — |
+| RC2 | Gemma4-E2B-Q4_K_M | 506.82 | 38.32 | +1.79% ✓ | ✓ |
+| RC2 | Qwen3.5-2B-Q4_K_M | 491.09 | 24.53 | +2.24% ✓ | ✓ |
+| RC1 | Gemma4-E2B-Q4_K_M | 540.86 | 38.48 | +2.21% ✓ | ✓ |
+| RC1 | Qwen3.5-2B-Q4_K_M | 509.35 | 37.25 | +55.22% ✓ | ✓ |
+| RC3 | Gemma4-E2B-Q4_K_M | 529.98 | 37.21 | -1.15% | ✓ |
+| RC3 | Qwen3.5-2B-Q4_K_M | 478.10 | 22.75 | -5.19% ⚠ | ⚠ |
+| All RCs | Gemma4-E2B-Q4_K_M | 538.42 | 38.90 | +3.33% ✓ | ✓ |
+| All RCs | Qwen3.5-2B-Q4_K_M | 459.01 | 37.78 | +57.44% ✓ | ✓ |
+
+**Verdict**: the production target **All RCs** passes both gates and
+significantly improves Qwen3.5 text-only throughput (+57.4% via RC1's fused
+GDN op). RC3 in isolation shows a -5.2% Qwen3.5 text-only regression — but
+when composed with RC1 (which it always is in the merge target), the
+regression flips to a large gain. No production-blocking regression.
 
 ---
 
 # Appendices
 
 The sections below preserve the chronological per-run-group analyses that
-produced the headline matrix above. They are kept verbatim for traceability —
-notably the original RC1/RC3 numbers ("orig", stale build), which document
-the incremental-build hazard that motivated the `--clean-first` requirement
-now codified in `QVAC-18297-plan.md § Benchmark Methodology Notes`.
+produced earlier iterations of this matrix. They are kept verbatim for
+traceability — notably the original RC1/RC3 numbers ("orig", stale build) in
+Appendix A, which document the incremental-build hazard that motivated the
+`--clean-first` requirement now codified in `QVAC-18297-plan.md § Benchmark
+Methodology Notes`. The matrix above (run group `2026-05-14T2310`) **supersedes** the
+matrices in Appendices A–D for any merge-decision purpose.
 
 ## Appendix A: Run group `2026-05-14T1116` — initial isolation runs (stale builds for RC1/RC3)
 
