@@ -6,8 +6,6 @@
 
 <p>When every possible tool is sent on every turn, local inference pays for it. The model has more prompt to prefill, the active context gets noisier, and long-running conversations become harder to keep fast. If the app tries to swap tools mid-session, cache reuse can also become fragmented because the prompt shape changed.</p>
 
-<p>This matters even more for mobile-first local inference, where apps often target smaller models such as 1.7B parameter LLMs. Smaller models are fast enough to run on device, but they can have a harder time choosing the right tool from a large catalog. A narrower, turn-specific toolbox reduces the decision space, which can improve tool selection and final answer quality, not just latency.</p>
-
 <p>QVAC now gives application developers a better primitive: dynamic tools with KV cache compaction.</p>
 
 <h2>What Changed</h2>
@@ -134,69 +132,6 @@ The model can issue a chain:
 
 <p>These are not benchmark claims. They are planning numbers for app developers: if the product is mobile-first, every unnecessary tool token competes with TTFT, RAM, battery, and cache storage.</p>
 
-<p>Here is the same idea as a back-of-the-envelope table. Assume:</p>
-
-<ul>
-  <li>The app has 12 possible tools.</li>
-  <li>Each tool definition averages 400 tokens, so the full static toolbox is about 4,800 tokens.</li>
-  <li>Each user prompt is about 100 tokens.</li>
-  <li>Each tool response is about 150 tokens.</li>
-  <li>Each final assistant answer is about 100 tokens.</li>
-  <li>Tool-call request framing is ignored to keep the estimate readable.</li>
-  <li>Inference speed drops with context size: 0 tokens is about 50 tokens/second, 1,000 tokens is about 30 tokens/second, and 10,000 tokens is about 15 tokens/second.</li>
-</ul>
-
-<table>
-  <thead>
-    <tr>
-      <th>Turn</th>
-      <th>Workload</th>
-      <th>Static tools context len</th>
-      <th>Static speed</th>
-      <th>Dynamic tools context len</th>
-      <th>Dynamic speed</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>1</td>
-      <td>3 tools available, 3 tool responses, final answer</td>
-      <td>5,450 tokens</td>
-      <td>22.6 t/s</td>
-      <td>1,850 tokens</td>
-      <td>28.6 t/s</td>
-    </tr>
-    <tr>
-      <td>2</td>
-      <td>2 tools available, 2 tool responses, final answer</td>
-      <td>5,950 tokens</td>
-      <td>21.8 t/s</td>
-      <td>1,500 tokens</td>
-      <td>29.2 t/s</td>
-    </tr>
-    <tr>
-      <td>3</td>
-      <td>3 tools available, 4 tool responses, final answer</td>
-      <td>6,750 tokens</td>
-      <td>20.4 t/s</td>
-      <td>2,400 tokens</td>
-      <td>27.7 t/s</td>
-    </tr>
-    <tr>
-      <td>4</td>
-      <td>1 tool available, 1 tool response, final answer</td>
-      <td>7,100 tokens</td>
-      <td>19.8 t/s</td>
-      <td>1,350 tokens</td>
-      <td>29.4 t/s</td>
-    </tr>
-  </tbody>
-</table>
-
-<p>The static column keeps the broad 4,800-token toolbox and accumulated tool-chain context in the active session. The dynamic column only loads the tools needed for the current turn, then compacts completed chains. After each dynamic turn, the durable cached conversation is only the user prompts plus final assistant answers: about 200 tokens after turn one, 400 after turn two, 600 after turn three, and 800 after turn four.</p>
-
-<p>The quality angle is just as important as the speed angle. A 1.7B local model asked to choose between 12 tools has more ways to make a wrong call than the same model choosing between the two or three tools that actually match the current task. Dynamic tools let the application narrow that choice before generation begins.</p>
-
 <h2>Why This Helps Context Efficiency</h2>
 
 <p>The benefit is easiest to see by comparing common agentic flows:</p>
@@ -268,7 +203,6 @@ The model can issue a chain:
   <li>You are running a supported Qwen3 LLM.</li>
   <li>The app has a large or changing tool catalog.</li>
   <li>Different screens, routes, workspaces, or permission scopes expose different actions.</li>
-  <li>Smaller local models need a narrower tool surface to improve tool selection quality.</li>
   <li>Tool responses are mostly ephemeral and can be re-fetched.</li>
   <li>Long conversations should stay fast through KV cache reuse.</li>
   <li>Local-first inference should avoid repeated full-history and full-tool prefill.</li>
