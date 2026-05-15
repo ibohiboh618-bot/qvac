@@ -16,10 +16,10 @@
 
 | SHA | PR | Title |
 |---|---|---|
-| `c5a778891` | #19504 | ggml: add GATED_DELTA_NET op |
-| `d28961d81` | #20340 | llama: enable chunked fused GDN path (+ Metal kernel #20361) |
-| `e30f1fdf7` | #20443 | graph: remove redundant GDN state transposes |
-| `f17b3be63` | #20468 | llama: fix pooling assertion in chunked GDN detection |
+| [`c5a778891`](https://github.com/ggml-org/llama.cpp/commit/c5a778891) | [#19504](https://github.com/ggml-org/llama.cpp/pull/19504) | ggml: add GATED_DELTA_NET op |
+| [`d28961d81`](https://github.com/ggml-org/llama.cpp/commit/d28961d81) | [#20340](https://github.com/ggml-org/llama.cpp/pull/20340) | llama: enable chunked fused GDN path (+ Metal kernel [#20361](https://github.com/ggml-org/llama.cpp/pull/20361)) |
+| [`e30f1fdf7`](https://github.com/ggml-org/llama.cpp/commit/e30f1fdf7) | [#20443](https://github.com/ggml-org/llama.cpp/pull/20443) | graph: remove redundant GDN state transposes |
+| [`f17b3be63`](https://github.com/ggml-org/llama.cpp/commit/f17b3be63) | [#20468](https://github.com/ggml-org/llama.cpp/pull/20468) | llama: fix pooling assertion in chunked GDN detection |
 
 ### Why a port, not a cherry-pick
 
@@ -43,6 +43,6 @@ model dispatch under fiber's class hierarchy.
 
 | SHA | PR | Title |
 |---|---|---|
-| `342d6125b` | #20902 | metal: add FA instantiations for HSK=512, HSV=512 |
+| [`342d6125b`](https://github.com/ggml-org/llama.cpp/commit/342d6125b) | [#20902](https://github.com/ggml-org/llama.cpp/pull/20902) | metal: add FA instantiations for HSK=512, HSV=512 |
 
 ---
