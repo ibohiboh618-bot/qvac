@@ -4,62 +4,17 @@ android_test_host: amazon_linux_2
 phases:
   pre_test:
     commands:
-      # Stage pre-cached models BEFORE launching the app.
-      #
-      # When CI's build job opts into cache-models, it bundles every model
-      # the consumer needs into the same upload it uses for the test
-      # package itself (APPIUM_NODE_TEST_PACKAGE). Device Farm extracts
-      # that zip onto the *test host* (this VM) at
-      # $DEVICEFARM_TEST_PACKAGE_PATH, so we just need to `adb push` the
-      # `qvac-models/` subtree onto the device's world-readable
-      # /data/local/tmp/qvac-models/ and drop a `cache-marker` sentinel
-      # last. The app's mobile/consumer.ts polls for the marker and then
-      # mirrors the staged tree into its SDK cache.
-      #
-      # When cache-models is disabled, the build job uploads a stub test
-      # package (no `qvac-models/` dir) — the block below short-circuits
-      # and the app falls through to the SDK download path.
-      - |-
-        HOST_SRC="$DEVICEFARM_TEST_PACKAGE_PATH/qvac-models"
-        STAGE_DIR=/data/local/tmp/qvac-models
-        adb shell rm -rf "$STAGE_DIR" || true
-        adb shell mkdir -p "$STAGE_DIR"
-
-        if [ -d "$HOST_SRC" ]; then
-          HOST_BYTES=$(du -sb "$HOST_SRC" 2>/dev/null | awk '{print $1}')
-          HOST_FILES=$(find "$HOST_SRC" -type f 2>/dev/null | wc -l)
-          HOST_MB=$((HOST_BYTES / 1024 / 1024))
-          echo "Cache enabled: pushing $HOST_FILES files ($HOST_MB MiB) from test package to $STAGE_DIR"
-
-          PUSH_START=$(date +%s)
-          # `adb push <dir>/. <dst>/` mirrors the *contents* of <dir>
-          # without re-creating the parent under <dst>. -p shows progress
-          # so the run log stays readable when individual files take
-          # minutes to land.
-          adb push -p "$HOST_SRC/." "$STAGE_DIR/" || {
-            echo "adb push failed; aborting cache staging"
-            exit 1
-          }
-          # World-readable so the app uid (not `shell`) can open the files.
-          adb shell sh -c "chmod -R a+rX $STAGE_DIR" || true
-          PUSH_ELAPSED=$(( $(date +%s) - PUSH_START ))
-          if [ "$PUSH_ELAPSED" -gt 0 ]; then
-            MBPS=$((HOST_MB / PUSH_ELAPSED))
-            echo "Pushed ${HOST_MB} MiB in ${PUSH_ELAPSED}s (~${MBPS} MiB/s)"
-          else
-            echo "Pushed ${HOST_MB} MiB in <1s"
-          fi
-
-          # Marker last so its appearance guarantees full payload landed
-          # — see CACHE_MARKER_PATH in mobile/consumer.ts.
-          adb shell sh -c "touch $STAGE_DIR/cache-marker"
-          STAGED_FILES=$(adb shell find "$STAGE_DIR" -type f 2>/dev/null | wc -l | tr -d '\r')
-          echo "Staged $STAGED_FILES files (incl. marker) at $STAGE_DIR"
-        else
-          echo "No qvac-models/ in test package — cache-models disabled for this run."
-        fi
-
       # Install and launch the app (custom test spec doesn't do this automatically)
+      #
+      # Note on cache reuse: when `appPackagesCleanup=false` is set on
+      # `schedule-run --execution-configuration`, Device Farm does NOT
+      # uninstall the app or wipe its data between runs on the same
+      # physical device. With `adb install -r` (re-install, preserving
+      # data) the app's internal-files dir survives, so any models
+      # downloaded into `Paths.document/qvac-models/` by a prior run
+      # are found by the SDK on the next launch and the consumer's
+      # `downloadAllOnce` becomes a near-no-op. On a cold device
+      # (first run) the consumer simply downloads everything as usual.
       - |-
         echo "Installing app..."
         adb install -r "$DEVICEFARM_APP_PATH"

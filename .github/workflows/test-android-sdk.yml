@@ -50,20 +50,21 @@ on:
         type: string
       cache-models:
         description: |
-          Pre-cache mobile bootstrap models on the Device Farm host.
-          When true, the build job downloads every model the mobile
-          consumer needs into a local SDK cache directory and ships
-          them bundled *inside* the Appium test package
-          (APPIUM_NODE_TEST_PACKAGE). Device Farm extracts that
-          package onto the test host at
-          `$DEVICEFARM_TEST_PACKAGE_PATH`, and the Android test-spec
-          `adb push`-es each model into `/data/local/tmp/qvac-models/`
-          before installing/launching the app. This replaces the
-          earlier EXTERNAL_DATA path, which AWS caps at 5 GiB — well
-          below our ~16 GiB bundle.
-          When false, only a tiny stub test package is uploaded and
-          the app falls through to network downloads at bootstrap.
-          Default mirrors `test-sdk.yml` (true).
+          Reuse the app's data dir across Device Farm runs by passing
+          `appPackagesCleanup=false` to `schedule-run
+          --execution-configuration`. The QVAC test consumer pins its
+          SDK `cacheDirectory` to the app's persistent Documents/
+          dir, so models downloaded on the first cold-cache run on a
+          given physical device persist into subsequent runs on the
+          same device — the SDK skips re-downloads via its
+          `<sourceHash>_<filename>` cache contract.
+          Trade-off (per Lauri Piisang, Asana 1214055683820708):
+          tests that mutate cache state (RAG workspaces, KV cache)
+          need to clean up explicitly — there is no automatic
+          per-run wipe. First run on a brand-new device pays the
+          full ~14 min download cost.
+          When false, AWS reverts to its default packageCleanup=true
+          behaviour and each run starts from a blank app sandbox.
         required: false
         type: boolean
         default: true
@@ -128,13 +129,6 @@ jobs:
     timeout-minutes: 60
     outputs:
       runId: ${{ steps.runid.outputs.runId }}
-      # When `cache-models=true` the build job creates the Appium test
-      # package itself (with models bundled in) and exposes the ARN
-      # here. The device-farm job uses this ARN directly and skips its
-      # own dummy-test-package upload. When false, the value is the
-      # empty string and the device-farm job falls back to the
-      # legacy "create + upload tiny stub" path.
-      test-pkg-arn: ${{ steps.test-pkg-upload.outputs.arn }}
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -320,153 +314,16 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: bun run build
 
-      # --- Model pre-caching (only when `cache-models: true`) ---------------
-      # The block is gated end-to-end on `inputs.cache-models`; when the flag
-      # is off, none of the steps run and the workflow behaves as it did on
-      # main. See the input docs above for the architecture summary.
-
-      - name: Configure SDK cache for pre-download
-        if: inputs.cache-models
-        shell: bash
-        env:
-          WORKDIR: ${{ inputs.working-directory }}
-        run: |
-          set -euo pipefail
-          CACHE_DIR="$GITHUB_WORKSPACE/$WORKDIR/.qvac-cache"
-          mkdir -p "$CACHE_DIR"
-          CONFIG_PATH="$GITHUB_WORKSPACE/$WORKDIR/qvac.config.json"
-          printf '{ "cacheDirectory": "%s" }\n' "$CACHE_DIR" > "$CONFIG_PATH"
-          {
-            echo "QVAC_CONFIG_PATH=$CONFIG_PATH"
-            echo "QVAC_MOBILE_CACHE_DIR=$CACHE_DIR"
-          } >> "$GITHUB_ENV"
-          echo "SDK cache directory: $CACHE_DIR"
-
-      - name: Restore models cache (GitHub Actions)
-        id: models-cache
-        if: inputs.cache-models
-        uses: actions/cache/restore@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
-        with:
-          path: ${{ inputs.working-directory }}/.qvac-cache
-          # Mirrors the desktop key (`test-desktop-sdk.yml`):
-          # `models.ts` carries the registry entries (URLs, sizes,
-          # sha256), which is the only thing that actually invalidates
-          # cached blob contents. New model added to the consumer / the
-          # download script but registry unchanged → cache stays warm,
-          # the missing model falls back to network download on the
-          # device's `downloadAllOnce` (same fallback desktop relies on).
-          key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
-          # The model blobs are platform-agnostic; let the macOS-hosted
-          # iOS build and the Linux-hosted Android build share the same
-          # warm cache entry.
-          enableCrossOsArchive: true
-
-      - name: Download mobile bootstrap models
-        if: inputs.cache-models && steps.models-cache.outputs.cache-hit != 'true'
-        working-directory: ${{ inputs.working-directory }}
-        run: |
-          echo "Cache miss — downloading mobile bootstrap models..."
-          bun run scripts/download-mobile-models.ts
-
-      - name: Save models cache (GitHub Actions)
-        if: inputs.cache-models && steps.models-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
-        with:
-          path: ${{ inputs.working-directory }}/.qvac-cache
-          key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
-          enableCrossOsArchive: true
-
-      - name: Build APPIUM_NODE_TEST_PACKAGE with bundled models
-        if: inputs.cache-models
-        shell: bash
-        env:
-          WORKDIR: ${{ inputs.working-directory }}
-        run: |
-          set -euo pipefail
-          PKG_ROOT=/tmp/qvac-test-pkg
-          ZIP_OUT=/tmp/qvac-test-pkg.zip
-          rm -rf "$PKG_ROOT" "$ZIP_OUT"
-          mkdir -p "$PKG_ROOT/qvac-models"
-
-          # Minimal Appium-Node package shape — Device Farm validates
-          # `package.json` exists; gen-junit.py is consumed by both
-          # platforms' post_test phase.
-          echo '{"name":"qvac-test-pkg","version":"1.0.0"}' > "$PKG_ROOT/package.json"
-          cp "$GITHUB_WORKSPACE/$WORKDIR/device-farm/gen-junit.py" "$PKG_ROOT/"
-
-          # Copy (not symlink — zip would follow them but archive
-          # behaviour is more predictable with real files) the model
-          # cache into qvac-models/. The test-spec reads from
-          # $DEVICEFARM_TEST_PACKAGE_PATH/qvac-models/ on the test host.
-          cp -R "$QVAC_MOBILE_CACHE_DIR/." "$PKG_ROOT/qvac-models/"
-
-          FILE_COUNT=$(find "$PKG_ROOT/qvac-models" -type f | wc -l)
-          MODELS_BYTES=$(du -sk "$PKG_ROOT/qvac-models" | awk '{print $1*1024}')
-          echo "Bundled $FILE_COUNT model files ($((MODELS_BYTES / 1024 / 1024)) MiB) into test package"
-
-          # `zip -0` (store, no compression) — model weights are already
-          # compressed/packed quantisations, deflate adds CPU and saves
-          # ~0%. Store-only also halves the test-host extraction wall.
-          (cd "$PKG_ROOT" && zip -0 -r "$ZIP_OUT" .)
-
-          ZIP_SIZE=$(stat -c%s "$ZIP_OUT")
-          echo "Built test package zip: ${ZIP_SIZE} bytes ($((ZIP_SIZE / 1024 / 1024)) MiB)"
-          # Intentionally NO client-side size guard — we want the first
-          # run to surface whichever AWS surface actually rejects (S3
-          # presigned PUT 4xx, get-upload FAILED, or schedule-run
-          # validation) so we know the real cap on
-          # APPIUM_NODE_TEST_PACKAGE rather than assuming the
-          # EXTERNAL_DATA 5 GiB cap also applies here.
-          echo "QVAC_TEST_PKG_ZIP=$ZIP_OUT" >> "$GITHUB_ENV"
-
-      - name: Configure AWS credentials (for Device Farm test-package upload)
-        if: inputs.cache-models
-        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          aws-region: us-west-2
-
-      - name: Upload test package to Device Farm
-        id: test-pkg-upload
-        if: inputs.cache-models
-        shell: bash
-        run: |
-          set -euo pipefail
-          UPLOAD_NAME="qvac-test-pkg-${{ steps.runid.outputs.runId }}.zip"
-          UPLOAD_RESPONSE=$(aws devicefarm create-upload \
-            --project-arn "${{ inputs.device-farm-project-arn }}" \
-            --name "$UPLOAD_NAME" \
-            --type "APPIUM_NODE_TEST_PACKAGE" \
-            --output json)
-          PKG_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.url')
-          PKG_ARN=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.arn')
-
-          # `--fail-with-body` surfaces S3's <Error>...</Error> XML in
-          # the log when the presigned PUT 4xx's (e.g. EntityTooLarge),
-          # which is exactly the empirical evidence we need to know
-          # whether this upload type also caps at 5 GiB.
-          curl --fail-with-body -T "$QVAC_TEST_PKG_ZIP" "$PKG_URL"
-
-          echo "Waiting for APPIUM_NODE_TEST_PACKAGE processing..."
-          for i in {1..60}; do
-            STATUS=$(aws devicefarm get-upload --arn "$PKG_ARN" --query "upload.status" --output text)
-            echo "Test package status (attempt $i/60): $STATUS"
-            if [ "$STATUS" = "SUCCEEDED" ]; then
-              echo "Test package upload processed"
-              break
-            fi
-            if [ "$STATUS" = "FAILED" ]; then
-              echo "Test package upload failed; full response:"
-              aws devicefarm get-upload --arn "$PKG_ARN"
-              exit 1
-            fi
-            sleep 10
-          done
-
-          echo "arn=$PKG_ARN" >> "$GITHUB_OUTPUT"
-          echo "APPIUM_NODE_TEST_PACKAGE ARN: $PKG_ARN"
-
-      # --- End model pre-caching --------------------------------------------
+      # Note: `cache-models=true` does NOT pre-download models on the
+      # CI host any more. After empirical confirmation that Device
+      # Farm caps both EXTERNAL_DATA and APPIUM_NODE_TEST_PACKAGE
+      # uploads at 5 GiB (our bundle is ~16 GiB), we instead pass
+      # `appPackagesCleanup=false` to `schedule-run` so the device's
+      # own copy of the cache survives between runs. The mobile
+      # consumer pins its SDK cacheDirectory to the app's persistent
+      # internal-files dir, so the first run on a device downloads
+      # everything and subsequent runs on the same device skip the
+      # downloads. See `cache-models` input doc for trade-offs.
 
       - name: Build mobile consumer APK
         working-directory: ${{ inputs.working-directory }}
@@ -563,15 +420,8 @@ jobs:
             sleep 10
           done
 
-      # Fallback only: when `cache-models=false` the build job did NOT
-      # upload a test package, so we create a tiny stub one here.
-      # When `cache-models=true` we instead reuse the build job's
-      # `test-pkg-arn` (same package shape + bundled models) and skip
-      # this step entirely — see the
-      # `if: needs.build.outputs.test-pkg-arn == ''` gate.
       - name: Create and upload dummy test package
         id: upload-test-pkg
-        if: needs.build.outputs.test-pkg-arn == ''
         run: |
           mkdir -p /tmp/dummy-test-pkg
           echo '{"name":"qvac-test-stub","version":"1.0.0"}' > /tmp/dummy-test-pkg/package.json
@@ -644,23 +494,22 @@ jobs:
 
       - name: Schedule Device Farm run
         id: schedule
-        env:
-          # When the build job uploaded a models-bundled test package
-          # we use its ARN; otherwise fall back to the dummy one this
-          # job created above.
-          BUILD_PKG_ARN: ${{ needs.build.outputs.test-pkg-arn }}
-          DUMMY_PKG_ARN: ${{ steps.upload-test-pkg.outputs.pkg-arn }}
         run: |
           echo "Scheduling Device Farm run on ${{ matrix.device.name }}..."
 
           RUN_NAME="mobile-${{ matrix.device.name }}-${{ github.run_number }}-${{ github.run_attempt }}"
 
-          if [ -n "$BUILD_PKG_ARN" ]; then
-            TEST_PKG_ARN="$BUILD_PKG_ARN"
-            echo "Using build job's bundled-models test package: $TEST_PKG_ARN"
+          # `appPackagesCleanup=false` (when cache-models=true) tells
+          # Device Farm to leave the app and its data dir on the
+          # physical device after the run completes. The next run on
+          # the same device finds the SDK's cacheDirectory populated
+          # and skips re-downloading models — see input description
+          # for the full reasoning + trade-offs.
+          if [ "${{ inputs.cache-models }}" = "true" ]; then
+            EXEC_CFG="jobTimeoutMinutes=${{ inputs.device-farm-timeout }},appPackagesCleanup=false"
+            echo "Cache-models enabled: passing appPackagesCleanup=false"
           else
-            TEST_PKG_ARN="$DUMMY_PKG_ARN"
-            echo "Using device-farm job's stub test package: $TEST_PKG_ARN"
+            EXEC_CFG="jobTimeoutMinutes=${{ inputs.device-farm-timeout }}"
           fi
 
           RUN_ARN=$(aws devicefarm schedule-run \
@@ -668,8 +517,8 @@ jobs:
             --device-pool-arn "${{ matrix.device.arn }}" \
             --app-arn "${{ steps.upload-app.outputs.app-arn }}" \
             --name "$RUN_NAME" \
-            --test "type=APPIUM_NODE,testPackageArn=$TEST_PKG_ARN,testSpecArn=${{ steps.upload-spec.outputs.spec-arn }}" \
-            --execution-configuration jobTimeoutMinutes=${{ inputs.device-farm-timeout }} \
+            --test "type=APPIUM_NODE,testPackageArn=${{ steps.upload-test-pkg.outputs.pkg-arn }},testSpecArn=${{ steps.upload-spec.outputs.spec-arn }}" \
+            --execution-configuration "$EXEC_CFG" \
             --query 'run.arn' --output text)
 
           echo "run-arn=$RUN_ARN" >> $GITHUB_OUTPUT

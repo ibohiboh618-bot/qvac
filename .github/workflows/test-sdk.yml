@@ -57,7 +57,7 @@ on:
         description: "Git ref to checkout for the tested project (branch, tag, or SHA). Defaults to current branch HEAD."
         type: string
       cache-models:
-        description: "Cache downloaded models between runs (desktop CI host + APPIUM_NODE_TEST_PACKAGE bundle for mobile)"
+        description: "Cache downloaded models between runs (desktop: CI host; mobile: persist app data across Device Farm runs via appPackagesCleanup=false)"
         type: boolean
         default: true
 

@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 // @ts-ignore - expo-file-system is a peer dep satisfied by the Expo
-// bundler at runtime; it's only referenced inside applyPreCachedModels
+// bundler at runtime; only referenced inside pinSdkCacheDirectory
 // below, which is invoked from bootstrap on the device.
 import { File, Directory, Paths } from "expo-file-system";
 import { createExecutor, SkipExecutor } from "@tetherto/qvac-test-suite/mobile";
@@ -342,193 +342,75 @@ function skipTests(testIds: string[], reason: string) {
 }
 
 /**
- * Mobile pre-cache hook for AWS Device Farm `EXTERNAL_DATA` uploads.
+ * Pin the SDK cache to persistent app storage so models survive
+ * across Device Farm runs.
  *
- * Symmetry with desktop: `tests/desktop/consumer.ts#bootstrap` pins the
- * SDK at a committed e2e fixture via
+ * Background:
+ *   - The Bare worker subprocess that hosts the SDK resolves
+ *     `cacheDirectory` once at init from `qvac.config.json` and
+ *     defaults to `~/.qvac/models` if no file is found
+ *     (`client/config-loader/resolve-config.expo.ts`).
+ *   - Device Farm public pools default to wiping the app + all its
+ *     data between runs. With `appPackagesCleanup=false` set on
+ *     `schedule-run --execution-configuration`, the app is left
+ *     alone and any files it wrote to `Documents/` (iOS) or
+ *     internal files-dir (Android) survive for the next run on the
+ *     same device — turning the first cold-cache download into the
+ *     only one that pays the full ~14-min model fetch cost.
+ *
+ * What this hook does:
+ *   1. Compute the persistent cache root (`Documents/qvac-models/`
+ *      on both platforms — Expo's `Paths.document` maps to the
+ *      app's persistent sandbox dir on iOS, and the equivalent
+ *      internal-files dir on Android).
+ *   2. Write `qvac.config.json` next to it so the worker, on each
+ *      launch, resolves the same absolute cacheDirectory rather
+ *      than the Bare default `~/.qvac/models` (which falls outside
+ *      `Documents/` and would be wiped). We rewrite it every boot
+ *      so a stale config from a previous bundle id never wins.
+ *   3. Hand off to `resources.downloadAllOnce`. On a cold device
+ *      this is the full download path; on a warm device the SDK
+ *      finds the files already in `cacheDirectory` and skips them
+ *      (the SDK keys cache hits on the `<sourceHash>_<filename>`
+ *      naming contract — see `server/utils/cache/paths.ts`).
+ *
+ * Mirrors the desktop pattern: `tests/desktop/consumer.ts#bootstrap`
+ * pins the SDK at a committed e2e fixture via
  * `process.env["QVAC_CONFIG_PATH"] = fixtures/...`. Mobile cannot use
  * env vars (the Expo app inherits an empty env from launchctl/Zygote),
- * so the equivalent is: drop a `qvac.config.json` on disk at the SDK's
- * default lookup path (`${Paths.document.uri}qvac.config.json`, see
- * `packages/sdk/client/config-loader/resolve-config.expo.ts`).
- *
- * Pipeline per device (executed once before `downloadAllOnce`):
- *   1. Look for a `cache-marker` sentinel at the platform-specific
- *      staging path. The CI test-spec drops this file last so its
- *      presence guarantees every model already landed at the staging
- *      path.
- *   2. If absent → return false (no-op, ~one stat() call on Android;
- *      a long-poll on iOS — see `waitForCacheMarker` for why).
- *   3. If present → mirror the staged tree into the SDK cache
- *      (`Paths.cache/qvac-models`) and write `qvac.config.json`
- *      whose `cacheDirectory` points there.
- *
- * Where the models come from (depending on which CI upload type the
- * build job chose — EXTERNAL_DATA capped out at 5 GiB so we now ship
- * them inside `APPIUM_NODE_TEST_PACKAGE`, which Device Farm extracts
- * onto the *test host*, not the device):
- *   - Android: the test-spec `adb push`-es the unpacked
- *     `$DEVICEFARM_TEST_PACKAGE_PATH/qvac-models/` tree to
- *     `/data/local/tmp/qvac-models/` (world-readable; scoped storage
- *     hides app-private dirs from `adb shell` on API 30+).
- *   - iOS: the test-spec `pymobiledevice3 apps push`-es the same
- *     directory into the app's `Documents/`. Push happens *after*
- *     Appium launches the app (the sandbox must exist first), so the
- *     in-app polling above covers the wall-clock of pushing ~16 GiB
- *     over USB-mux.
- *
- * Any failure logs and returns false; pre-caching is an optimisation,
- * not a hard dep, so the run still succeeds via network downloads.
+ * so we write the file at the platform-default lookup path instead
+ * (`${Paths.document.uri}qvac.config.json`).
  */
-const CACHE_MARKER_PATH =
-  Platform.OS === "android"
-    ? "file:///data/local/tmp/qvac-models/cache-marker"
-    : `${Paths.document.uri}cache-marker`;
+const CACHE_DIR = new Directory(Paths.document, "qvac-models");
 
-// `cache-pending` is the early-arrival sentinel used only on iOS to
-// disambiguate "no cache prepared for this run" (absent → fast-fail
-// after ~30s) from "cache pushes still in progress" (present → wait
-// up to ~30 min for `cache-marker`). The test-spec drops it as the
-// very first pmd3 push, before the per-file model pushes start, so an
-// Appium-launched app sees it within a few seconds of bootstrap. We
-// don't use it on Android because the test-spec there finishes
-// staging *before* installing/launching the app — no race.
-const CACHE_PENDING_PATH =
-  Platform.OS === "android" ? null : `${Paths.document.uri}cache-pending`;
-
-const CACHE_SOURCE_DIR =
-  Platform.OS === "android"
-    ? "file:///data/local/tmp/qvac-models/"
-    : Paths.document.uri;
-
-const CACHE_DEST_DIR = new Directory(Paths.cache, "qvac-models");
-
-interface CopyStats {
-  copied: number;
-  skipped: number;
-  failed: number;
-  bytes: number;
-}
-
-async function copyDir(src: Directory, dest: Directory): Promise<CopyStats> {
-  const stats: CopyStats = { copied: 0, skipped: 0, failed: 0, bytes: 0 };
-  dest.create({ idempotent: true });
-  for (const entry of src.list()) {
-    if (entry instanceof Directory) {
-      const child = new Directory(dest, entry.name);
-      const sub = await copyDir(entry, child);
-      stats.copied += sub.copied;
-      stats.skipped += sub.skipped;
-      stats.failed += sub.failed;
-      stats.bytes += sub.bytes;
-      continue;
-    }
-    const target = new File(dest, entry.name);
-    if (target.exists) {
-      stats.skipped++;
-      continue;
-    }
-    try {
-      entry.copy(dest);
-      stats.copied++;
-      stats.bytes += entry.size ?? 0;
-    } catch (err) {
-      stats.failed++;
-      console.log(`📦 Copy failed for ${entry.name}: ${err}`);
-    }
-  }
-  return stats;
-}
-
-/**
- * Wait up to `timeoutMs` for `path` to exist, polling every `pollMs`.
- * Heartbeat every 60s so a long wait shows up in the device log.
- */
-async function waitForFile(path: string, timeoutMs: number, pollMs: number, label: string): Promise<boolean> {
-  const file = new File(path);
-  if (file.exists) return true;
-  if (timeoutMs <= 0) return false;
-  const start = Date.now();
-  let last = start;
-  while (Date.now() - start < timeoutMs) {
-    if (file.exists) return true;
-    const now = Date.now();
-    if (now - last >= 60_000) {
-      const waited = Math.round((now - start) / 1000);
-      console.log(`📦 Waiting for ${label} (${waited}s elapsed)...`);
-      last = now;
-    }
-    await new Promise((r) => setTimeout(r, pollMs));
-  }
-  return false;
-}
-
-async function applyPreCachedModels(): Promise<boolean> {
+function pinSdkCacheDirectory() {
   try {
-    // Two-phase wait on iOS only (see CACHE_PENDING_PATH comment for
-    // why). Android stages everything before app launch — single
-    // `stat()` is sufficient and adds no latency on cache-disabled runs.
-    if (CACHE_PENDING_PATH) {
-      const hasPending = await waitForFile(CACHE_PENDING_PATH, 30_000, 1_000, "cache-pending sentinel");
-      if (!hasPending) {
-        return false;
-      }
-      console.log("📦 cache-pending observed — waiting for full cache to be staged...");
-      // 30-min cap chosen empirically: a fully cold-cache 16 GiB push
-      // over USB-mux on a Device Farm iPhone runs ~20-25 min in p99.
-      const hasMarker = await waitForFile(CACHE_MARKER_PATH, 30 * 60_000, 5_000, "cache-marker");
-      if (!hasMarker) {
-        console.log("📦 cache-marker did not arrive in time; falling through to SDK downloads");
-        return false;
-      }
-    } else {
-      const marker = new File(CACHE_MARKER_PATH);
-      if (!marker.exists) {
-        return false;
-      }
-    }
+    CACHE_DIR.create({ idempotent: true });
 
-    const source = new Directory(CACHE_SOURCE_DIR);
-    if (!source.exists) {
-      console.log(`📦 Cache marker present but source missing: ${CACHE_SOURCE_DIR}`);
-      return false;
-    }
-
-    const start = Date.now();
-    const stats = await copyDir(source, CACHE_DEST_DIR);
-    const elapsed = Math.round((Date.now() - start) / 1000);
-    const mb = Math.round(stats.bytes / (1024 * 1024));
-    console.log(
-      `📦 Pre-cache staged in ${elapsed}s: ${stats.copied} copied (${mb} MB), ${stats.skipped} already present, ${stats.failed} failed`,
-    );
-
-    if (stats.copied === 0 && stats.skipped === 0) {
-      console.log("📦 No files staged — leaving SDK cache untouched");
-      return false;
-    }
+    // Expo's `Directory.uri` is a `file://`-prefixed URI; the SDK
+    // worker validates `cacheDirectory` with `path.isAbsolute()` on
+    // Bare which requires a plain filesystem path, not a URI. Strip
+    // the scheme and a single trailing slash so the path round-trips
+    // identically into the SDK's `<sourceHash>_<filename>` layout.
+    const cachePath = CACHE_DIR.uri.replace(/^file:\/\//, "").replace(/\/+$/, "");
 
     const configFile = new File(Paths.document, "qvac.config.json");
     configFile.create({ overwrite: true });
-    configFile.write(
-      JSON.stringify({
-        cacheDirectory: CACHE_DEST_DIR.uri.replace(/^file:\/\//, ""),
-      }),
-    );
-    console.log(`📦 SDK cache directory set to ${CACHE_DEST_DIR.uri}`);
-    return true;
+    configFile.write(JSON.stringify({ cacheDirectory: cachePath }));
+    console.log(`📦 SDK cacheDirectory pinned to ${cachePath}`);
   } catch (error) {
-    console.log(`📦 applyPreCachedModels failed: ${error}`);
-    return false;
+    // Non-fatal: the SDK will still work via its default location,
+    // we just lose the cross-run persistence optimisation.
+    console.log(`📦 pinSdkCacheDirectory failed: ${error}`);
   }
 }
 
 export async function bootstrap(filteredTests?: TestDefinition[]) {
-  // Mobile counterpart of desktop's QVAC_CONFIG_PATH pin: when CI
-  // staged a model payload for this device (via APPIUM_NODE_TEST_PACKAGE
-  // + an in-test-spec push), mirror it into the SDK cache so
-  // `downloadAllOnce` becomes a no-op. On cache-disabled runs the
-  // marker is absent within one ~5s poll and we fall through cheaply.
-  await applyPreCachedModels();
+  // Make sure every run uses the same persistent cache dir, so
+  // models downloaded on a previous run on this device get reused
+  // when Device Farm leaves our app data intact
+  // (`appPackagesCleanup=false`).
+  pinSdkCacheDirectory();
   // `filteredTests` (when present) is the producer's post-filter test list
   // delivered via register-ack; absence keeps the legacy "warm everything" path.
   const allowedDeps = filteredTests ? collectTestDeps(filteredTests) : undefined;
