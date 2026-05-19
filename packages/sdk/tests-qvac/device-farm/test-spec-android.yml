@@ -4,6 +4,52 @@ android_test_host: amazon_linux_2
 phases:
   pre_test:
     commands:
+      # Stage EXTERNAL_DATA (model cache) BEFORE launching the app.
+      #
+      # When the device-farm job uploads models as an EXTERNAL_DATA package
+      # and passes its ARN to schedule-run via `--configuration
+      # extraDataPackageArn=...`, Device Farm extracts the zip on the
+      # device under $EXTERNAL_STORAGE/extra_data/. That path is
+      # unreachable from the app's sandbox under Android scoped storage,
+      # so we relay the payload into /data/local/tmp/qvac-models/ which
+      # is world-readable. The app picks it up via mobile/consumer.ts.
+      #
+      # When cache-models is disabled, the extra_data directory does not
+      # exist on the device — the block is a no-op and bootstrap falls
+      # through to the SDK download path.
+      - |-
+        echo "Looking for EXTERNAL_DATA payload on device..."
+        DEVICE_EXTRA_DIR=$(adb shell sh -c 'echo $EXTERNAL_STORAGE' | tr -d '\r')/extra_data
+        adb shell ls -la "$DEVICE_EXTRA_DIR" || echo "(no extra_data dir — cache disabled)"
+
+        STAGE_DIR=/data/local/tmp/qvac-models
+        adb shell rm -rf "$STAGE_DIR" || true
+        adb shell mkdir -p "$STAGE_DIR"
+
+        if adb shell test -d "$DEVICE_EXTRA_DIR" ; then
+          STAGE_START=$(date +%s)
+          # cp -a preserves a/m times so file-existence checks on the
+          # app side don't trigger spurious size mismatches. -L follows
+          # any symlinks Device Farm may inject during extraction.
+          adb shell sh -c "cp -aL $DEVICE_EXTRA_DIR/. $STAGE_DIR/" || {
+            echo "Staging extra_data failed"
+            adb shell ls -la "$DEVICE_EXTRA_DIR"
+            exit 1
+          }
+          # Drop a sentinel the app polls for; presence == "cache prepared".
+          adb shell sh -c "touch $STAGE_DIR/cache-marker"
+          # Make every staged file world-readable (the app process needs r-x
+          # on the parent dir + r-- on each file; Device Farm extraction
+          # owns the source as `shell` with default 0600).
+          adb shell sh -c "chmod -R a+rX $STAGE_DIR" || true
+          STAGE_ELAPSED=$(( $(date +%s) - STAGE_START ))
+          STAGED_BYTES=$(adb shell du -sb "$STAGE_DIR" 2>/dev/null | awk '{print $1}' | tr -d '\r')
+          STAGED_FILES=$(adb shell find "$STAGE_DIR" -type f 2>/dev/null | wc -l | tr -d '\r')
+          echo "Staged $STAGED_FILES files ($STAGED_BYTES bytes) to $STAGE_DIR in ${STAGE_ELAPSED}s"
+        else
+          echo "No model cache for this run — bootstrap will download via SDK."
+        fi
+
       # Install and launch the app (custom test spec doesn't do this automatically)
       - |-
         echo "Installing app..."

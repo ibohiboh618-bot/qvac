@@ -47,6 +47,24 @@ on:
         description: "Git ref to checkout (branch, tag, or SHA). Defaults to trigger ref."
         required: false
         type: string
+      cache-models:
+        description: |
+          Pre-cache mobile bootstrap models in AWS Device Farm via the
+          EXTERNAL_DATA upload type. When true, the build job downloads
+          every model the mobile consumer needs into a local SDK cache
+          directory, zips it with `zip -0` (store-only — models are
+          already compressed), uploads it once as an EXTERNAL_DATA
+          package, and the schedule-run for every device in the matrix
+          passes the resulting ARN via `--configuration
+          extraDataPackageArn=...`. Device Farm extracts the payload
+          directly into the app sandbox on iOS (Documents directory),
+          so the app reads the cache natively at bootstrap.
+          When false, the workflow behaves exactly as before.
+          Default mirrors `test-sdk.yml` (true) so calling this
+          workflow directly via workflow_dispatch keeps caching on.
+        required: false
+        type: boolean
+        default: true
     secrets:
       # MQTT_*, NPM_TOKEN, and Apple signing secrets (TEST_APP_APPLE_*,
       # APPLE_P12_PASSWORD, APPLE_KEYCHAIN_PASSWORD) are typically provided
@@ -122,9 +140,10 @@ jobs:
     name: "[ios] build"
     runs-on: macos-14
     environment: release
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
       runId: ${{ steps.runid.outputs.runId }}
+      extra-data-arn: ${{ steps.extra-data-upload.outputs.arn }}
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -166,6 +185,60 @@ jobs:
 
           xcodebuild -version
           xcodebuild -showsdks | grep -i ios
+
+      # GitHub-hosted `macos-14` images ship with ~14 GiB of free disk
+      # space, while the full mobile model bundle plus a side-by-side
+      # `zip -0` archive easily doubles that (the first run on this
+      # workflow died with "zip I/O error: No space left on device"
+      # after the zip got to ~7 GiB). Reclaim space by deleting every
+      # pre-installed component we know we don't need on this job:
+      # unused Xcode versions (we already pinned 16.1 in the step
+      # above), the bundled Android SDK (this is an iOS pipeline), and
+      # a handful of language toolchains the consumer build never
+      # touches. Each of these is in the tens of GiB, so even partial
+      # cleanup is worth running before model download/zip.
+      #
+      # Gated on `cache-models` because:
+      #   1. It's the only path that needs the extra room.
+      #   2. We don't want to wait ~30s freeing disk on every iOS run.
+      - name: Free disk space (macOS)
+        if: inputs.cache-models
+        run: |
+          set -uo pipefail
+          echo "=== Disk usage before cleanup ==="
+          df -h /
+          echo "=== /Applications/Xcode*.app sizes ==="
+          sudo du -sh /Applications/Xcode*.app 2>/dev/null || true
+
+          # Keep only the Xcode picked by `xcode-select` above. Anything
+          # not pointed at by `xcode-select -p` is safe to delete.
+          SELECTED_XCODE=$(xcode-select -p | sed -E 's|/Contents/Developer$||')
+          echo "Keeping selected Xcode: $SELECTED_XCODE"
+          for app in /Applications/Xcode*.app; do
+            if [ "$app" != "$SELECTED_XCODE" ]; then
+              echo "Removing unused Xcode: $app"
+              sudo rm -rf "$app"
+            fi
+          done
+
+          # iOS workflow — Android SDK is dead weight (~15 GiB).
+          if [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ]; then
+            echo "Removing Android SDK at $ANDROID_HOME"
+            sudo rm -rf "$ANDROID_HOME"
+          fi
+          if [ -d "$HOME/Library/Android" ]; then
+            sudo rm -rf "$HOME/Library/Android"
+          fi
+
+          # Misc toolchains the iOS consumer build never invokes. Best
+          # effort — silently skipped if absent (a future runner image
+          # may drop them).
+          sudo rm -rf /Users/runner/.ghcup || true
+          sudo rm -rf /Users/runner/.dotnet || true
+          sudo rm -rf /Users/runner/Library/Caches/Homebrew || true
+
+          echo "=== Disk usage after cleanup ==="
+          df -h /
 
       - name: Install CocoaPods
         run: |
@@ -401,6 +474,137 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: bun run build
 
+      # --- Model pre-caching (only when `cache-models: true`) ---------------
+      # See `test-android-sdk.yml` for the architecture summary — this is the
+      # same flow, with two iOS-specific notes:
+      #   1. We rely on macOS' built-in `zip` (BSD); `zip -0 -r` is honoured
+      #      identically.
+      #   2. On iOS, Device Farm extracts EXTERNAL_DATA into the app's
+      #      sandbox (Documents/) — no host-side staging is needed, the
+      #      app's bootstrap reads it natively via `Paths.document.uri`.
+      - name: Configure SDK cache for pre-download
+        if: inputs.cache-models
+        shell: bash
+        env:
+          WORKDIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$GITHUB_WORKSPACE/$WORKDIR/.qvac-cache"
+          mkdir -p "$CACHE_DIR"
+          CONFIG_PATH="$GITHUB_WORKSPACE/$WORKDIR/qvac.config.json"
+          printf '{ "cacheDirectory": "%s" }\n' "$CACHE_DIR" > "$CONFIG_PATH"
+          {
+            echo "QVAC_CONFIG_PATH=$CONFIG_PATH"
+            echo "QVAC_MOBILE_CACHE_DIR=$CACHE_DIR"
+          } >> "$GITHUB_ENV"
+          echo "SDK cache directory: $CACHE_DIR"
+
+      - name: Restore models cache (GitHub Actions)
+        id: models-cache
+        if: inputs.cache-models
+        uses: actions/cache/restore@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        with:
+          path: ${{ inputs.working-directory }}/.qvac-cache
+          # See android workflow for cache-key design notes; same keys
+          # so Android & iOS runs can share a warm host cache when the
+          # registry hasn't changed.
+          key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
+          enableCrossOsArchive: true
+
+      - name: Download mobile bootstrap models
+        if: inputs.cache-models && steps.models-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "Cache miss — downloading mobile bootstrap models..."
+          bun run scripts/download-mobile-models.ts
+
+      - name: Save models cache (GitHub Actions)
+        if: inputs.cache-models && steps.models-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        with:
+          path: ${{ inputs.working-directory }}/.qvac-cache
+          key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
+          enableCrossOsArchive: true
+
+      - name: Zip models for EXTERNAL_DATA upload
+        if: inputs.cache-models
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `zip -0` (store, no compression) is mandatory: model weights are
+          # already compressed quantisations / packed binary formats, so
+          # deflate adds CPU and produces a near-identical-size archive.
+          # zip-store also halves the device-side extraction wall clock.
+          ZIP_OUT=/tmp/qvac-models-extra-data.zip
+          rm -f "$ZIP_OUT"
+          cd "$QVAC_MOBILE_CACHE_DIR"
+          # Sentinel: the mobile consumer keys off this file's existence
+          # to know "the cache was prepared by CI" — see android workflow
+          # comment for details.
+          : > cache-marker
+          zip -0 -r "$ZIP_OUT" .
+          # BSD stat on macOS uses -f%z, GNU on Linux uses -c%s. CI's
+          # build host for iOS is `macos-14`, so prefer the BSD flag and
+          # fall back if absent.
+          if ZIP_SIZE=$(stat -f%z "$ZIP_OUT" 2>/dev/null); then :; else
+            ZIP_SIZE=$(stat -c%s "$ZIP_OUT")
+          fi
+          FILE_COUNT=$(find . -type f | wc -l)
+          echo "Built models zip: ${FILE_COUNT} files, ${ZIP_SIZE} bytes ($((ZIP_SIZE / 1024 / 1024)) MiB)"
+          # AWS docs (FAQs + "Media in runs") state EXTERNAL_DATA caps
+          # out at 4 GiB. The CreateUpload API ref does not document a
+          # size cap per type, so we are *not* enforcing it client-side
+          # — we want the first run to surface whichever AWS surface
+          # actually rejects (presigned PUT, get-upload SUCCEEDED/FAILED,
+          # or schedule-run). Once we see the real failure mode we can
+          # decide whether to re-add the build-time guard.
+          echo "QVAC_MOBILE_MODELS_ZIP=$ZIP_OUT" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials (for Device Farm EXTERNAL_DATA upload)
+        if: inputs.cache-models
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Upload models zip as Device Farm EXTERNAL_DATA
+        id: extra-data-upload
+        if: inputs.cache-models
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPLOAD_NAME="qvac-models-${{ steps.runid.outputs.runId }}.zip"
+          UPLOAD_RESPONSE=$(aws devicefarm create-upload \
+            --project-arn "${{ inputs.device-farm-project-arn }}" \
+            --name "$UPLOAD_NAME" \
+            --type "EXTERNAL_DATA" \
+            --output json)
+          EXTRA_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.url')
+          EXTRA_ARN=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.arn')
+
+          curl --fail-with-body -T "$QVAC_MOBILE_MODELS_ZIP" "$EXTRA_URL"
+
+          echo "Waiting for EXTERNAL_DATA processing..."
+          for i in {1..60}; do
+            STATUS=$(aws devicefarm get-upload --arn "$EXTRA_ARN" --query "upload.status" --output text)
+            echo "EXTERNAL_DATA status (attempt $i/60): $STATUS"
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              echo "EXTERNAL_DATA upload processed"
+              break
+            fi
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "EXTERNAL_DATA upload failed; full response:"
+              aws devicefarm get-upload --arn "$EXTRA_ARN"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          echo "arn=$EXTRA_ARN" >> "$GITHUB_OUTPUT"
+          echo "EXTERNAL_DATA ARN: $EXTRA_ARN"
+
+      # --- End model pre-caching --------------------------------------------
+
       - name: Build iOS consumer IPA
         working-directory: ${{ inputs.working-directory }}
         env:
@@ -582,10 +786,22 @@ jobs:
 
       - name: Schedule Device Farm run
         id: schedule
+        env:
+          EXTRA_DATA_ARN: ${{ needs.build.outputs.extra-data-arn }}
         run: |
           echo "Scheduling Device Farm run on ${{ matrix.device.name }}..."
 
           RUN_NAME="ios-${{ matrix.device.name }}-${{ github.run_number }}-${{ github.run_attempt }}"
+
+          # `--configuration extraDataPackageArn=...` is set only when the
+          # build job actually uploaded an EXTERNAL_DATA payload. Passing
+          # an empty ARN would trip a ValidationException from
+          # schedule-run and fail an otherwise-healthy cache-disabled run.
+          CONFIG_ARGS=()
+          if [ -n "$EXTRA_DATA_ARN" ]; then
+            echo "Attaching EXTERNAL_DATA: $EXTRA_DATA_ARN"
+            CONFIG_ARGS=(--configuration "extraDataPackageArn=$EXTRA_DATA_ARN")
+          fi
 
           RUN_ARN=$(aws devicefarm schedule-run \
             --project-arn "${{ inputs.device-farm-project-arn }}" \
@@ -594,6 +810,7 @@ jobs:
             --name "$RUN_NAME" \
             --test type=APPIUM_NODE,testPackageArn=${{ steps.upload-test-pkg.outputs.pkg-arn }},testSpecArn=${{ steps.upload-spec.outputs.spec-arn }} \
             --execution-configuration jobTimeoutMinutes=${{ inputs.device-farm-timeout }} \
+            "${CONFIG_ARGS[@]}" \
             --query 'run.arn' --output text)
 
           echo "run-arn=$RUN_ARN" >> $GITHUB_OUTPUT

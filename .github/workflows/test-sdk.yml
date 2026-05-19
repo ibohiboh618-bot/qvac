@@ -57,7 +57,7 @@ on:
         description: "Git ref to checkout for the tested project (branch, tag, or SHA). Defaults to current branch HEAD."
         type: string
       cache-models:
-        description: "Cache downloaded models between runs"
+        description: "Cache downloaded models between runs (desktop CI host + Device Farm EXTERNAL_DATA for mobile)"
         type: boolean
         default: true
 
@@ -156,6 +156,7 @@ jobs:
       device-farm-project-arn: ${{ vars.SDK_DEVICE_FARM_PROJECT_ARN }}
       device-pools: ${{ vars.SDK_DEVICE_FARM_POOLS }}
       test-version: ${{ inputs.test-version || '' }}
+      cache-models: ${{ inputs.cache-models }}
     secrets: inherit
 
   ios-tests:
@@ -179,4 +180,5 @@ jobs:
       device-farm-project-arn: ${{ vars.SDK_DEVICE_FARM_PROJECT_ARN }}
       ios-device-pools: ${{ vars.SDK_IOS_DEVICE_FARM_POOLS }}
       test-version: ${{ inputs.test-version || '' }}
+      cache-models: ${{ inputs.cache-models }}
     secrets: inherit

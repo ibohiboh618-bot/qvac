@@ -48,6 +48,26 @@ on:
         description: "Git ref to checkout (branch, tag, or SHA). Defaults to trigger ref."
         required: false
         type: string
+      cache-models:
+        description: |
+          Pre-cache mobile bootstrap models in AWS Device Farm via the
+          EXTERNAL_DATA upload type. When true, the build job downloads
+          every model the mobile consumer needs into a local SDK cache
+          directory, zips it with `zip -0` (store-only — models are
+          already compressed), uploads it once as an EXTERNAL_DATA
+          package, and the schedule-run for every device in the matrix
+          passes the resulting ARN via `--configuration
+          extraDataPackageArn=...`. Device Farm extracts the payload to
+          `$EXTERNAL_STORAGE/extra_data/` on the device before the app
+          starts; the Android test-spec relays it into
+          `/data/local/tmp/qvac-models/` and the app's bootstrap copies
+          it into the SDK cache directory.
+          When false, the workflow behaves exactly as before.
+          Default mirrors `test-sdk.yml` (true) so calling this
+          workflow directly via workflow_dispatch keeps caching on.
+        required: false
+        type: boolean
+        default: true
     secrets:
       # MQTT_* and NPM_TOKEN are typically provided via the release environment
       # (see jobs with `environment: release`). They are declared required: false
@@ -106,9 +126,10 @@ jobs:
     name: "[android] build"
     runs-on: qvac-ubuntu2204-x64
     environment: release
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs:
       runId: ${{ steps.runid.outputs.runId }}
+      extra-data-arn: ${{ steps.extra-data-upload.outputs.arn }}
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -294,6 +315,145 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: bun run build
 
+      # --- Model pre-caching (only when `cache-models: true`) ---------------
+      # The block is gated end-to-end on `inputs.cache-models`; when the flag
+      # is off, none of the steps run and the workflow behaves as it did on
+      # main. See the input docs above for the architecture summary.
+
+      - name: Configure SDK cache for pre-download
+        if: inputs.cache-models
+        shell: bash
+        env:
+          WORKDIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$GITHUB_WORKSPACE/$WORKDIR/.qvac-cache"
+          mkdir -p "$CACHE_DIR"
+          CONFIG_PATH="$GITHUB_WORKSPACE/$WORKDIR/qvac.config.json"
+          printf '{ "cacheDirectory": "%s" }\n' "$CACHE_DIR" > "$CONFIG_PATH"
+          {
+            echo "QVAC_CONFIG_PATH=$CONFIG_PATH"
+            echo "QVAC_MOBILE_CACHE_DIR=$CACHE_DIR"
+          } >> "$GITHUB_ENV"
+          echo "SDK cache directory: $CACHE_DIR"
+
+      - name: Restore models cache (GitHub Actions)
+        id: models-cache
+        if: inputs.cache-models
+        uses: actions/cache/restore@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        with:
+          path: ${{ inputs.working-directory }}/.qvac-cache
+          # Mirrors the desktop key (`test-desktop-sdk.yml`):
+          # `models.ts` carries the registry entries (URLs, sizes,
+          # sha256), which is the only thing that actually invalidates
+          # cached blob contents. New model added to the consumer / the
+          # download script but registry unchanged → cache stays warm,
+          # the missing model falls back to network download on the
+          # device's `downloadAllOnce` (same fallback desktop relies on).
+          key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
+          # The model blobs are platform-agnostic; let the macOS-hosted
+          # iOS build and the Linux-hosted Android build share the same
+          # warm cache entry.
+          enableCrossOsArchive: true
+
+      - name: Download mobile bootstrap models
+        if: inputs.cache-models && steps.models-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "Cache miss — downloading mobile bootstrap models..."
+          bun run scripts/download-mobile-models.ts
+
+      - name: Save models cache (GitHub Actions)
+        if: inputs.cache-models && steps.models-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        with:
+          path: ${{ inputs.working-directory }}/.qvac-cache
+          key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
+          enableCrossOsArchive: true
+
+      - name: Zip models for EXTERNAL_DATA upload
+        if: inputs.cache-models
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `zip -0` (store, no compression) is mandatory: model weights are
+          # already compressed quantisations / packed binary formats, so
+          # deflate adds CPU and produces a near-identical-size archive.
+          # zip-store also halves the device-side extraction wall clock.
+          ZIP_OUT=/tmp/qvac-models-extra-data.zip
+          rm -f "$ZIP_OUT"
+          cd "$QVAC_MOBILE_CACHE_DIR"
+          # Drop a `cache-marker` sentinel into the payload. The mobile
+          # consumer's `applyPreCachedModels` keys off this file: on iOS
+          # the zip contents land in the app's Documents directory
+          # unmodified so the marker arrives in-place; on Android the
+          # test-spec replays the marker again after relaying the data
+          # to /data/local/tmp (defence-in-depth: either source proves
+          # the cache was prepared by CI, not stale from a prior run).
+          : > cache-marker
+          zip -0 -r "$ZIP_OUT" .
+          ZIP_SIZE=$(stat -c%s "$ZIP_OUT")
+          FILE_COUNT=$(find . -type f | wc -l)
+          echo "Built models zip: ${FILE_COUNT} files, ${ZIP_SIZE} bytes ($((ZIP_SIZE / 1024 / 1024)) MiB)"
+          # AWS docs (FAQs + "Media in runs") state EXTERNAL_DATA caps
+          # out at 4 GiB. The CreateUpload API ref does not document a
+          # size cap per type, so we are *not* enforcing it client-side
+          # — we want the first run to surface whichever AWS surface
+          # actually rejects (presigned PUT, get-upload SUCCEEDED/FAILED,
+          # or schedule-run). Once we see the real failure mode we can
+          # decide whether to re-add the build-time guard.
+          echo "QVAC_MOBILE_MODELS_ZIP=$ZIP_OUT" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials (for Device Farm EXTERNAL_DATA upload)
+        if: inputs.cache-models
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Upload models zip as Device Farm EXTERNAL_DATA
+        id: extra-data-upload
+        if: inputs.cache-models
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPLOAD_NAME="qvac-models-${{ steps.runid.outputs.runId }}.zip"
+          UPLOAD_RESPONSE=$(aws devicefarm create-upload \
+            --project-arn "${{ inputs.device-farm-project-arn }}" \
+            --name "$UPLOAD_NAME" \
+            --type "EXTERNAL_DATA" \
+            --output json)
+          EXTRA_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.url')
+          EXTRA_ARN=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.arn')
+
+          # `curl -T` PUTs to the presigned URL. We intentionally do
+          # NOT cap zip size client-side — AWS docs say EXTERNAL_DATA
+          # tops out at 4 GiB, but the API ref doesn't document this
+          # per-type, so we let the first run reveal whichever surface
+          # actually rejects (PUT, get-upload, or schedule-run).
+          curl --fail-with-body -T "$QVAC_MOBILE_MODELS_ZIP" "$EXTRA_URL"
+
+          echo "Waiting for EXTERNAL_DATA processing..."
+          for i in {1..60}; do
+            STATUS=$(aws devicefarm get-upload --arn "$EXTRA_ARN" --query "upload.status" --output text)
+            echo "EXTERNAL_DATA status (attempt $i/60): $STATUS"
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              echo "EXTERNAL_DATA upload processed"
+              break
+            fi
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "EXTERNAL_DATA upload failed; full response:"
+              aws devicefarm get-upload --arn "$EXTRA_ARN"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          echo "arn=$EXTRA_ARN" >> "$GITHUB_OUTPUT"
+          echo "EXTERNAL_DATA ARN: $EXTRA_ARN"
+
+      # --- End model pre-caching --------------------------------------------
+
       - name: Build mobile consumer APK
         working-directory: ${{ inputs.working-directory }}
         env:
@@ -463,10 +623,24 @@ jobs:
 
       - name: Schedule Device Farm run
         id: schedule
+        env:
+          EXTRA_DATA_ARN: ${{ needs.build.outputs.extra-data-arn }}
         run: |
           echo "Scheduling Device Farm run on ${{ matrix.device.name }}..."
 
           RUN_NAME="mobile-${{ matrix.device.name }}-${{ github.run_number }}-${{ github.run_attempt }}"
+
+          # `--configuration extraDataPackageArn=...` is the AWS-supported
+          # mechanism for staging extra data on the device pre-launch.
+          # Only set it when the build job actually uploaded a payload —
+          # `schedule-run` rejects an empty / malformed ARN with a
+          # ValidationException, which would also fail a cache-disabled
+          # run if we passed the flag unconditionally.
+          CONFIG_ARGS=()
+          if [ -n "$EXTRA_DATA_ARN" ]; then
+            echo "Attaching EXTERNAL_DATA: $EXTRA_DATA_ARN"
+            CONFIG_ARGS=(--configuration "extraDataPackageArn=$EXTRA_DATA_ARN")
+          fi
 
           RUN_ARN=$(aws devicefarm schedule-run \
             --project-arn "${{ inputs.device-farm-project-arn }}" \
@@ -475,6 +649,7 @@ jobs:
             --name "$RUN_NAME" \
             --test type=APPIUM_NODE,testPackageArn=${{ steps.upload-test-pkg.outputs.pkg-arn }},testSpecArn=${{ steps.upload-spec.outputs.spec-arn }} \
             --execution-configuration jobTimeoutMinutes=${{ inputs.device-farm-timeout }} \
+            "${CONFIG_ARGS[@]}" \
             --query 'run.arn' --output text)
 
           echo "run-arn=$RUN_ARN" >> $GITHUB_OUTPUT

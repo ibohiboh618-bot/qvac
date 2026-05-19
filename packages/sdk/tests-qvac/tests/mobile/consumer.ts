@@ -1,4 +1,8 @@
 import { Platform } from "react-native";
+// @ts-ignore - expo-file-system is a peer dep satisfied by the Expo
+// bundler at runtime; it's only referenced inside applyPreCachedModels
+// below, which is invoked from bootstrap on the device.
+import { File, Directory, Paths } from "expo-file-system";
 import { createExecutor, SkipExecutor } from "@tetherto/qvac-test-suite/mobile";
 import type { TestDefinition } from "@tetherto/qvac-test-suite";
 import {
@@ -337,7 +341,135 @@ function skipTests(testIds: string[], reason: string) {
   return new SkipExecutor(new RegExp(`^(${testIds.join("|")})$`), reason);
 }
 
+/**
+ * Mobile pre-cache hook for AWS Device Farm `EXTERNAL_DATA` uploads.
+ *
+ * Symmetry with desktop: `tests/desktop/consumer.ts#bootstrap` pins the
+ * SDK at a committed e2e fixture via
+ * `process.env["QVAC_CONFIG_PATH"] = fixtures/...`. Mobile cannot use
+ * env vars (the Expo app inherits an empty env from launchctl/Zygote),
+ * so the equivalent is: drop a `qvac.config.json` on disk at the SDK's
+ * default lookup path (`${Paths.document.uri}qvac.config.json`, see
+ * `packages/sdk/client/config-loader/resolve-config.expo.ts`).
+ *
+ * Pipeline per device (executed once before `downloadAllOnce`):
+ *   1. Look for a `cache-marker` sentinel at the platform-specific
+ *      staging path. CI drops this file into the EXTERNAL_DATA zip
+ *      precisely so we can distinguish "cache was prepared for this
+ *      run" from "cache-models was disabled" without ambient probes.
+ *   2. If absent → return false (no-op, ~one stat() call).
+ *   3. If present → mirror the staged tree into the SDK cache
+ *      (`Paths.cache/qvac-models`) and write `qvac.config.json`
+ *      whose `cacheDirectory` points there.
+ *
+ * Where Device Farm extracts EXTERNAL_DATA (FAQs + "Media in runs"):
+ *   - Android: `$EXTERNAL_STORAGE/extra_data/`, which scoped storage
+ *     hides from the app uid on API 30+. The Android test-spec
+ *     (`device-farm/test-spec-android.yml`) `adb shell cp`s the
+ *     payload to `/data/local/tmp/qvac-models/` — world-readable
+ *     (and our chosen marker location).
+ *   - iOS: directly into the app's Documents directory; no host-side
+ *     staging needed, so the marker arrives at `${Paths.document.uri}`.
+ *
+ * Any failure logs and returns false; pre-caching is an optimisation,
+ * not a hard dep, so the run still succeeds via network downloads.
+ */
+const CACHE_MARKER_PATH =
+  Platform.OS === "android"
+    ? "file:///data/local/tmp/qvac-models/cache-marker"
+    : `${Paths.document.uri}cache-marker`;
+
+const CACHE_SOURCE_DIR =
+  Platform.OS === "android"
+    ? "file:///data/local/tmp/qvac-models/"
+    : Paths.document.uri;
+
+const CACHE_DEST_DIR = new Directory(Paths.cache, "qvac-models");
+
+interface CopyStats {
+  copied: number;
+  skipped: number;
+  failed: number;
+  bytes: number;
+}
+
+async function copyDir(src: Directory, dest: Directory): Promise<CopyStats> {
+  const stats: CopyStats = { copied: 0, skipped: 0, failed: 0, bytes: 0 };
+  dest.create({ idempotent: true });
+  for (const entry of src.list()) {
+    if (entry instanceof Directory) {
+      const child = new Directory(dest, entry.name);
+      const sub = await copyDir(entry, child);
+      stats.copied += sub.copied;
+      stats.skipped += sub.skipped;
+      stats.failed += sub.failed;
+      stats.bytes += sub.bytes;
+      continue;
+    }
+    const target = new File(dest, entry.name);
+    if (target.exists) {
+      stats.skipped++;
+      continue;
+    }
+    try {
+      entry.copy(dest);
+      stats.copied++;
+      stats.bytes += entry.size ?? 0;
+    } catch (err) {
+      stats.failed++;
+      console.log(`📦 Copy failed for ${entry.name}: ${err}`);
+    }
+  }
+  return stats;
+}
+
+async function applyPreCachedModels(): Promise<boolean> {
+  try {
+    const marker = new File(CACHE_MARKER_PATH);
+    if (!marker.exists) {
+      return false;
+    }
+
+    const source = new Directory(CACHE_SOURCE_DIR);
+    if (!source.exists) {
+      console.log(`📦 Cache marker present but source missing: ${CACHE_SOURCE_DIR}`);
+      return false;
+    }
+
+    const start = Date.now();
+    const stats = await copyDir(source, CACHE_DEST_DIR);
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    const mb = Math.round(stats.bytes / (1024 * 1024));
+    console.log(
+      `📦 Pre-cache staged in ${elapsed}s: ${stats.copied} copied (${mb} MB), ${stats.skipped} already present, ${stats.failed} failed`,
+    );
+
+    if (stats.copied === 0 && stats.skipped === 0) {
+      console.log("📦 No files staged — leaving SDK cache untouched");
+      return false;
+    }
+
+    const configFile = new File(Paths.document, "qvac.config.json");
+    configFile.create({ overwrite: true });
+    configFile.write(
+      JSON.stringify({
+        cacheDirectory: CACHE_DEST_DIR.uri.replace(/^file:\/\//, ""),
+      }),
+    );
+    console.log(`📦 SDK cache directory set to ${CACHE_DEST_DIR.uri}`);
+    return true;
+  } catch (error) {
+    console.log(`📦 applyPreCachedModels failed: ${error}`);
+    return false;
+  }
+}
+
 export async function bootstrap(filteredTests?: TestDefinition[]) {
+  // Mobile counterpart of desktop's QVAC_CONFIG_PATH pin: when CI
+  // staged an EXTERNAL_DATA payload for this device, mirror it into
+  // the SDK cache so `downloadAllOnce` becomes a no-op. Cheap (one
+  // stat() call) when no cache was prepared.
+  await applyPreCachedModels();
   // `filteredTests` (when present) is the producer's post-filter test list
   // delivered via register-ack; absence keeps the legacy "warm everything" path.
   const allowedDeps = filteredTests ? collectTestDeps(filteredTests) : undefined;

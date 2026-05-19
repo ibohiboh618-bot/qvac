@@ -15,6 +15,27 @@ phases:
 
   pre_test:
     commands:
+      # When the device-farm job uploads models as an EXTERNAL_DATA package
+      # and passes the ARN to schedule-run via `--configuration
+      # extraDataPackageArn=...`, AWS extracts the zip directly into the
+      # app's sandbox (Documents directory) before the app launches.
+      # No host-side staging is required on iOS — the app reads the
+      # files from `${Paths.document.uri}` natively. We just log the
+      # extraction outcome here for diagnostics.
+      #
+      # `pymobiledevice3 apps list-files` requires the bundle id and
+      # runs without root; it fails noisily when the app container
+      # isn't yet provisioned, which is a useful early signal.
+      - |-
+        echo "Inspecting EXTERNAL_DATA staging in app sandbox..."
+        # Best-effort: missing entitlements / older iOS releases will
+        # return non-zero, which is OK — the app's bootstrap re-verifies.
+        pymobiledevice3 apps list-files \
+          --udid "$DEVICEFARM_DEVICE_UDID" \
+          --bundle-id "$DEVICEFARM_APP_BUNDLE_ID" \
+          Documents 2>&1 | head -50 \
+          || echo "(could not enumerate Documents — cache may still be present, app will verify)"
+
       - echo "Configuring WebDriverAgent for iOS..."
       - export DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH=$DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH_V9
       - 'echo "WDA Path: $DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH"'
