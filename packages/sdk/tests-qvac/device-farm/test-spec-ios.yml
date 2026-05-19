@@ -15,27 +15,6 @@ phases:
 
   pre_test:
     commands:
-      # When the device-farm job uploads models as an EXTERNAL_DATA package
-      # and passes the ARN to schedule-run via `--configuration
-      # extraDataPackageArn=...`, AWS extracts the zip directly into the
-      # app's sandbox (Documents directory) before the app launches.
-      # No host-side staging is required on iOS — the app reads the
-      # files from `${Paths.document.uri}` natively. We just log the
-      # extraction outcome here for diagnostics.
-      #
-      # `pymobiledevice3 apps list-files` requires the bundle id and
-      # runs without root; it fails noisily when the app container
-      # isn't yet provisioned, which is a useful early signal.
-      - |-
-        echo "Inspecting EXTERNAL_DATA staging in app sandbox..."
-        # Best-effort: missing entitlements / older iOS releases will
-        # return non-zero, which is OK — the app's bootstrap re-verifies.
-        pymobiledevice3 apps list-files \
-          --udid "$DEVICEFARM_DEVICE_UDID" \
-          --bundle-id "$DEVICEFARM_APP_BUNDLE_ID" \
-          Documents 2>&1 | head -50 \
-          || echo "(could not enumerate Documents — cache may still be present, app will verify)"
-
       - echo "Configuring WebDriverAgent for iOS..."
       - export DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH=$DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH_V9
       - 'echo "WDA Path: $DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH"'
@@ -121,6 +100,99 @@ phases:
         sleep 3
         LINES=$(wc -l < "$DEVICEFARM_LOG_DIR/testconsumer.log" 2>/dev/null || echo 0)
         echo "Initial syslog lines captured: $LINES"
+
+      # Push pre-cached models from the test package into the app's
+      # Documents/. Two-phase handshake with the app's
+      # `applyPreCachedModels` (mobile/consumer.ts):
+      #
+      #   1. cache-pending FIRST — early-arrival sentinel. The app's
+      #      bootstrap polls this for ~30s; absence == cache disabled,
+      #      fast-fail. Presence == "files are on the way, wait
+      #      patiently".
+      #   2. Every model file under qvac-models/ — minutes-long
+      #      transfer over USB-mux for a full 16 GiB bundle.
+      #   3. cache-marker LAST — its existence guarantees the full
+      #      payload landed; the app sees it and proceeds to mirror
+      #      Documents/ into its SDK cache.
+      #
+      # When cache-models is disabled, the build job ships a stub test
+      # package with no `qvac-models/` subdir — the whole block is a
+      # no-op and the app falls through to the SDK download path.
+      - |-
+        set -u
+        HOST_SRC="$DEVICEFARM_TEST_PACKAGE_PATH/qvac-models"
+        if [ ! -d "$HOST_SRC" ]; then
+          echo "No qvac-models/ in test package — cache-models disabled for this run."
+          exit 0
+        fi
+
+        HOST_BYTES=$(du -sb "$HOST_SRC" 2>/dev/null | awk '{print $1}')
+        HOST_FILES=$(find "$HOST_SRC" -type f 2>/dev/null | wc -l)
+        HOST_MB=$((HOST_BYTES / 1024 / 1024))
+        echo "Cache enabled: pushing $HOST_FILES files ($HOST_MB MiB) into app Documents/"
+
+        # Working dir for the two sentinels; the model files themselves
+        # come from $HOST_SRC. Keeping them out of $HOST_SRC means the
+        # marker-last ordering survives any wildcard expansion below.
+        SENTINEL_DIR=$(mktemp -d)
+        : > "$SENTINEL_DIR/cache-pending"
+        : > "$SENTINEL_DIR/cache-marker"
+
+        PUSH_START=$(date +%s)
+
+        # Phase 1: drop cache-pending immediately so the app stops the
+        # 30-second pending-poll and switches into the long marker-poll.
+        pymobiledevice3 apps push \
+          --udid "$DEVICEFARM_DEVICE_UDID" \
+          --bundle-id "$DEVICEFARM_APP_BUNDLE_ID" \
+          "$SENTINEL_DIR/cache-pending" Documents/cache-pending || {
+          echo "Failed to push cache-pending; aborting cache staging."
+          rm -rf "$SENTINEL_DIR"
+          exit 1
+        }
+        echo "cache-pending dropped — app should now be in long-poll mode."
+
+        # Phase 2: per-file pushes. pmd3 doesn't have a recursive push
+        # API, but Documents/ is flat for our use case (the SDK lays
+        # files out as `<hash>_<basename>` directly under cacheDirectory)
+        # so a simple `find` loop suffices.
+        FAILED=0
+        PUSHED=0
+        for f in $(find "$HOST_SRC" -type f); do
+          base=$(basename "$f")
+          if pymobiledevice3 apps push \
+              --udid "$DEVICEFARM_DEVICE_UDID" \
+              --bundle-id "$DEVICEFARM_APP_BUNDLE_ID" \
+              "$f" "Documents/$base"; then
+            PUSHED=$((PUSHED+1))
+          else
+            FAILED=$((FAILED+1))
+            echo "pmd3 push failed for $base (continuing)"
+          fi
+        done
+
+        PUSH_ELAPSED=$(( $(date +%s) - PUSH_START ))
+        if [ "$PUSH_ELAPSED" -gt 0 ]; then
+          MBPS=$((HOST_MB / PUSH_ELAPSED))
+        else
+          MBPS=0
+        fi
+        echo "pmd3 push summary: ${PUSHED} ok, ${FAILED} failed, ${HOST_MB} MiB in ${PUSH_ELAPSED}s (~${MBPS} MiB/s)"
+
+        # Phase 3: marker last. The app's polling loop watches for
+        # exactly this file before it starts the copy.
+        if [ "$FAILED" -eq 0 ]; then
+          pymobiledevice3 apps push \
+            --udid "$DEVICEFARM_DEVICE_UDID" \
+            --bundle-id "$DEVICEFARM_APP_BUNDLE_ID" \
+            "$SENTINEL_DIR/cache-marker" Documents/cache-marker \
+            && echo "cache-marker dropped — app should now copy and proceed." \
+            || echo "Marker push failed; app will time out polling and fall back to network."
+        else
+          echo "Skipping cache-marker because ${FAILED} files failed to push; app will fall back."
+        fi
+
+        rm -rf "$SENTINEL_DIR"
 
   test:
     commands:

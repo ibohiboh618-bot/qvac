@@ -50,21 +50,20 @@ on:
         type: string
       cache-models:
         description: |
-          Pre-cache mobile bootstrap models in AWS Device Farm via the
-          EXTERNAL_DATA upload type. When true, the build job downloads
-          every model the mobile consumer needs into a local SDK cache
-          directory, zips it with `zip -0` (store-only — models are
-          already compressed), uploads it once as an EXTERNAL_DATA
-          package, and the schedule-run for every device in the matrix
-          passes the resulting ARN via `--configuration
-          extraDataPackageArn=...`. Device Farm extracts the payload to
-          `$EXTERNAL_STORAGE/extra_data/` on the device before the app
-          starts; the Android test-spec relays it into
-          `/data/local/tmp/qvac-models/` and the app's bootstrap copies
-          it into the SDK cache directory.
-          When false, the workflow behaves exactly as before.
-          Default mirrors `test-sdk.yml` (true) so calling this
-          workflow directly via workflow_dispatch keeps caching on.
+          Pre-cache mobile bootstrap models on the Device Farm host.
+          When true, the build job downloads every model the mobile
+          consumer needs into a local SDK cache directory and ships
+          them bundled *inside* the Appium test package
+          (APPIUM_NODE_TEST_PACKAGE). Device Farm extracts that
+          package onto the test host at
+          `$DEVICEFARM_TEST_PACKAGE_PATH`, and the Android test-spec
+          `adb push`-es each model into `/data/local/tmp/qvac-models/`
+          before installing/launching the app. This replaces the
+          earlier EXTERNAL_DATA path, which AWS caps at 5 GiB — well
+          below our ~16 GiB bundle.
+          When false, only a tiny stub test package is uploaded and
+          the app falls through to network downloads at bootstrap.
+          Default mirrors `test-sdk.yml` (true).
         required: false
         type: boolean
         default: true
@@ -129,7 +128,13 @@ jobs:
     timeout-minutes: 60
     outputs:
       runId: ${{ steps.runid.outputs.runId }}
-      extra-data-arn: ${{ steps.extra-data-upload.outputs.arn }}
+      # When `cache-models=true` the build job creates the Appium test
+      # package itself (with models bundled in) and exposes the ARN
+      # here. The device-farm job uses this ARN directly and skips its
+      # own dummy-test-package upload. When false, the value is the
+      # empty string and the device-farm job falls back to the
+      # legacy "create + upload tiny stub" path.
+      test-pkg-arn: ${{ steps.test-pkg-upload.outputs.arn }}
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -371,86 +376,95 @@ jobs:
           key: qvac-mobile-models-${{ hashFiles('packages/sdk/models/registry/models.ts') }}
           enableCrossOsArchive: true
 
-      - name: Zip models for EXTERNAL_DATA upload
+      - name: Build APPIUM_NODE_TEST_PACKAGE with bundled models
         if: inputs.cache-models
         shell: bash
+        env:
+          WORKDIR: ${{ inputs.working-directory }}
         run: |
           set -euo pipefail
-          # `zip -0` (store, no compression) is mandatory: model weights are
-          # already compressed quantisations / packed binary formats, so
-          # deflate adds CPU and produces a near-identical-size archive.
-          # zip-store also halves the device-side extraction wall clock.
-          ZIP_OUT=/tmp/qvac-models-extra-data.zip
-          rm -f "$ZIP_OUT"
-          cd "$QVAC_MOBILE_CACHE_DIR"
-          # Drop a `cache-marker` sentinel into the payload. The mobile
-          # consumer's `applyPreCachedModels` keys off this file: on iOS
-          # the zip contents land in the app's Documents directory
-          # unmodified so the marker arrives in-place; on Android the
-          # test-spec replays the marker again after relaying the data
-          # to /data/local/tmp (defence-in-depth: either source proves
-          # the cache was prepared by CI, not stale from a prior run).
-          : > cache-marker
-          zip -0 -r "$ZIP_OUT" .
-          ZIP_SIZE=$(stat -c%s "$ZIP_OUT")
-          FILE_COUNT=$(find . -type f | wc -l)
-          echo "Built models zip: ${FILE_COUNT} files, ${ZIP_SIZE} bytes ($((ZIP_SIZE / 1024 / 1024)) MiB)"
-          # AWS docs (FAQs + "Media in runs") state EXTERNAL_DATA caps
-          # out at 4 GiB. The CreateUpload API ref does not document a
-          # size cap per type, so we are *not* enforcing it client-side
-          # — we want the first run to surface whichever AWS surface
-          # actually rejects (presigned PUT, get-upload SUCCEEDED/FAILED,
-          # or schedule-run). Once we see the real failure mode we can
-          # decide whether to re-add the build-time guard.
-          echo "QVAC_MOBILE_MODELS_ZIP=$ZIP_OUT" >> "$GITHUB_ENV"
+          PKG_ROOT=/tmp/qvac-test-pkg
+          ZIP_OUT=/tmp/qvac-test-pkg.zip
+          rm -rf "$PKG_ROOT" "$ZIP_OUT"
+          mkdir -p "$PKG_ROOT/qvac-models"
 
-      - name: Configure AWS credentials (for Device Farm EXTERNAL_DATA upload)
+          # Minimal Appium-Node package shape — Device Farm validates
+          # `package.json` exists; gen-junit.py is consumed by both
+          # platforms' post_test phase.
+          echo '{"name":"qvac-test-pkg","version":"1.0.0"}' > "$PKG_ROOT/package.json"
+          cp "$GITHUB_WORKSPACE/$WORKDIR/device-farm/gen-junit.py" "$PKG_ROOT/"
+
+          # Copy (not symlink — zip would follow them but archive
+          # behaviour is more predictable with real files) the model
+          # cache into qvac-models/. The test-spec reads from
+          # $DEVICEFARM_TEST_PACKAGE_PATH/qvac-models/ on the test host.
+          cp -R "$QVAC_MOBILE_CACHE_DIR/." "$PKG_ROOT/qvac-models/"
+
+          FILE_COUNT=$(find "$PKG_ROOT/qvac-models" -type f | wc -l)
+          MODELS_BYTES=$(du -sk "$PKG_ROOT/qvac-models" | awk '{print $1*1024}')
+          echo "Bundled $FILE_COUNT model files ($((MODELS_BYTES / 1024 / 1024)) MiB) into test package"
+
+          # `zip -0` (store, no compression) — model weights are already
+          # compressed/packed quantisations, deflate adds CPU and saves
+          # ~0%. Store-only also halves the test-host extraction wall.
+          (cd "$PKG_ROOT" && zip -0 -r "$ZIP_OUT" .)
+
+          ZIP_SIZE=$(stat -c%s "$ZIP_OUT")
+          echo "Built test package zip: ${ZIP_SIZE} bytes ($((ZIP_SIZE / 1024 / 1024)) MiB)"
+          # Intentionally NO client-side size guard — we want the first
+          # run to surface whichever AWS surface actually rejects (S3
+          # presigned PUT 4xx, get-upload FAILED, or schedule-run
+          # validation) so we know the real cap on
+          # APPIUM_NODE_TEST_PACKAGE rather than assuming the
+          # EXTERNAL_DATA 5 GiB cap also applies here.
+          echo "QVAC_TEST_PKG_ZIP=$ZIP_OUT" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials (for Device Farm test-package upload)
         if: inputs.cache-models
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
         with:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
           aws-region: us-west-2
 
-      - name: Upload models zip as Device Farm EXTERNAL_DATA
-        id: extra-data-upload
+      - name: Upload test package to Device Farm
+        id: test-pkg-upload
         if: inputs.cache-models
         shell: bash
         run: |
           set -euo pipefail
-          UPLOAD_NAME="qvac-models-${{ steps.runid.outputs.runId }}.zip"
+          UPLOAD_NAME="qvac-test-pkg-${{ steps.runid.outputs.runId }}.zip"
           UPLOAD_RESPONSE=$(aws devicefarm create-upload \
             --project-arn "${{ inputs.device-farm-project-arn }}" \
             --name "$UPLOAD_NAME" \
-            --type "EXTERNAL_DATA" \
+            --type "APPIUM_NODE_TEST_PACKAGE" \
             --output json)
-          EXTRA_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.url')
-          EXTRA_ARN=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.arn')
+          PKG_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.url')
+          PKG_ARN=$(echo "$UPLOAD_RESPONSE" | jq -r '.upload.arn')
 
-          # `curl -T` PUTs to the presigned URL. We intentionally do
-          # NOT cap zip size client-side — AWS docs say EXTERNAL_DATA
-          # tops out at 4 GiB, but the API ref doesn't document this
-          # per-type, so we let the first run reveal whichever surface
-          # actually rejects (PUT, get-upload, or schedule-run).
-          curl --fail-with-body -T "$QVAC_MOBILE_MODELS_ZIP" "$EXTRA_URL"
+          # `--fail-with-body` surfaces S3's <Error>...</Error> XML in
+          # the log when the presigned PUT 4xx's (e.g. EntityTooLarge),
+          # which is exactly the empirical evidence we need to know
+          # whether this upload type also caps at 5 GiB.
+          curl --fail-with-body -T "$QVAC_TEST_PKG_ZIP" "$PKG_URL"
 
-          echo "Waiting for EXTERNAL_DATA processing..."
+          echo "Waiting for APPIUM_NODE_TEST_PACKAGE processing..."
           for i in {1..60}; do
-            STATUS=$(aws devicefarm get-upload --arn "$EXTRA_ARN" --query "upload.status" --output text)
-            echo "EXTERNAL_DATA status (attempt $i/60): $STATUS"
+            STATUS=$(aws devicefarm get-upload --arn "$PKG_ARN" --query "upload.status" --output text)
+            echo "Test package status (attempt $i/60): $STATUS"
             if [ "$STATUS" = "SUCCEEDED" ]; then
-              echo "EXTERNAL_DATA upload processed"
+              echo "Test package upload processed"
               break
             fi
             if [ "$STATUS" = "FAILED" ]; then
-              echo "EXTERNAL_DATA upload failed; full response:"
-              aws devicefarm get-upload --arn "$EXTRA_ARN"
+              echo "Test package upload failed; full response:"
+              aws devicefarm get-upload --arn "$PKG_ARN"
               exit 1
             fi
             sleep 10
           done
 
-          echo "arn=$EXTRA_ARN" >> "$GITHUB_OUTPUT"
-          echo "EXTERNAL_DATA ARN: $EXTRA_ARN"
+          echo "arn=$PKG_ARN" >> "$GITHUB_OUTPUT"
+          echo "APPIUM_NODE_TEST_PACKAGE ARN: $PKG_ARN"
 
       # --- End model pre-caching --------------------------------------------
 
@@ -549,8 +563,15 @@ jobs:
             sleep 10
           done
 
+      # Fallback only: when `cache-models=false` the build job did NOT
+      # upload a test package, so we create a tiny stub one here.
+      # When `cache-models=true` we instead reuse the build job's
+      # `test-pkg-arn` (same package shape + bundled models) and skip
+      # this step entirely — see the
+      # `if: needs.build.outputs.test-pkg-arn == ''` gate.
       - name: Create and upload dummy test package
         id: upload-test-pkg
+        if: needs.build.outputs.test-pkg-arn == ''
         run: |
           mkdir -p /tmp/dummy-test-pkg
           echo '{"name":"qvac-test-stub","version":"1.0.0"}' > /tmp/dummy-test-pkg/package.json
@@ -624,22 +645,22 @@ jobs:
       - name: Schedule Device Farm run
         id: schedule
         env:
-          EXTRA_DATA_ARN: ${{ needs.build.outputs.extra-data-arn }}
+          # When the build job uploaded a models-bundled test package
+          # we use its ARN; otherwise fall back to the dummy one this
+          # job created above.
+          BUILD_PKG_ARN: ${{ needs.build.outputs.test-pkg-arn }}
+          DUMMY_PKG_ARN: ${{ steps.upload-test-pkg.outputs.pkg-arn }}
         run: |
           echo "Scheduling Device Farm run on ${{ matrix.device.name }}..."
 
           RUN_NAME="mobile-${{ matrix.device.name }}-${{ github.run_number }}-${{ github.run_attempt }}"
 
-          # `--configuration extraDataPackageArn=...` is the AWS-supported
-          # mechanism for staging extra data on the device pre-launch.
-          # Only set it when the build job actually uploaded a payload —
-          # `schedule-run` rejects an empty / malformed ARN with a
-          # ValidationException, which would also fail a cache-disabled
-          # run if we passed the flag unconditionally.
-          CONFIG_ARGS=()
-          if [ -n "$EXTRA_DATA_ARN" ]; then
-            echo "Attaching EXTERNAL_DATA: $EXTRA_DATA_ARN"
-            CONFIG_ARGS=(--configuration "extraDataPackageArn=$EXTRA_DATA_ARN")
+          if [ -n "$BUILD_PKG_ARN" ]; then
+            TEST_PKG_ARN="$BUILD_PKG_ARN"
+            echo "Using build job's bundled-models test package: $TEST_PKG_ARN"
+          else
+            TEST_PKG_ARN="$DUMMY_PKG_ARN"
+            echo "Using device-farm job's stub test package: $TEST_PKG_ARN"
           fi
 
           RUN_ARN=$(aws devicefarm schedule-run \
@@ -647,9 +668,8 @@ jobs:
             --device-pool-arn "${{ matrix.device.arn }}" \
             --app-arn "${{ steps.upload-app.outputs.app-arn }}" \
             --name "$RUN_NAME" \
-            --test type=APPIUM_NODE,testPackageArn=${{ steps.upload-test-pkg.outputs.pkg-arn }},testSpecArn=${{ steps.upload-spec.outputs.spec-arn }} \
+            --test "type=APPIUM_NODE,testPackageArn=$TEST_PKG_ARN,testSpecArn=${{ steps.upload-spec.outputs.spec-arn }}" \
             --execution-configuration jobTimeoutMinutes=${{ inputs.device-farm-timeout }} \
-            "${CONFIG_ARGS[@]}" \
             --query 'run.arn' --output text)
 
           echo "run-arn=$RUN_ARN" >> $GITHUB_OUTPUT

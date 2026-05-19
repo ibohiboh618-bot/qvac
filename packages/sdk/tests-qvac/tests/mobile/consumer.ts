@@ -354,22 +354,28 @@ function skipTests(testIds: string[], reason: string) {
  *
  * Pipeline per device (executed once before `downloadAllOnce`):
  *   1. Look for a `cache-marker` sentinel at the platform-specific
- *      staging path. CI drops this file into the EXTERNAL_DATA zip
- *      precisely so we can distinguish "cache was prepared for this
- *      run" from "cache-models was disabled" without ambient probes.
- *   2. If absent → return false (no-op, ~one stat() call).
+ *      staging path. The CI test-spec drops this file last so its
+ *      presence guarantees every model already landed at the staging
+ *      path.
+ *   2. If absent → return false (no-op, ~one stat() call on Android;
+ *      a long-poll on iOS — see `waitForCacheMarker` for why).
  *   3. If present → mirror the staged tree into the SDK cache
  *      (`Paths.cache/qvac-models`) and write `qvac.config.json`
  *      whose `cacheDirectory` points there.
  *
- * Where Device Farm extracts EXTERNAL_DATA (FAQs + "Media in runs"):
- *   - Android: `$EXTERNAL_STORAGE/extra_data/`, which scoped storage
- *     hides from the app uid on API 30+. The Android test-spec
- *     (`device-farm/test-spec-android.yml`) `adb shell cp`s the
- *     payload to `/data/local/tmp/qvac-models/` — world-readable
- *     (and our chosen marker location).
- *   - iOS: directly into the app's Documents directory; no host-side
- *     staging needed, so the marker arrives at `${Paths.document.uri}`.
+ * Where the models come from (depending on which CI upload type the
+ * build job chose — EXTERNAL_DATA capped out at 5 GiB so we now ship
+ * them inside `APPIUM_NODE_TEST_PACKAGE`, which Device Farm extracts
+ * onto the *test host*, not the device):
+ *   - Android: the test-spec `adb push`-es the unpacked
+ *     `$DEVICEFARM_TEST_PACKAGE_PATH/qvac-models/` tree to
+ *     `/data/local/tmp/qvac-models/` (world-readable; scoped storage
+ *     hides app-private dirs from `adb shell` on API 30+).
+ *   - iOS: the test-spec `pymobiledevice3 apps push`-es the same
+ *     directory into the app's `Documents/`. Push happens *after*
+ *     Appium launches the app (the sandbox must exist first), so the
+ *     in-app polling above covers the wall-clock of pushing ~16 GiB
+ *     over USB-mux.
  *
  * Any failure logs and returns false; pre-caching is an optimisation,
  * not a hard dep, so the run still succeeds via network downloads.
@@ -378,6 +384,17 @@ const CACHE_MARKER_PATH =
   Platform.OS === "android"
     ? "file:///data/local/tmp/qvac-models/cache-marker"
     : `${Paths.document.uri}cache-marker`;
+
+// `cache-pending` is the early-arrival sentinel used only on iOS to
+// disambiguate "no cache prepared for this run" (absent → fast-fail
+// after ~30s) from "cache pushes still in progress" (present → wait
+// up to ~30 min for `cache-marker`). The test-spec drops it as the
+// very first pmd3 push, before the per-file model pushes start, so an
+// Appium-launched app sees it within a few seconds of bootstrap. We
+// don't use it on Android because the test-spec there finishes
+// staging *before* installing/launching the app — no race.
+const CACHE_PENDING_PATH =
+  Platform.OS === "android" ? null : `${Paths.document.uri}cache-pending`;
 
 const CACHE_SOURCE_DIR =
   Platform.OS === "android"
@@ -423,11 +440,52 @@ async function copyDir(src: Directory, dest: Directory): Promise<CopyStats> {
   return stats;
 }
 
+/**
+ * Wait up to `timeoutMs` for `path` to exist, polling every `pollMs`.
+ * Heartbeat every 60s so a long wait shows up in the device log.
+ */
+async function waitForFile(path: string, timeoutMs: number, pollMs: number, label: string): Promise<boolean> {
+  const file = new File(path);
+  if (file.exists) return true;
+  if (timeoutMs <= 0) return false;
+  const start = Date.now();
+  let last = start;
+  while (Date.now() - start < timeoutMs) {
+    if (file.exists) return true;
+    const now = Date.now();
+    if (now - last >= 60_000) {
+      const waited = Math.round((now - start) / 1000);
+      console.log(`📦 Waiting for ${label} (${waited}s elapsed)...`);
+      last = now;
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return false;
+}
+
 async function applyPreCachedModels(): Promise<boolean> {
   try {
-    const marker = new File(CACHE_MARKER_PATH);
-    if (!marker.exists) {
-      return false;
+    // Two-phase wait on iOS only (see CACHE_PENDING_PATH comment for
+    // why). Android stages everything before app launch — single
+    // `stat()` is sufficient and adds no latency on cache-disabled runs.
+    if (CACHE_PENDING_PATH) {
+      const hasPending = await waitForFile(CACHE_PENDING_PATH, 30_000, 1_000, "cache-pending sentinel");
+      if (!hasPending) {
+        return false;
+      }
+      console.log("📦 cache-pending observed — waiting for full cache to be staged...");
+      // 30-min cap chosen empirically: a fully cold-cache 16 GiB push
+      // over USB-mux on a Device Farm iPhone runs ~20-25 min in p99.
+      const hasMarker = await waitForFile(CACHE_MARKER_PATH, 30 * 60_000, 5_000, "cache-marker");
+      if (!hasMarker) {
+        console.log("📦 cache-marker did not arrive in time; falling through to SDK downloads");
+        return false;
+      }
+    } else {
+      const marker = new File(CACHE_MARKER_PATH);
+      if (!marker.exists) {
+        return false;
+      }
     }
 
     const source = new Directory(CACHE_SOURCE_DIR);
@@ -466,9 +524,10 @@ async function applyPreCachedModels(): Promise<boolean> {
 
 export async function bootstrap(filteredTests?: TestDefinition[]) {
   // Mobile counterpart of desktop's QVAC_CONFIG_PATH pin: when CI
-  // staged an EXTERNAL_DATA payload for this device, mirror it into
-  // the SDK cache so `downloadAllOnce` becomes a no-op. Cheap (one
-  // stat() call) when no cache was prepared.
+  // staged a model payload for this device (via APPIUM_NODE_TEST_PACKAGE
+  // + an in-test-spec push), mirror it into the SDK cache so
+  // `downloadAllOnce` becomes a no-op. On cache-disabled runs the
+  // marker is absent within one ~5s poll and we fall through cheaply.
   await applyPreCachedModels();
   // `filteredTests` (when present) is the producer's post-filter test list
   // delivered via register-ack; absence keeps the legacy "warm everything" path.
