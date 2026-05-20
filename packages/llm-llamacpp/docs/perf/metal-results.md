@@ -88,14 +88,17 @@ Key implementation details:
 | Mac M4 | Qwen3.5 vision_ms (all 4 configs) | ±0.0% | not significant (all p > 0.05) |
 | Mac M4 | Qwen3.5 prefill_tps (all 4 configs) | ±0.0% | not significant (all p > 0.05) |
 | Mac M4 | Peak RSS | ±0.0% | — |
-| iPhone 16e | Qwen3.5 projection | **-94%** | 183 ms → 11 ms |
-| iPhone 16e | Qwen3.5 total time | **-17%** | — |
+| iPhone 16e | Qwen3.5 vision_ms (all 3 configs) | ±0.0% | not significant (all p > 0.05) |
+| iPhone 16e | Qwen3.5 decode_tps (all 3 configs) | ±0.0% | not significant (all p > 0.05) |
+| iPhone 16e | RSS | ±0.0% | — |
 
-On Mac M4, the deepstack preallocation has **no measurable effect** on any
-Qwen3.5 metric. This is consistent with Section 1.1: the projection phase
-completes in ~2 ms on Mac M4 (12.7 GB working set), so eliminating the
-O(N^2) reallocation saves negligible time. The optimization targets iPhone
-16e, where the same projection takes 183 ms under Jetsam pressure.
+The deepstack preallocation has **no measurable effect** on any Qwen3.5
+metric on either platform. On Mac M4 (16 GB, ~120 GB/s), the projection
+phase completes in ~2 ms — the O(N^2) reallocation is negligible. On
+iPhone 16e (8 GB, ~60 GB/s), the interleaved A/B test shows identical
+vision_ms for fiber and U1, indicating the 183 ms projection anomaly
+reported in earlier non-interleaved testing was not reproducible under
+controlled conditions.
 
 #### Mac M4 Interleaved A/B (Metal, elephant.jpg, 5 paired reps)
 
@@ -117,6 +120,24 @@ Anchor drift: 4.1% (above 3% threshold). Per-config pairing still controls
 for gradual drift within each model's measurements, but session had marginal
 thermal instability.
 
+#### iPhone 16e Interleaved A/B (Metal, elephant.jpg, 5 paired reps)
+
+Protocol: per-config interleaved A/B (`benchmark-mac-interleaved.sh`,
+`PLATFORM=ios`). 1 warmup + 5 measured runs per variant per config,
+60s cool-down + in-device `ProcessInfo.thermalState` gate before each run,
+paired Wilcoxon signed-rank test + bootstrap 95% CI. Session: 2026-05-20.
+
+| Model | Quant | Vision (ms) | Δ% | p | Prefill (t/s) | Δ% | p | Decode (t/s) | Δ% | p | RSS (MB) |
+|-------|-------|------------:|----:|----:|--------------:|----:|----:|-------------:|----:|----:|--------:|
+| Qwen3.5-2B | Q4_K_M | 784 / 784 | 0.0% | 0.63 | 133.6 / 133.5 | -0.1% | 0.63 | 8.1 / 8.1 | +0.5% | 0.63 | 853 / 853 |
+| Qwen3.5-2B | Q8_0 | 785 / 785 | 0.0% | 1.00 | 137.2 / 137.2 | +0.0% | 1.00 | 7.3 / 7.3 | +0.0% | 0.44 | 853 / 846 |
+| Qwen3.5-4B | Q4_K_M | 788 / 787 | +0.1% | 0.81 | 71.7 / 71.6 | -0.1% | 0.44 | 4.0 / 4.0 | -0.2% | 0.88 | 805 / 794 |
+
+Cell format: fiber / u1. Positive Δ% = improvement. No metric reaches p < 0.05.
+Qwen3.5-4B Q8_0 excluded — OOM on 8 GB device.
+
+Anchor drift: 0.8% (within 3% threshold — session thermally stable).
+
 #### Prior Cross-Session Comparison (Superseded)
 
 An earlier comparison (fiber May 13 vs U1 May 20) reported +10–21% vision_ms
@@ -128,12 +149,15 @@ now the source of truth for Mac M4.
 
 #### iPhone 16e
 
-The 183 ms iPhone 16e projection value was measured on the fiber fork. On
-upstream llama.cpp, iPhone projection was already 9 ms — the anomaly was
-fiber-specific (likely related to different memory allocation patterns in
-the fork's modified graph). The preallocation fix still applies because the
-chained-concat pattern would regress with more deepstack layers on any
-platform.
+The 183 ms projection value reported in earlier non-interleaved testing was
+**not reproducible** under the controlled interleaved A/B protocol. All three
+Qwen3.5 configs show identical vision_ms between fiber and U1 (784–788 ms),
+with no metric reaching p < 0.05. The anomaly was likely a thermal or
+measurement artifact from the non-interleaved test setup.
+
+The preallocation is still the correct implementation — the chained-concat
+pattern has O(N^2) complexity that would regress with more deepstack layers
+on any platform.
 
 ### 1.5 Verification
 
@@ -159,6 +183,8 @@ Metal backend, elephant.jpg.
 - **Protocol**: per-config interleaved A/B, 5 paired reps, thermal gate,
   Wilcoxon signed-rank test (2026-05-20 session)
 
+**Mac M4** (16 GB, interleaved A/B, 5 paired reps, 2026-05-20)
+
 | Model | Quant | Vision (ms) | p | Prefill (t/s) | p | Decode (t/s) | p | Peak RSS (MB) |
 |-------|-------|------------:|----:|--------------:|----:|-------------:|----:|--------:|
 | Qwen3.5-2B | Q4_K_M | 431 / 431 | 0.25 | 297.9 / 297.8 | 0.19 | 38.5 / 38.5 | 0.63 | 946 / 946 |
@@ -166,25 +192,35 @@ Metal backend, elephant.jpg.
 | Qwen3.5-4B | Q4_K_M | 524 / 528 | 0.31 | 151.8 / 150.9 | 0.13 | 19.0 / 18.6 | 0.06 | 1,072 / 1,071 |
 | Qwen3.5-4B | Q8_0 | 530 / 538 | 0.81 | 143.7 / 142.0 | 1.00 | 14.7 / 14.9 | 0.81 | 1,072 / 1,072 |
 
-Cell format: fiber / u1 (median of 5 paired reps). No metric reaches p < 0.05.
+**iPhone 16e** (8 GB, interleaved A/B, 5 paired reps, 2026-05-20)
 
-**Mac M4**: No measurable effect. The deepstack reallocation overhead is
-negligible on Mac M4's 16 GB unified memory with ~120 GB/s bandwidth.
+| Model | Quant | Vision (ms) | p | Prefill (t/s) | p | Decode (t/s) | p | RSS (MB) |
+|-------|-------|------------:|----:|--------------:|----:|-------------:|----:|--------:|
+| Qwen3.5-2B | Q4_K_M | 784 / 784 | 0.63 | 133.6 / 133.5 | 0.63 | 8.1 / 8.1 | 0.63 | 853 / 853 |
+| Qwen3.5-2B | Q8_0 | 785 / 785 | 1.00 | 137.2 / 137.2 | 1.00 | 7.3 / 7.3 | 0.44 | 853 / 846 |
+| Qwen3.5-4B | Q4_K_M | 788 / 787 | 0.81 | 71.7 / 71.6 | 0.44 | 4.0 / 4.0 | 0.88 | 805 / 794 |
 
-**iPhone 16e**: Projection latency reduced from 183 ms to 11 ms (−94%).
-This is the target platform where the O(N^2) reallocation dominates under
-Jetsam memory pressure on 8 GB devices. iPhone interleaved A/B testing will
-follow.
+Cell format: fiber / u1 (median of 5 paired reps). No metric reaches p < 0.05
+on either platform.
+
+**Conclusion**: The deepstack preallocation has no measurable performance
+effect on either Mac M4 or iPhone 16e. The O(N^2) reallocation overhead is
+negligible at the current deepstack layer count on both platforms. The
+optimization is still the correct implementation for algorithmic correctness.
 
 ---
 
 ## 3. Methodology
 
-### Device and Build
+### Devices and Builds
 
-- **Device**: Mac M4, macOS 26.4.1, 16 GB unified memory
-- **Build**: `cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON`, AppleClang 17.0.0, Darwin arm64
-- **Build hygiene**: `cmake --build ... --target llama-mtmd-cli -j --clean-first` mandatory when switching branches (prevents embedded Metal shader blob contamination from stale incremental builds)
+- **Mac M4**: macOS 26.4.1, 16 GB unified memory, ~120 GB/s bandwidth
+  - Build: `cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON`, AppleClang 17.0.0, Darwin arm64
+  - Build hygiene: `cmake --build ... --target llama-mtmd-cli -j --clean-first` mandatory when switching branches (prevents embedded Metal shader blob contamination from stale incremental builds)
+- **iPhone 16e**: A18, 5-core GPU, 8 GB RAM, iOS 18.5, ~60 GB/s bandwidth
+  - Build: cmake iOS cross-compile → Xcode build-for-testing → XCTest harness
+  - `llama-mtmd-cli` compiled as static library (`-Dmain=benchmark_main`), linked into XCTest via extern "C" wrapper
+  - Qwen3.5-4B Q8_0 excluded (OOM on 8 GB device)
 
 ### Inference Parameters
 
@@ -193,20 +229,23 @@ follow.
 
 ### Protocol — Interleaved A/B
 
-Mac M4 results in this document use per-config interleaved A/B benchmarking
+All results in this document use per-config interleaved A/B benchmarking
 (`benchmark-mac-interleaved.sh`):
 
-- **Both binaries built clean** from their respective branches before the session
+- **Both variants built clean** from their respective branches before the session
 - **Per-config interleaving**: for each model, warmup-A → warmup-B → then
   5 paired reps (A-run1 → B-run1 → A-run2 → B-run2 → ...)
-- **Thermal gate**: `powermetrics` polls for CPU thermal level 0 (Nominal)
-  before every measured run — replaces fixed-time cooldowns
+- **Thermal gate**:
+  - Mac: `powermetrics` polls for CPU thermal level 0 (Nominal) before every run
+  - iOS: 60s inter-run cool-down + in-device `ProcessInfo.thermalState` gate
+    (rejects runs at thermalState > nominal)
 - **Anchor drift detection**: Gemma4-E2B Q4KM run at session start, midpoint,
   and end — flags session if decode_tps drift exceeds 3%
 - **Statistics**: Wilcoxon signed-rank test on per-rep paired deltas + bootstrap
   95% CI (10,000 iterations). Only cite deltas where p < 0.05.
 - **Images**: elephant.jpg (612 x 408, 265 vision tokens for Qwen3.5)
-- **RSS measurement**: every invocation wrapped with `/usr/bin/time -l`
+- **RSS measurement**: Mac = `/usr/bin/time -l`; iOS = `mach_task_basic_info`
+  (in-process, reported as `BENCH: RSS[...]`)
 
 This protocol was adopted after an earlier cross-session comparison (fiber
 May 13 vs U1 May 20) produced 15–47% deltas that were entirely attributable
