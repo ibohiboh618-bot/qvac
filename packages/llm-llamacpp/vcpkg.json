@@ -19,6 +19,7 @@
       "version>=": "1.4.4#3"
     }
   ],
+  "default-features": ["kleidiai"],
   "features": {
     "tests": {
       "description": "Build tests",
@@ -31,7 +32,7 @@
       "dependencies": [
         {
           "name": "qvac-fabric",
-          "version>=": "8189.0.2",
+          "version>=": "8828.0.1",
           "features": [
             "force-profiler"
           ]
@@ -43,11 +44,11 @@
       "dependencies": [
         {
           "name": "qvac-fabric",
-          "version>=": "8189.0.2",
+          "version>=": "8828.0.1",
           "features": [
             "kleidiai"
           ],
-          "platform": "android"
+          "platform": "android & arm64"
         }
       ]
     }
