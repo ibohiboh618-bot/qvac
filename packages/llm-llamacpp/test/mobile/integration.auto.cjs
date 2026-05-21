@@ -16,6 +16,11 @@ async function runApiBehaviorTest (options = {}) { // eslint-disable-line no-unu
   return runIntegrationModule('../integration/api-behavior.test.js', options)
 }
 
+async function runBenchmarkTest (options = {}) { // eslint-disable-line no-unused-vars
+  if (typeof __shouldRunTest === 'function' && !__shouldRunTest('runBenchmarkTest')) return __FILTERED
+  return runIntegrationModule('../integration/benchmark.test.js', options)
+}
+
 async function runBitnetTest (options = {}) { // eslint-disable-line no-unused-vars
   if (typeof __shouldRunTest === 'function' && !__shouldRunTest('runBitnetTest')) return __FILTERED
   return runIntegrationModule('../integration/bitnet.test.js', options)

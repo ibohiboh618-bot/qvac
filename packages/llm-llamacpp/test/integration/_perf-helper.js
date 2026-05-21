@@ -313,6 +313,7 @@ function recordPerformance (label, totalTime, extra) {
   }, {
     scenario: (extra && extra.scenario) || 'default',
     model: (extra && extra.model) || null,
+    variant: (extra && extra.variant) || null,
     execution_provider: effectiveDevice,
     output: (extra && extra._output) || null
   })

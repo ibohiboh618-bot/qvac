@@ -460,6 +460,7 @@ function createPerformanceReporter (opts) {
         // still produce valid rows.
         model: (extra && extra.model) || null,
         execution_provider: (extra && extra.execution_provider) || null,
+        variant: (extra && extra.variant) || null,
         metrics: {
           total_time_ms: null,
           detection_time_ms: null,
