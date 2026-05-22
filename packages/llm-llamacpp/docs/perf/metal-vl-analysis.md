@@ -928,7 +928,7 @@ U1 is identical to b9025 on Mac M4 (expected — iPhone-specific fix).
 ### H.4 Code References
 
 - Upstream llama.cpp: `tools/mtmd/` (clip.cpp, clip-impl.h, mtmd.cpp, mtmd-helper.cpp)
-- Addon integration: `packages/qvac-lib-infer-llamacpp-llm/addon/src/model-interface/MtmdLlmContext.cpp`
+- Addon integration: `packages/llm-llamacpp/addon/src/model-interface/MtmdLlmContext.cpp`
 - llama.cpp version: b9025
 - Reproducibility: Run-2 validation shows ±2% variance
 
