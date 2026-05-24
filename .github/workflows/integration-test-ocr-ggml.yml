@@ -165,3 +165,12 @@ jobs:
           OCR_GGML_RECOGNIZER: models/latin_g2.gguf
           OCR_GGML_DOCTR_DETECTOR: models/db_mobilenet_v3_large.gguf
           OCR_GGML_DOCTR_RECOGNIZER: models/crnn_mobilenet_v3_small.gguf
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
+        with:
+          name: perf-report-ocr-${{ matrix.os }}-${{ matrix.arch }}-${{ github.run_number }}
+          path: ${{ inputs.workdir || env.PKG_DIR }}/test/results/performance-report.json
+          retention-days: 90
+          if-no-files-found: ignore

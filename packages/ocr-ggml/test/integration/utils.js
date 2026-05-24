@@ -284,6 +284,16 @@ const platform = os.platform()
 const isMobile = platform === 'ios' || platform === 'android'
 const isWindows = platform === 'win32'
 
+function _envInt (key, fallback) {
+  let raw = ''
+  if (typeof os.getEnv === 'function') raw = os.getEnv(key) || ''
+  if (!raw && process.env) raw = process.env[key] || ''
+  const v = parseInt(raw, 10)
+  return Number.isFinite(v) && v > 0 ? v : fallback
+}
+
+const PERF_RUNS = _envInt('QVAC_PERF_RUNS', 1)
+
 // Singleton performance reporter — collects metrics across all OCR integration tests
 const _perfReporter = createPerformanceReporter({
   addon: 'ocr-ggml',
@@ -672,6 +682,7 @@ module.exports = {
   isMobile,
   isWindows,
   platform,
+  PERF_RUNS,
   getImagePath,
   ensureModelPath,
   ensureDoctrModels,

@@ -1,7 +1,7 @@
 'use strict'
 
 const test = require('brittle')
-const { getImagePath, formatOCRPerformanceMetrics, runDoctrOCR, ensureDoctrModels } = require('./utils')
+const { getImagePath, formatOCRPerformanceMetrics, runDoctrOCR, ensureDoctrModels, PERF_RUNS } = require('./utils')
 
 const DOCTR_TEST_TIMEOUT = 180 * 1000
 
@@ -21,8 +21,6 @@ test('DocTR clinical chemistry - download models', { timeout: DOCTR_TEST_TIMEOUT
   t.ok(DB_MOBILENET, 'db_mobilenet model available')
   t.ok(CRNN_MOBILENET, 'crnn_mobilenet model available')
 })
-
-const PERF_RUNS = 3
 
 const EXPECTED_WORDS = [
   'clinical', 'chemistry', 'alkaline', 'phosphatase',

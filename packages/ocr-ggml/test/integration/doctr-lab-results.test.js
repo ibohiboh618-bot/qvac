@@ -1,7 +1,7 @@
 'use strict'
 
 const test = require('brittle')
-const { getImagePath, formatOCRPerformanceMetrics, runDoctrOCR, ensureDoctrModels } = require('./utils')
+const { getImagePath, formatOCRPerformanceMetrics, runDoctrOCR, ensureDoctrModels, PERF_RUNS } = require('./utils')
 
 const DOCTR_TEST_TIMEOUT = 180 * 1000
 
@@ -28,8 +28,6 @@ const EXPECTED_WORDS = [
   'biochemistry', 'department', 'arterial', 'gases',
   'oxygen', 'electrolyte', 'metabolite', 'oximetry'
 ]
-
-const PERF_RUNS = 3
 
 function runLabResultsTest (ep, run) {
   const tag = ep.toUpperCase()

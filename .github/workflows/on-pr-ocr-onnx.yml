@@ -190,6 +190,34 @@ jobs:
       repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
       ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
+  combine-perf-reports:
+    name: Combined Performance Report
+    needs: [authorize, run-integration-tests, run-mobile-integration-tests]
+    if: always() && needs.authorize.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repo (composites + perf scripts)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          sparse-checkout: |
+            .github/actions/run-mobile-integration-tests
+            scripts/perf-report
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+        with:
+          node-version: lts/*
+
+      - name: Combine performance reports
+        uses: ./.github/actions/run-mobile-integration-tests/combine-perf-reports
+        with:
+          artifact-pattern: perf-report-ocr-*-${{ github.run_number }}
+          report-title: 'OCR-GGML Performance Report (All Platforms)'
+
   merge-guard:
     needs: [authorize, sanity-checks, prebuild, run-integration-tests, run-mobile-integration-tests, label-gate]
     if: always() && needs.label-gate.outputs.authorised == 'true'
