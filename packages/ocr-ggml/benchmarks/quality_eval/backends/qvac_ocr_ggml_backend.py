@@ -154,11 +154,13 @@ class QVACOCRGgmlBackend(OCRBackend):
         finally:
             try:
                 os.unlink(input_file)
-            except Exception:
+            except FileNotFoundError:
+                # Temporary input file may already be removed; ignore cleanup race.
                 pass
             try:
                 os.unlink(output_file)
-            except Exception:
+            except FileNotFoundError:
+                # Temporary output file may not exist if batch execution failed early.
                 pass
 
     def run_ocr(self, image_path: str) -> OCRResult:
