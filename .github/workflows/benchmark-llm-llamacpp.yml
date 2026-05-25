@@ -11,68 +11,71 @@ name: Benchmark VLM (LLM)
 on:
   workflow_dispatch:
     inputs:
+      # ── Sources (what to compare) ─────────────────────────────
+      run_addon:
+        description: "── SOURCE 1 ── addon (@qvac/llm-llamacpp JS binding)"
+        required: false
+        type: boolean
+        default: true
       ref:
-        description: "Addon ref — qvac branch / tag / SHA (default: current branch)"
+        description: "  addon ref — qvac branch / tag / SHA (default: current branch)"
         required: false
         type: string
+      run_fabric_cli:
+        description: "── SOURCE 2 ── fabric (qvac fork, native CLI)"
+        required: false
+        type: boolean
+        default: true
+      fabric_ref:
+        description: "  fabric ref (default: v8189.0.2)"
+        required: false
+        type: string
+        default: "v8189.0.2"
+      run_upstream_cli:
+        description: "── SOURCE 3 ── upstream (vanilla llama.cpp, native CLI)"
+        required: false
+        type: boolean
+        default: true
+      upstream_ref:
+        description: "  upstream ref (default: b8189)"
+        required: false
+        type: string
+        default: "b8189"
+      # ── Platforms ─────────────────────────────────────────────
+      run_linux:
+        description: "── PLATFORM ── Linux (ubuntu-latest, CPU)"
+        required: false
+        type: boolean
+        default: true
+      run_windows:
+        description: "── PLATFORM ── Windows (windows-latest, CPU)"
+        required: false
+        type: boolean
+        default: false
+      run_android:
+        description: "── PLATFORM ── Android (stub)"
+        required: false
+        type: boolean
+        default: false
+      # ── Run settings ──────────────────────────────────────────
       warmup_runs:
-        description: "Warmup iterations per cell (discarded)"
+        description: "Warmup iterations (discarded)"
         required: false
         type: string
         default: "1"
       measured_runs:
-        description: "Measured iterations per cell (median reported)"
+        description: "Measured iterations (median reported)"
         required: false
         type: string
         default: "3"
       thinking:
-        description: "Qwen3.5 reasoning mode (off = faster, on = full <think> trace)"
+        description: "Qwen3.5 reasoning mode"
         required: false
         type: choice
         default: "off"
         options:
           - "off"
           - "on"
-      run_windows:
-        description: "Run on Windows (windows-latest, CPU)"
-        required: false
-        type: boolean
-        default: true
-      run_linux:
-        description: "Run on Linux (ubuntu-latest, CPU)"
-        required: false
-        type: boolean
-        default: true
-      run_android:
-        description: "Run on Android (stub - real wiring planned)"
-        required: false
-        type: boolean
-        default: false
-      run_addon:
-        description: "Bench addon (@qvac/llm-llamacpp JS binding)"
-        required: false
-        type: boolean
-        default: true
-      run_fabric_cli:
-        description: "Bench fabric (qvac fork of llama.cpp, native CLI)"
-        required: false
-        type: boolean
-        default: true
-      run_upstream_cli:
-        description: "Bench upstream (vanilla llama.cpp, native CLI)"
-        required: false
-        type: boolean
-        default: true
-      fabric_ref:
-        description: "Fabric ref (tag/SHA)"
-        required: false
-        type: string
-        default: "v8189.0.2"
-      upstream_ref:
-        description: "Upstream llama.cpp ref (tag/SHA)"
-        required: false
-        type: string
-        default: "b8189"
 
 permissions:
   contents: read
