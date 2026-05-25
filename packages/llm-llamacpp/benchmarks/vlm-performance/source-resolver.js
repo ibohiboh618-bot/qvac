@@ -22,10 +22,16 @@ function loadCliResolved () {
 }
 
 function resolveAddonSource (key) {
+  let version = 'npm'
+  const pkgPath = path.join(SCRIPT_DIR, 'node_modules', '@qvac', 'llm-llamacpp', 'package.json')
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    if (pkg.version) version = pkg.version
+  } catch {}
   return {
     key,
     type: 'addon',
-    label: 'addon@npm',
+    label: `addon@${version}`,
     addonPath: null
   }
 }

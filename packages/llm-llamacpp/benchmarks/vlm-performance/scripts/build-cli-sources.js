@@ -98,7 +98,7 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
     const provenance = fs.existsSync(provenancePath)
       ? JSON.parse(fs.readFileSync(provenancePath, 'utf8'))
       : null
-    return { binaryPath, commitSha: remoteSha, ref: sourceConfig.ref, label: sourceConfig.label, provenance }
+    return { binaryPath, commitSha: remoteSha, ref: sourceConfig.ref, label: `${sourceConfig.label}@${sourceConfig.ref}`, provenance }
   }
 
   const tmpDir = path.join(os.tmpdir(), `vlm-bench-build-${sourceKey}-${Date.now()}`)
@@ -163,7 +163,7 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
     fs.writeFileSync(provenancePath, JSON.stringify(provenance, null, 2))
 
     log(`installed: ${binaryPath} (${provenance.binarySizeMb} MB)`)
-    return { binaryPath, commitSha: localSha, ref: sourceConfig.ref, label: sourceConfig.label, provenance }
+    return { binaryPath, commitSha: localSha, ref: sourceConfig.ref, label: `${sourceConfig.label}@${sourceConfig.ref}`, provenance }
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
   }
