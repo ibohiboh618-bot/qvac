@@ -21,6 +21,11 @@ on:
         description: "  addon ref — qvac branch / tag / SHA (default: current branch)"
         required: false
         type: string
+      addon_from_source:
+        description: "  build addon from source (slow, but uses latest fabric)"
+        required: false
+        type: boolean
+        default: false
       run_fabric_cli:
         description: "── SOURCE 2 ── fabric (qvac fork, native CLI)"
         required: false
@@ -188,12 +193,45 @@ jobs:
           # but not in <sha>".
           fetch-depth: 0
 
+      - name: Setup Node.js and Bare tooling
+        if: inputs.addon_from_source
+        uses: ./.github/actions/setup-bare-tooling
+
       - name: Setup Node.js
+        if: ${{ !inputs.addon_from_source }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # 4.4.0
         with:
           node-version: lts/*
 
-      - name: Install benchmark deps
+      - name: Setup LLVM
+        if: inputs.addon_from_source
+        uses: ./.github/actions/setup-llvm
+
+      - name: Setup vcpkg
+        if: inputs.addon_from_source
+        uses: ./.github/actions/setup-vcpkg
+        with:
+          platform: ${{ runner.os == 'Linux' && 'linux' || 'win32' }}
+          arch: x64
+
+      - name: Build addon from source
+        if: inputs.addon_from_source
+        shell: bash
+        working-directory: packages/llm-llamacpp
+        run: |
+          npm install --no-audit --no-fund
+          bare-make generate
+          bare-make build
+          bare-make install
+
+      - name: Install benchmark deps (addon from source)
+        if: inputs.addon_from_source
+        shell: bash
+        working-directory: ${{ env.WORKDIR }}
+        run: npm install --no-audit --no-fund --install-links ../../
+
+      - name: Install benchmark deps (addon from npm)
+        if: ${{ !inputs.addon_from_source }}
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund
