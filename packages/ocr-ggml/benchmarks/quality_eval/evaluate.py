@@ -33,7 +33,6 @@ from metrics import compute_cer, compute_wer, compute_anls
 from metrics.spotting import (
     evaluate_text_spotting, parse_gt_boxes, get_image_dimensions
 )
-from utils import format_duration
 
 
 # Default task types for benchmarking
