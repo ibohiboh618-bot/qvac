@@ -49,27 +49,27 @@ on:
         type: boolean
         default: false
       run_addon:
-        description: "Include addon source (JS binding via @qvac/llm-llamacpp)"
+        description: "Bench addon (@qvac/llm-llamacpp JS binding)"
         required: false
         type: boolean
         default: true
       run_fabric_cli:
-        description: "Include fabric-cli source (llama-mtmd-cli from qvac-fabric fork)"
+        description: "Bench fabric (qvac fork of llama.cpp, native CLI)"
         required: false
         type: boolean
         default: true
       run_upstream_cli:
-        description: "Include upstream-cli source (llama-mtmd-cli from ggml-org/llama.cpp)"
+        description: "Bench upstream (vanilla llama.cpp, native CLI)"
         required: false
         type: boolean
         default: true
       fabric_ref:
-        description: "Fabric fork ref (tag/branch/SHA)"
+        description: "Fabric ref (tag/SHA)"
         required: false
         type: string
         default: "v8189.0.2"
       upstream_ref:
-        description: "Upstream llama.cpp ref (tag/branch/SHA)"
+        description: "Upstream llama.cpp ref (tag/SHA)"
         required: false
         type: string
         default: "b8189"
