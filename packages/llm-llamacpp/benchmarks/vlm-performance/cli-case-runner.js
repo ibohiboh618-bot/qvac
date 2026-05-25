@@ -32,15 +32,34 @@ function sleep (ms) {
   while (Date.now() < end) { /* busy-wait — no async in this runner */ }
 }
 
-function buildCliArgs (spec) {
-  // Qwen3.5 /no_think convention: when thinking is disabled, prepend
-  // /no_think to the prompt so the jinja template skips the <think>
-  // block. This works on both fabric and upstream CLIs (unlike
-  // --reasoning-budget which is addon-only).
-  const prompt = spec.thinkingEnabled
-    ? spec.prompt
-    : `/no_think\n${spec.prompt}`
+// Extract the chat template from the GGUF model file using Python's
+// gguf library (installed via pip as a benchmark prerequisite).
+// Returns the template string or null if extraction fails.
+let _cachedPatchedTemplate = null
 
+function getPatchedTemplate (ggufPath) {
+  if (_cachedPatchedTemplate) return _cachedPatchedTemplate
+  try {
+    const result = spawnSync('python3', ['-c', [
+      'from gguf import GGUFReader',
+      'import sys',
+      `reader = GGUFReader("${ggufPath.replace(/"/g, '\\"')}")`,
+      'for f in reader.fields.values():',
+      '  if "chat_template" in str(f.name):',
+      '    t = bytes(f.parts[-1]).decode("utf-8")',
+      '    t = t.replace("enable_thinking is defined and enable_thinking is true", "false")',
+      '    sys.stdout.write(t)',
+      '    break'
+    ].join('\n')], { encoding: 'utf8', timeout: 10000 })
+    if (result.status === 0 && result.stdout && result.stdout.includes('{%')) {
+      _cachedPatchedTemplate = result.stdout
+      return _cachedPatchedTemplate
+    }
+  } catch {}
+  return null
+}
+
+function buildCliArgs (spec) {
   const args = [
     '--model', spec.llmPath,
     '--mmproj', spec.mmprojPath,
@@ -51,9 +70,20 @@ function buildCliArgs (spec) {
     '--threads', String(os.cpus().length),
     '--temp', String(spec.temperature ?? 0),
     '--seed', String(spec.seed ?? 42),
-    '--jinja',
-    '-p', prompt
+    '--jinja'
   ]
+
+  // Control reasoning mode. The addon uses reasoning-budget=0 internally,
+  // but neither fabric nor upstream CLI exposes this flag. Instead, patch
+  // the model's chat template to hardcode enable_thinking=false.
+  if (!spec.thinkingEnabled) {
+    const patched = getPatchedTemplate(spec.llmPath)
+    if (patched) {
+      args.push('--chat-template', patched)
+    }
+  }
+
+  args.push('-p', spec.prompt)
 
   return args
 }
