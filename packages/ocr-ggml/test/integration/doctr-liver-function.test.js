@@ -31,8 +31,8 @@ const EXPECTED_WORDS = [
   'ratio', 'specimen', 'investig', 'total'
 ]
 
-function runLiverFunctionTest (ep, run) {
-  const tag = ep.toUpperCase()
+function runLiverFunctionTest (device, run) {
+  const tag = device.toUpperCase()
 
   test(`DocTR liver function [${tag}] run ${run} - db_mobilenet + crnn_mobilenet`, { timeout: DOCTR_TEST_TIMEOUT }, async function (t) {
     if (!modelsAvailable) { t.comment('Skipped — models unavailable'); return }

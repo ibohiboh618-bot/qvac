@@ -53,7 +53,7 @@ test('OCR basic test', { timeout: TEST_TIMEOUT }, async function (t) {
     // Display stats
     const stats = response.stats || {}
     t.comment('Native addon stats: ' + JSON.stringify(stats))
-    t.comment(formatOCRPerformanceMetrics('[EasyOCR basic_test]', stats, outputTexts))
+    t.comment(formatOCRPerformanceMetrics('[EasyOCR basic_test] [CPU]', stats, outputTexts))
 
     t.pass('OCR basic test completed successfully')
   } catch (e) {

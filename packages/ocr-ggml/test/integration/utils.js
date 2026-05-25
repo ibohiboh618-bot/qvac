@@ -537,7 +537,7 @@ function formatOCRPerformanceMetrics (label, stats, outputTexts = [], opts) {
   const textRegionsCount = stats.textRegionsCount || 0
   const totalSeconds = (totalTimeMs / 1000).toFixed(2)
 
-  const ep = /\[gpu\]/i.test(label) ? 'gpu' : /\[cpu\]/i.test(label) ? 'cpu' : null
+  const device = /\[gpu\]/i.test(label) ? 'gpu' : /\[cpu\]/i.test(label) ? 'cpu' : null
 
   let quality = null
   const gt = (opts && opts.groundTruth) || (opts && opts.imagePath ? findGroundTruth(opts.imagePath) : null)
@@ -556,7 +556,7 @@ function formatOCRPerformanceMetrics (label, stats, outputTexts = [], opts) {
       recognition_time_ms: Math.round(recognitionTimeMs),
       text_regions: textRegionsCount
     }, {
-      execution_provider: ep,
+      execution_provider: device,
       output: JSON.stringify(outputTexts),
       quality,
       image_path: (opts && opts.imagePath) || null

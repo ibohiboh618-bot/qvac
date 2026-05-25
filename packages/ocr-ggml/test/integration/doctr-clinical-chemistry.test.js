@@ -28,8 +28,8 @@ const EXPECTED_WORDS = [
   'bilirubin', 'albumin', 'protein', 'lipid'
 ]
 
-function runClinicalChemistryTest (ep, run) {
-  const tag = ep.toUpperCase()
+function runClinicalChemistryTest (device, run) {
+  const tag = device.toUpperCase()
 
   test(`DocTR clinical chemistry [${tag}] run ${run} - db_mobilenet + crnn_mobilenet`, { timeout: DOCTR_TEST_TIMEOUT }, async function (t) {
     if (!modelsAvailable) { t.comment('Skipped — models unavailable'); return }
