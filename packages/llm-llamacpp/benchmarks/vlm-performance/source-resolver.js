@@ -1,96 +1,102 @@
 'use strict'
 
-// Resolves the benchmark "sources" (candidate / baseline) to a concrete
-// addon entrypoint the case-runner can `require()`.
+// Resolves benchmark sources to concrete entrypoints the runners use.
 //
-// V1 scope:
-//   - candidate (type='addon', source='local'): the addon as built in
-//     the working tree. Picked up via the existing
-//     `require('@qvac/llm-llamacpp')` resolution from this package's
-//     node_modules (npm link / npm install -w).
-//   - candidate (type='addon', source='npm'): the package the user has
-//     pinned in node_modules.
-//   - baseline (type='addon', source='commit'): git-worktree-based.
-//     We resolve a commit SHA (literal or 'merge-base'); the local-dev
-//     loop in V1 either (a) skips the baseline build, (b) consumes a
-//     pre-built directory passed via --baseline-addon-path, or (c)
-//     builds via bare-make inside a worktree (CI path; documented in
-//     README — not auto-invoked by default to keep `run-vlm-bench` fast
-//     locally).
-//   - baseline (type='skip'): candidate-only run; no diff.
+// Source types:
+//   addon — JS addon via require('@qvac/llm-llamacpp'), driven by case-runner.js (Bare)
+//   cli   — native llama-mtmd-cli binary, driven by cli-case-runner.js (Node.js)
 //
-// Open follow-up: the auto-build path for baseline (bare-make inside a
-// git worktree, cache by SHA) is the CI half of concern 7.1. Local
-// usage should pass --baseline-addon-path for now.
+// The 3-source comparison (addon vs fabric-cli vs upstream-cli) runs
+// the same model through three inference engines to measure JS binding
+// overhead and fork divergence.
 
-const { execSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 
-function execGit (args, opts = {}) {
-  try {
-    return execSync(`git ${args}`, { ...opts, encoding: 'utf8' }).trim()
-  } catch (e) {
-    return null
+const SCRIPT_DIR = __dirname
+const CLI_RESOLVED_PATH = path.join(SCRIPT_DIR, 'cli-sources-resolved.json')
+
+function loadCliResolved () {
+  if (!fs.existsSync(CLI_RESOLVED_PATH)) return {}
+  try { return JSON.parse(fs.readFileSync(CLI_RESOLVED_PATH, 'utf8')) } catch { return {} }
+}
+
+function resolveAddonSource (key) {
+  return {
+    key,
+    type: 'addon',
+    label: 'addon@npm',
+    addonPath: null
   }
 }
 
-function resolveMergeBase () {
-  // Prefer origin/main; fall back to local main if no remote.
-  let base = execGit('merge-base HEAD origin/main')
-  if (!base) base = execGit('merge-base HEAD main')
-  return base
-}
+function resolveCliSource (key, spec, cliOverrides) {
+  const cliResolved = loadCliResolved()
+  const configKey = spec.configKey || key
 
-function resolveCommit (spec) {
-  if (!spec || spec === 'merge-base') return resolveMergeBase()
-  // Resolve any ref (tag, branch, short SHA) to the full SHA.
-  const sha = execGit(`rev-parse --verify ${spec}^{commit}`)
-  return sha || spec
-}
-
-function resolveSource (key, spec, cliOverrides) {
-  if (!spec || spec.type === 'skip') {
-    return { key, type: 'skip' }
-  }
-  if (spec.type === 'addon' && spec.source === 'local') {
-    return { key, type: 'addon', source: 'local', label: 'addon@candidate' }
-  }
-  if (spec.type === 'addon' && spec.source === 'npm') {
-    return { key, type: 'addon', source: 'npm', label: 'addon@npm' }
-  }
-  if (spec.type === 'addon' && spec.source === 'commit') {
-    const commit = resolveCommit(cliOverrides.commit || spec.commit)
-    const shortSha = commit ? commit.slice(0, 8) : 'unknown'
-    const addonPath = cliOverrides.addonPath || null
-    if (addonPath && !fs.existsSync(addonPath)) {
-      throw new Error(`--baseline-addon-path=${addonPath}: not found`)
+  // Direct binary override via --fabric-binary=<path> or --upstream-binary=<path>
+  const overrideKey = `${key}-binary`
+  if (cliOverrides && cliOverrides[overrideKey]) {
+    const binaryPath = cliOverrides[overrideKey]
+    if (!fs.existsSync(binaryPath)) {
+      throw new Error(`--${overrideKey}=${binaryPath}: not found`)
     }
     return {
       key,
-      type: 'addon',
-      source: 'commit',
-      commit,
-      label: `addon@${shortSha}`,
-      addonPath,                  // may be null — caller must build, or skip
-      requiresBuild: !addonPath
+      type: 'cli',
+      label: `${configKey}-cli@custom`,
+      binaryPath,
+      commitSha: null
     }
   }
-  throw new Error(`Unknown source spec for ${key}: ${JSON.stringify(spec)}`)
+
+  // Resolve from cli-sources-resolved.json (written by build-cli-sources.js)
+  const resolved = cliResolved[configKey]
+  if (resolved && resolved.binaryPath && fs.existsSync(resolved.binaryPath)) {
+    return {
+      key,
+      type: 'cli',
+      label: resolved.label || `${configKey}-cli`,
+      binaryPath: resolved.binaryPath,
+      commitSha: resolved.commitSha || null,
+      provenance: resolved.provenance || null
+    }
+  }
+
+  return {
+    key,
+    type: 'cli',
+    label: `${configKey}-cli`,
+    binaryPath: null,
+    requiresBuild: true
+  }
 }
 
 function resolveSources (config, args) {
+  const enabledKeys = args.sources
+    ? String(args.sources).split(',').map((s) => s.trim()).filter(Boolean)
+    : Object.keys(config.sources).filter((k) => config.sources[k].enabled !== false)
+
+  const cliOverrides = {}
+  if (args['fabric-binary']) cliOverrides['fabric-binary'] = args['fabric-binary']
+  if (args['upstream-binary']) cliOverrides['upstream-binary'] = args['upstream-binary']
+
   const out = []
-  out.push(resolveSource('candidate', config.sources.candidate, {}))
-  if (args['skip-baseline']) {
-    out.push({ key: 'baseline', type: 'skip' })
-  } else {
-    out.push(resolveSource('baseline', config.sources.baseline, {
-      commit: args['baseline-commit'],
-      addonPath: args['baseline-addon-path']
-    }))
+  for (const key of enabledKeys) {
+    const spec = config.sources[key]
+    if (!spec) {
+      console.warn(`[source-resolver] unknown source '${key}', skipping`)
+      continue
+    }
+    if (spec.type === 'addon') {
+      out.push(resolveAddonSource(key))
+    } else if (spec.type === 'cli') {
+      out.push(resolveCliSource(key, spec, cliOverrides))
+    } else {
+      throw new Error(`Unknown source type '${spec.type}' for source '${key}'`)
+    }
   }
   return out
 }
 
-module.exports = { resolveSources, resolveMergeBase, resolveCommit }
+module.exports = { resolveSources }

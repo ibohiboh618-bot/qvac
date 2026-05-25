@@ -2,21 +2,13 @@
 'use strict'
 
 // Resolves model files needed by the benchmark and writes their paths
-// to resolved-models.json. Two model sources are supported:
-//
-//   model.candidate — always downloaded.
-//   model.baseline  — downloaded only when --compare-baseline is set.
-//
-// Each source resolves its LLM and mmproj URLs as follows:
-//   1. CLI override (--local-{candidate,baseline}-model / --mmproj)
-//   2. The source's registry data file (registryDataFile +
-//      registryMatcher), when the file exists in the working tree.
-//   3. The source's direct URL (`url.llm`, `url.mmproj`).
+// to resolved-models.json. A single model is downloaded and shared
+// across all three inference sources (addon, fabric-cli, upstream-cli).
 //
 // Output (resolved-models.json):
 //   {
-//     candidate: { label, llmPath, mmprojPath },
-//     baseline:  { label, llmPath, mmprojPath } | null
+//     label, quant, hfRepo, hfRevision,
+//     llmPath, mmprojPath, provenance
 //   }
 
 const fs = require('fs')
@@ -29,7 +21,6 @@ const { parseArgs } = require('./utils')
 
 const SCRIPT_DIR = __dirname
 const DEFAULT_MODELS_DIR = path.join(SCRIPT_DIR, 'models')
-// Repo root, used to resolve registry data file paths.
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..', '..')
 
 function log (...args) { console.log('[prepare-models]', ...args) }
@@ -81,57 +72,6 @@ function downloadFile (url, destination, headers, redirects = 5) {
   })
 }
 
-// Looks up the URL for a model filename inside the project's registry
-// data file. Returns null when the file doesn't exist or when no entry
-// matches. Match policy: substring check against the `source` field.
-function lookupRegistryUrl (sourceSpec, kind) {
-  const dataFile = sourceSpec.registryDataFile
-  const matcher = sourceSpec.registryMatcher && sourceSpec.registryMatcher[kind]
-  if (!dataFile || !matcher) return null
-  const fullPath = path.resolve(REPO_ROOT, dataFile)
-  if (!fs.existsSync(fullPath)) {
-    log(`registry data file not found: ${fullPath} - falling back to direct URL`)
-    return null
-  }
-  try {
-    const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'))
-    const list = Array.isArray(data) ? data : (Array.isArray(data.models) ? data.models : null)
-    if (!list) return null
-    const hit = list.find((e) => typeof e.source === 'string' && e.source.includes(matcher))
-    return hit ? hit.source : null
-  } catch (e) {
-    log(`could not parse registry data file: ${e.message}`)
-    return null
-  }
-}
-
-async function resolveOnePart ({ sourceLabel, kind, sourceSpec, destination, localOverride, headers }) {
-  if (localOverride) {
-    if (!fs.existsSync(localOverride)) {
-      throw new Error(`--${sourceLabel}-${kind} override file not found: ${localOverride}`)
-    }
-    log(`${sourceLabel}/${kind}: using local file ${localOverride}`)
-    return path.resolve(localOverride)
-  }
-  if (fs.existsSync(destination)) {
-    log(`${sourceLabel}/${kind}: already present -> ${destination}`)
-    return destination
-  }
-  // Try registry-data lookup first (only when sourceSpec opts in),
-  // then fall back to the direct URL in the config.
-  const fromRegistry = lookupRegistryUrl(sourceSpec, kind)
-  const url = fromRegistry || (sourceSpec.url && sourceSpec.url[kind])
-  if (!url) {
-    throw new Error(`No URL configured for ${sourceLabel}/${kind}`)
-  }
-  log(`${sourceLabel}/${kind}: downloading from ${url}`)
-  await downloadFile(url, destination, headers)
-  log(`${sourceLabel}/${kind}: downloaded -> ${destination}`)
-  return destination
-}
-
-// SHA-256 of a file, used as a provenance fingerprint. We chunk-stream
-// the file to avoid loading multi-GB GGUFs into memory.
 function sha256OfFile (filePath) {
   return new Promise((resolve, reject) => {
     const h = crypto.createHash('sha256')
@@ -155,42 +95,25 @@ async function provenanceFor (filePath, urlUsed) {
   }
 }
 
-async function resolveSource (sourceSpec, modelsDir, headers, args) {
-  const label = sourceSpec.label
-  const llmDest = path.join(modelsDir, sourceSpec.llmFile)
-  const mmprojDest = path.join(modelsDir, sourceSpec.mmprojFile)
-  const llmUrl = lookupRegistryUrl(sourceSpec, 'llm') || (sourceSpec.url && sourceSpec.url.llm)
-  const mmprojUrl = lookupRegistryUrl(sourceSpec, 'mmproj') || (sourceSpec.url && sourceSpec.url.mmproj)
-  const llmPath = await resolveOnePart({
-    sourceLabel: label,
-    kind: 'llm',
-    sourceSpec,
-    destination: llmDest,
-    localOverride: args[`local-${label}-model`],
-    headers
-  })
-  const mmprojPath = await resolveOnePart({
-    sourceLabel: label,
-    kind: 'mmproj',
-    sourceSpec,
-    destination: mmprojDest,
-    localOverride: args[`local-${label}-mmproj`],
-    headers
-  })
-  // Per-file provenance: byte size, SHA-256, the URL we resolved
-  // from. Surfaced in the consolidated report so a reviewer can audit
-  // which exact blob produced each row.
-  const llmProvenance = await provenanceFor(llmPath, llmUrl)
-  const mmprojProvenance = await provenanceFor(mmprojPath, mmprojUrl)
-  return {
-    label,
-    quant: sourceSpec.quant || null,
-    hfRepo: sourceSpec.hfRepo || null,
-    hfRevision: sourceSpec.hfRevision || null,
-    llmPath,
-    mmprojPath,
-    provenance: { llm: llmProvenance, mmproj: mmprojProvenance }
+async function resolvePart ({ label, kind, url, destination, localOverride, headers }) {
+  if (localOverride) {
+    if (!fs.existsSync(localOverride)) {
+      throw new Error(`--local-${kind} override file not found: ${localOverride}`)
+    }
+    log(`${label}/${kind}: using local file ${localOverride}`)
+    return path.resolve(localOverride)
   }
+  if (fs.existsSync(destination)) {
+    log(`${label}/${kind}: already present -> ${destination}`)
+    return destination
+  }
+  if (!url) {
+    throw new Error(`No URL configured for ${label}/${kind}`)
+  }
+  log(`${label}/${kind}: downloading from ${url}`)
+  await downloadFile(url, destination, headers)
+  log(`${label}/${kind}: downloaded -> ${destination}`)
+  return destination
 }
 
 async function main () {
@@ -202,22 +125,42 @@ async function main () {
   if (process.env.HF_TOKEN) headers.Authorization = `Bearer ${process.env.HF_TOKEN}`
 
   const m = config.model
-  const candidate = await resolveSource(m.candidate, modelsDir, headers, args)
 
-  let baseline = null
-  if (args['compare-baseline']) {
-    baseline = await resolveSource(m.baseline, modelsDir, headers, args)
-  } else {
-    log('baseline source not requested (use --compare-baseline to enable)')
-  }
+  const llmDest = path.join(modelsDir, m.llmFile)
+  const mmprojDest = path.join(modelsDir, m.mmprojFile)
+
+  const llmPath = await resolvePart({
+    label: m.label, kind: 'llm',
+    url: m.url.llm,
+    destination: llmDest,
+    localOverride: args['local-model'],
+    headers
+  })
+
+  const mmprojPath = await resolvePart({
+    label: m.label, kind: 'mmproj',
+    url: m.url.mmproj,
+    destination: mmprojDest,
+    localOverride: args['local-mmproj'],
+    headers
+  })
+
+  const llmProvenance = await provenanceFor(llmPath, m.url.llm)
+  const mmprojProvenance = await provenanceFor(mmprojPath, m.url.mmproj)
 
   const resolved = {
     generatedAt: new Date().toISOString(),
     modelsDir,
-    candidate,
-    baseline,
+    label: m.label,
+    quant: m.quant,
+    hfRepo: m.hfRepo,
+    hfRevision: m.hfRevision,
+    llmPath,
+    mmprojPath,
+    provenance: { llm: llmProvenance, mmproj: mmprojProvenance },
     model: { id: m.id, ctxSize: m.ctxSize, nPredict: m.nPredict }
   }
+
   const outPath = path.join(SCRIPT_DIR, 'resolved-models.json')
   fs.writeFileSync(outPath, JSON.stringify(resolved, null, 2) + '\n', 'utf8')
   log(`wrote ${outPath}`)

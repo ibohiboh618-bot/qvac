@@ -4,14 +4,9 @@ name: Benchmark VLM (LLM)
 # packages/llm-llamacpp/benchmarks/vlm-performance against Qwen3.5-VL
 # on a fixed object-listing task and uploads a consolidated report.
 #
-# First iteration scope:
-#   - Desktop: Windows + Linux on GitHub-hosted runners (CPU only).
-#   - Android: present as an input but currently a stub — the on-device
-#     test bundle integration for our benchmark is not yet wired. Once
-#     it is, the stub job will be replaced with a real Device Farm run.
-#   - Candidate only (no baseline diff). Baseline comparison wires in
-#     once we either auto-build the merge-base commit or cache its
-#     prebuilds.
+# 3-source comparison: addon (JS binding) vs fabric-cli (fork CLI) vs
+# upstream-cli (upstream llama.cpp CLI). Measures JS binding overhead
+# and fork divergence using the same model across all sources.
 
 on:
   workflow_dispatch:
@@ -53,15 +48,36 @@ on:
         required: false
         type: boolean
         default: false
-      compare_baseline:
-        description: "Compare two model sources (HF vs project registry). Doubles inference time per leg."
+      run_addon:
+        description: "Include addon source (JS binding via @qvac/llm-llamacpp)"
         required: false
         type: boolean
-        default: false
+        default: true
+      run_fabric_cli:
+        description: "Include fabric-cli source (llama-mtmd-cli from qvac-fabric fork)"
+        required: false
+        type: boolean
+        default: true
+      run_upstream_cli:
+        description: "Include upstream-cli source (llama-mtmd-cli from ggml-org/llama.cpp)"
+        required: false
+        type: boolean
+        default: true
+      fabric_ref:
+        description: "Fabric fork ref (tag/branch/SHA)"
+        required: false
+        type: string
+        default: "v8189.0.2"
+      upstream_ref:
+        description: "Upstream llama.cpp ref (tag/branch/SHA)"
+        required: false
+        type: string
+        default: "b8189"
 
 permissions:
   contents: read
   packages: read
+  pull-requests: write
   id-token: write
 
 jobs:
@@ -158,7 +174,7 @@ jobs:
     if: needs.context.outputs.desktop_count != '0'
     name: vlm-${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -178,11 +194,6 @@ jobs:
           # but not in <sha>".
           fetch-depth: 0
 
-      - name: Fetch main for merge-base lookups
-        if: inputs.compare_baseline
-        shell: bash
-        run: git fetch origin main --quiet
-
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # 4.4.0
         with:
@@ -193,26 +204,53 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund
 
-      - name: Prepare models
+      - name: Cache CLI builds
+        if: inputs.run_fabric_cli || inputs.run_upstream_cli
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORKDIR }}/cli-builds
+          key: vlm-cli-${{ matrix.platform }}-${{ inputs.fabric_ref }}-${{ inputs.upstream_ref }}
+          restore-keys: |
+            vlm-cli-${{ matrix.platform }}-
+
+      - name: Build CLI sources
+        if: inputs.run_fabric_cli || inputs.run_upstream_cli
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: |
-          if [[ "${{ inputs.compare_baseline }}" == "true" ]]; then
-            node ./prepare-models.js --compare-baseline
-          else
-            npm run prepare:models
+          SOURCES=""
+          if [[ "${{ inputs.run_fabric_cli }}" == "true" ]]; then
+            SOURCES="${SOURCES:+$SOURCES,}fabric"
           fi
+          if [[ "${{ inputs.run_upstream_cli }}" == "true" ]]; then
+            SOURCES="${SOURCES:+$SOURCES,}upstream"
+          fi
+          node scripts/build-cli-sources.js \
+            --sources=$SOURCES \
+            --fabric-ref=${{ inputs.fabric_ref }} \
+            --upstream-ref=${{ inputs.upstream_ref }}
+
+      - name: Prepare models
+        shell: bash
+        working-directory: ${{ env.WORKDIR }}
+        run: npm run prepare:models
 
       - name: Run VLM benchmark
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: |
-          BASELINE_ARG="--skip-baseline"
-          if [[ "${{ inputs.compare_baseline }}" == "true" ]]; then
-            BASELINE_ARG="--compare-baseline"
+          SOURCES=""
+          if [[ "${{ inputs.run_addon }}" == "true" ]]; then
+            SOURCES="${SOURCES:+$SOURCES,}addon"
+          fi
+          if [[ "${{ inputs.run_fabric_cli }}" == "true" ]]; then
+            SOURCES="${SOURCES:+$SOURCES,}fabric"
+          fi
+          if [[ "${{ inputs.run_upstream_cli }}" == "true" ]]; then
+            SOURCES="${SOURCES:+$SOURCES,}upstream"
           fi
           npm run run:vlm-bench -- \
-            $BASELINE_ARG \
+            --sources=$SOURCES \
             --warmup-runs=${{ inputs.warmup_runs }} \
             --measured-runs=${{ inputs.measured_runs }} \
             --thinking=${{ inputs.thinking }}
@@ -320,7 +358,7 @@ jobs:
               "title": ${{ toJSON(needs.context.outputs.base_title) }},
               "date": "${{ needs.context.outputs.base_date }}"
             },
-            "compare_baseline_requested": ${{ inputs.compare_baseline }}
+            "comparison_mode": "source-engines"
           }
           EOF
           cat commit-info.json
@@ -348,6 +386,28 @@ jobs:
               echo "No consolidated report generated."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post PR comment (View 2 summary)
+        if: always() && hashFiles('consolidated/vlm-perf-consolidated.md') != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.context.outputs.ref }}
+        run: |
+          PR_NUMBER=$(gh pr list --head "$REF" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "No open PR found for ref $REF — skipping PR comment."
+            exit 0
+          fi
+          echo "Posting VLM benchmark summary to PR #$PR_NUMBER"
+          {
+            echo "## VLM Benchmark Summary"
+            echo ""
+            echo "_Run #${{ github.run_number }} — [full report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+            echo ""
+            tail -n +2 consolidated/vlm-perf-consolidated.md
+          } > /tmp/pr-comment-body.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment-body.md
 
       - name: Upload consolidated report
         if: always()

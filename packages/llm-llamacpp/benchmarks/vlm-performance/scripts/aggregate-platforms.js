@@ -123,37 +123,64 @@ function describeSource (s) {
 }
 
 const COMPARISON_MODE_LABELS = {
+  'source-engines': 'three inference sources: addon (JS binding), fabric-cli (fork CLI), upstream-cli (upstream CLI)',
   'model-variants': 'two model variants (same addon, different GGUF blobs)',
   'addon-versions': 'two addon versions (same model, different `@qvac/llm-llamacpp` builds)',
   'git-hashes': 'two git commits (full source-level rebuild)',
-  none: 'none (candidate-only run)'
+  none: 'none (single-source run)'
 }
+
+const SOURCE_ENGINE_PAIRS = [
+  { a: 'addon', b: 'fabric', label: 'addon vs fabric-cli (JS overhead)' },
+  { a: 'fabric', b: 'upstream', label: 'fabric-cli vs upstream-cli (fork delta)' },
+  { a: 'addon', b: 'upstream', label: 'addon vs upstream-cli (combined)' }
+]
 
 // Top-level "what is this run comparing" header. Renders the
 // comparison mode + which source plays the baseline vs candidate
 // role + a one-line description of each source. When no baseline
 // was requested, surfaces a single candidate line and a tip on how
 // to enable comparison.
+function describeEngineSource (s) {
+  if (!s) return '-'
+  const parts = [s.label || s.key]
+  if (s.commitSha) parts.push(`@ \`${s.commitSha.slice(0, 8)}\``)
+  if (s.provenance && s.provenance.binarySizeMb) parts.push(`${s.provenance.binarySizeMb} MB`)
+  return parts.join(', ')
+}
+
 function renderComparisonBlock (reports) {
   const firstVlm = reports.find((r) => r.kind === 'vlm-perf')
   if (!firstVlm) return null
   const meta = firstVlm.data && firstVlm.data.meta
   if (!meta) return null
-  const sources = meta.modelSources || []
-  const mode = meta.comparisonMode || (sources.length > 1 ? 'model-variants' : 'none')
-  const candidate = sources.find((s) => s.key === 'candidate')
-  const baseline = sources.find((s) => s.key === 'baseline')
 
+  const mode = meta.comparisonMode || 'none'
   const lines = []
   lines.push('## Comparison')
   lines.push('')
   lines.push(`- **Mode**: ${COMPARISON_MODE_LABELS[mode] || mode}`)
-  if (baseline) {
-    lines.push(`- **Baseline** (\`${baseline.label}\`): ${describeSource(baseline)}`)
-    lines.push(`- **Candidate** (\`${candidate.label}\`): ${describeSource(candidate)}`)
-  } else if (candidate) {
-    lines.push(`- **Candidate** (\`${candidate.label}\`): ${describeSource(candidate)}`)
-    lines.push('- _No baseline - run with `compare_baseline=true` to compare._')
+
+  if (mode === 'source-engines' && meta.sources) {
+    for (const s of meta.sources) {
+      lines.push(`- **${s.key}** (\`${s.label}\`): ${describeEngineSource(s)}`)
+    }
+    if (meta.model) {
+      const m = meta.model
+      const modelDesc = m.hfRepo ? `\`${m.hfRepo}\` @ \`${(m.hfRevision || '?').slice(0, 8)}\`, ${m.quant || '?'}` : m.label || '?'
+      lines.push(`- **Model** (shared): ${modelDesc}`)
+    }
+  } else {
+    // Legacy model-variants / candidate-baseline mode
+    const sources = meta.modelSources || []
+    const candidate = sources.find((s) => s.key === 'candidate')
+    const baseline = sources.find((s) => s.key === 'baseline')
+    if (baseline) {
+      lines.push(`- **Baseline** (\`${baseline.label}\`): ${describeSource(baseline)}`)
+      lines.push(`- **Candidate** (\`${candidate.label}\`): ${describeSource(candidate)}`)
+    } else if (candidate) {
+      lines.push(`- **Candidate** (\`${candidate.label}\`): ${describeSource(candidate)}`)
+    }
   }
   lines.push('')
   return lines.join('\n')
@@ -165,8 +192,6 @@ function renderComparisonBlock (reports) {
 // section so the reader sees candidate vs baseline side-by-side per
 // platform without cross-referencing two tables.
 function renderPerPlatformBlocks (reports) {
-  // Group rows by platform AND keep a reference back to the source
-  // report so we can fish out per-platform host hardware metadata.
   const byPlatform = new Map()
   const platformMeta = new Map()
   for (const report of reports) {
@@ -181,20 +206,20 @@ function renderPerPlatformBlocks (reports) {
   }
   if (byPlatform.size === 0) return []
 
+  // Detect comparison mode from the first report
+  const firstVlm = reports.find((r) => r.kind === 'vlm-perf')
+  const comparisonMode = (firstVlm && firstVlm.data && firstVlm.data.meta && firstVlm.data.meta.comparisonMode) || 'none'
+
   const lines = []
   lines.push('## Per-platform results')
   lines.push('')
-  lines.push(`Each table compares **candidate** against **baseline** on one platform. The Δ row uses a ±${NOISE_BAND_PCT}% noise band — anything inside is reported as "same", anything outside is "better" or "worse" depending on the metric direction.`)
+  lines.push(`Each table shows all inference sources on one platform. The delta rows use a +-${NOISE_BAND_PCT}% noise band.`)
   lines.push('')
 
   for (const [platform, rows] of byPlatform) {
     lines.push(`### ${platform}`)
     lines.push('')
 
-    // Per-platform host hardware line — CPU model + cores + RAM + GPUs.
-    // Used to live in a separate "Host hardware" block at the bottom
-    // of the report; folded into each platform sub-section so the
-    // hardware that produced the numbers sits right next to them.
     const meta = platformMeta.get(platform)
     if (meta && meta.hardware) {
       const h = meta.hardware
@@ -209,8 +234,6 @@ function renderPerPlatformBlocks (reports) {
       byBackend.get(row.backend).push(row)
     }
     for (const [backend, brows] of byBackend) {
-      const cand = brows.find((r) => String(r.sourceKey || '').toLowerCase() === 'candidate')
-      const base = brows.find((r) => String(r.sourceKey || '').toLowerCase() === 'baseline')
       const actualBackends = new Set()
       for (const r of brows) {
         for (const ab of ((r.metrics && r.metrics.actualBackends) || [])) actualBackends.add(ab)
@@ -218,18 +241,35 @@ function renderPerPlatformBlocks (reports) {
       const actual = actualBackends.size ? Array.from(actualBackends).join(',') : '-'
       lines.push(`Backend requested: \`${backend}\` / actual: \`${actual}\``)
       lines.push('')
-      lines.push('| Role | Source | runs | vis-enc (ms) | TTFT (ms) | TPS | wall (ms) | recall | status |')
+      lines.push('| Source | runs | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
       lines.push('|---|---|---|---|---|---|---|---|---|')
-      if (cand) lines.push(perPlatformRow('candidate', cand))
-      if (base) lines.push(perPlatformRow('baseline', base))
-      if (cand && base) lines.push(perPlatformDeltaRow(cand, base))
+
+      // One row per source
+      for (const row of brows) {
+        lines.push(perPlatformRow(row.sourceKey, row))
+      }
+
+      // Pairwise delta rows
+      if (comparisonMode === 'source-engines') {
+        const bySourceKey = new Map()
+        for (const row of brows) bySourceKey.set(row.sourceKey, row)
+        for (const pair of SOURCE_ENGINE_PAIRS) {
+          const a = bySourceKey.get(pair.a)
+          const b = bySourceKey.get(pair.b)
+          if (a && b) lines.push(perPlatformDeltaRow(a, b, pair.label))
+        }
+      } else {
+        const cand = brows.find((r) => String(r.sourceKey || '').toLowerCase() === 'candidate')
+        const base = brows.find((r) => String(r.sourceKey || '').toLowerCase() === 'baseline')
+        if (cand && base) lines.push(perPlatformDeltaRow(cand, base, 'candidate vs baseline'))
+      }
       lines.push('')
     }
   }
   return lines
 }
 
-function perPlatformRow (role, row) {
+function perPlatformRow (sourceKey, row) {
   const m = row.metrics || {}
   const hasError = row.errors && row.errors.length > 0
   const status = m.repeats > 0 ? 'OK' : (hasError ? `FAIL: ${row.errors[0].phase}` : 'FAIL')
@@ -237,22 +277,24 @@ function perPlatformRow (role, row) {
     ? `${m.objectsRecalled}/${m.objectsTotal} (${m.recallScore_median.toFixed(2)})`
     : '-'
   const repeats = m.repeatsTotal != null ? `${m.repeats}/${m.repeatsTotal}` : `${m.repeats || 0}`
-  return `| **${role}** | \`${row.sourceLabel}\` | ${repeats} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`
+  return `| **${sourceKey}** \`${row.sourceLabel}\` | ${repeats} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`
 }
 
-function perPlatformDeltaRow (cand, base) {
-  const cm = cand.metrics || {}; const bm = base.metrics || {}
-  const v_vis = verdictFor(cm.visionEncodeMs_median, bm.visionEncodeMs_median, true)
-  const v_ttft = verdictFor(cm.ttftMs_median, bm.ttftMs_median, true)
-  const v_tps = verdictFor(cm.decodeTps_median, bm.decodeTps_median, false)
-  const v_wall = verdictFor(cm.wallMs_median, bm.wallMs_median, true)
+function perPlatformDeltaRow (a, b, label) {
+  const am = a.metrics || {}
+  const bm = b.metrics || {}
+  const v_vis = verdictFor(am.visionEncodeMs_median, bm.visionEncodeMs_median, true)
+  const v_ttft = verdictFor(am.ttftMs_median, bm.ttftMs_median, true)
+  const v_tps = verdictFor(am.decodeTps_median, bm.decodeTps_median, false)
+  const v_rss = verdictFor(am.peakRssMb_median, bm.peakRssMb_median, true)
+  const v_wall = verdictFor(am.wallMs_median, bm.wallMs_median, true)
   let recallVerdict = 'same'
-  if (cm.recallScore_median != null && bm.recallScore_median != null) {
-    if (cm.recallScore_median > bm.recallScore_median) recallVerdict = 'better'
-    else if (cm.recallScore_median < bm.recallScore_median) recallVerdict = 'worse'
+  if (am.recallScore_median != null && bm.recallScore_median != null) {
+    if (am.recallScore_median > bm.recallScore_median) recallVerdict = 'better'
+    else if (am.recallScore_median < bm.recallScore_median) recallVerdict = 'worse'
   }
   const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
-  return `| **Δ candidate vs baseline** | - | - | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_wall)} | ${recallVerdict} | - |`
+  return `| _delta ${label}_ | - | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_rss)} | ${cell(v_wall)} | ${recallVerdict} | - |`
 }
 
 // Walks every (platform, backend) bucket and emits a verdict table
@@ -260,64 +302,66 @@ function perPlatformDeltaRow (cand, base) {
 // Returns null when no comparable pair exists — caller can skip the
 // block entirely.
 function renderVerdictBlock (reports) {
+  // Detect comparison mode
+  const firstVlm = reports.find((r) => r.kind === 'vlm-perf')
+  const comparisonMode = (firstVlm && firstVlm.data && firstVlm.data.meta && firstVlm.data.meta.comparisonMode) || 'none'
+
+  // Group all rows by (platform, backend, sourceKey)
   const groups = new Map()
   for (const report of reports) {
     for (const row of summaryOf(report)) {
       const k = `${row.platform}-${row.arch}|${row.backend}`
-      if (!groups.has(k)) groups.set(k, {})
-      const sk = String(row.sourceKey || '').toLowerCase()
-      // Match strictly on sourceKey ('candidate' / 'baseline' from
-      // source-resolver.js) — earlier attempt to also match by label
-      // pattern accidentally treated 'addon@candidate' as a baseline
-      // because 'c' is a hex character.
-      if (sk === 'candidate') groups.get(k).candidate = row
-      else if (sk === 'baseline') groups.get(k).baseline = row
+      if (!groups.has(k)) groups.set(k, new Map())
+      groups.get(k).set(row.sourceKey, row)
     }
   }
-  const pairs = []
-  for (const [k, v] of groups) {
-    if (v.candidate && v.baseline) pairs.push({ k, c: v.candidate, b: v.baseline })
+
+  const pairs = comparisonMode === 'source-engines' ? SOURCE_ENGINE_PAIRS : [
+    { a: 'candidate', b: 'baseline', label: 'candidate vs baseline' }
+  ]
+
+  // Check if any pairwise comparison exists
+  let hasPairs = false
+  for (const [, bySource] of groups) {
+    for (const pair of pairs) {
+      if (bySource.has(pair.a) && bySource.has(pair.b)) { hasPairs = true; break }
+    }
+    if (hasPairs) break
   }
-  if (pairs.length === 0) return null
+  if (!hasPairs) return null
 
   const lines = []
-  lines.push('## Verdict (candidate vs baseline)')
+  lines.push('## Verdict')
   lines.push('')
-  lines.push(`Noise band: any change within ±${NOISE_BAND_PCT}% is reported as "same" — runner variability + median-of-3 doesn't reliably resolve smaller deltas on GitHub-hosted runners.`)
-  lines.push('')
-  lines.push('| Platform / Backend | vis-enc | TTFT | TPS | wall | recall |')
-  lines.push('|---|---|---|---|---|---|')
-  for (const { c, b } of pairs) {
-    const cm = c.metrics || {}; const bm = b.metrics || {}
-    const v_vis = verdictFor(cm.visionEncodeMs_median, bm.visionEncodeMs_median, true)
-    const v_ttft = verdictFor(cm.ttftMs_median, bm.ttftMs_median, true)
-    const v_tps = verdictFor(cm.decodeTps_median, bm.decodeTps_median, false)
-    const v_wall = verdictFor(cm.wallMs_median, bm.wallMs_median, true)
-    // Recall is exact-match for now: same recall = same; otherwise
-    // worse if candidate recalls fewer, better if more.
-    let recallVerdict = 'same'
-    if (cm.recallScore_median != null && bm.recallScore_median != null) {
-      if (cm.recallScore_median > bm.recallScore_median) recallVerdict = 'better'
-      else if (cm.recallScore_median < bm.recallScore_median) recallVerdict = 'worse'
-    }
-    const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
-    lines.push(`| ${c.platform}-${c.arch} / ${c.backend} | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_wall)} | ${cm.objectsRecalled ?? '-'}/${cm.objectsTotal ?? '-'} vs ${bm.objectsRecalled ?? '-'}/${bm.objectsTotal ?? '-'} - ${recallVerdict} |`)
-  }
+  lines.push(`Noise band: any change within +-${NOISE_BAND_PCT}% is reported as "same".`)
   lines.push('')
 
-  // Sanity check: are the two refs the same npm version? When yes, the
-  // benchmark exercised the SAME prebuilds twice, and the verdict above
-  // is just measurement noise. Surface that explicitly so reviewers
-  // don't celebrate a non-comparison.
-  const sameVersions = pairs.every(({ c, b }) => {
-    const cLabel = String(c.sourceLabel || '')
-    const bLabel = String(b.sourceLabel || '')
-    return cLabel === bLabel
-  })
-  if (sameVersions) {
-    lines.push('> **Warning**: candidate and baseline resolved to the same addon source. The numbers above are noise, not a real comparison. This usually means the branch did not bump `packages/llm-llamacpp/package.json#version` between the merge-base and HEAD. A true source-level compare requires building the addon at both commits (planned follow-up).')
-    lines.push('')
+  for (const pair of pairs) {
+    let pairHasData = false
+    const pairLines = []
+    pairLines.push(`### ${pair.label}`)
+    pairLines.push('')
+    pairLines.push('| Platform / Backend | vis-enc | TTFT | TPS | wall | recall |')
+    pairLines.push('|---|---|---|---|---|---|')
+
+    for (const [k, bySource] of groups) {
+      const a = bySource.get(pair.a)
+      const b = bySource.get(pair.b)
+      if (!a || !b) continue
+      pairHasData = true
+      const am = a.metrics || {}
+      const bm = b.metrics || {}
+      const v_vis = verdictFor(am.visionEncodeMs_median, bm.visionEncodeMs_median, true)
+      const v_ttft = verdictFor(am.ttftMs_median, bm.ttftMs_median, true)
+      const v_tps = verdictFor(am.decodeTps_median, bm.decodeTps_median, false)
+      const v_wall = verdictFor(am.wallMs_median, bm.wallMs_median, true)
+      const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
+      pairLines.push(`| ${a.platform}-${a.arch} / ${a.backend} | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_wall)} | ${am.objectsRecalled ?? '-'}/${am.objectsTotal ?? '-'} vs ${bm.objectsRecalled ?? '-'}/${bm.objectsTotal ?? '-'} |`)
+    }
+    pairLines.push('')
+    if (pairHasData) lines.push(...pairLines)
   }
+
   return lines.join('\n')
 }
 
@@ -327,42 +371,55 @@ function renderVerdictBlock (reports) {
 function renderModelProvenance (reports) {
   const firstVlm = reports.find((r) => r.kind === 'vlm-perf')
   if (!firstVlm) return null
-  const sources = firstVlm.data && firstVlm.data.meta && firstVlm.data.meta.modelSources
+  const meta = firstVlm.data && firstVlm.data.meta
+  if (!meta) return null
+
+  // New format: single model shared by all sources
+  const model = meta.model
+  if (model && model.provenance) {
+    const llm = (model.provenance && model.provenance.llm) || {}
+    const mm = (model.provenance && model.provenance.mmproj) || {}
+    const lines = []
+    lines.push('## Model provenance')
+    lines.push('')
+    lines.push('Single model shared across all inference sources.')
+    lines.push('')
+    const repoCell = model.hfRepo
+      ? `\`${model.hfRepo}\` @ \`${(model.hfRevision || '?').slice(0, 8)}\``
+      : '-'
+    lines.push(`- **Model**: ${model.label || model.quant || '?'}`)
+    lines.push(`- **Repo**: ${repoCell}`)
+    lines.push(`- **Quant**: ${model.quant || '-'}`)
+    if (llm.sizeMb != null) lines.push(`- **LLM size**: ${llm.sizeMb} MB`)
+    if (llm.sha256) lines.push(`- **LLM SHA-256**: \`${llm.sha256.slice(0, 16)}...\``)
+    if (mm.sizeMb != null) lines.push(`- **mmproj size**: ${mm.sizeMb} MB`)
+    if (mm.sha256) lines.push(`- **mmproj SHA-256**: \`${mm.sha256.slice(0, 16)}...\``)
+    lines.push('')
+    return lines.join('\n')
+  }
+
+  // Legacy format: per-source model provenance
+  const sources = meta.modelSources
   if (!sources || sources.length === 0) return null
 
   const lines = []
   lines.push('## Model provenance')
   lines.push('')
-  lines.push('Exactly which GGUF blobs produced the rows above. SHA-256 + byte size make the rows reproducible if you re-download from the same URL.')
-  lines.push('')
-  lines.push('| Source | Repo @ revision | Quant | LLM URL | LLM size | LLM SHA-256 | mmproj size | mmproj SHA-256 |')
-  lines.push('|---|---|---|---|---|---|---|---|')
+  lines.push('| Source | Repo @ revision | Quant | LLM size | LLM SHA-256 | mmproj size | mmproj SHA-256 |')
+  lines.push('|---|---|---|---|---|---|---|')
   for (const s of sources) {
     const llm = (s.provenance && s.provenance.llm) || {}
     const mm = (s.provenance && s.provenance.mmproj) || {}
     const repoCell = s.hfRepo
-      ? `\`${s.hfRepo}\`<br/>@\`${(s.hfRevision || '?').slice(0, 8)}\``
+      ? `\`${s.hfRepo}\` @ \`${(s.hfRevision || '?').slice(0, 8)}\``
       : '-'
-    const url = llm.url ? llm.url.replace(/.*\//, '') : '-'
     const llmSize = llm.sizeMb != null ? `${llm.sizeMb} MB` : '-'
     const mmSize = mm.sizeMb != null ? `${mm.sizeMb} MB` : '-'
-    const llmHash = llm.sha256 ? `\`${llm.sha256.slice(0, 12)}…\`` : '-'
-    const mmHash = mm.sha256 ? `\`${mm.sha256.slice(0, 12)}…\`` : '-'
-    lines.push(`| **${s.label}** | ${repoCell} | ${s.quant || '-'} | \`${url}\` | ${llmSize} | ${llmHash} | ${mmSize} | ${mmHash} |`)
+    const llmHash = llm.sha256 ? `\`${llm.sha256.slice(0, 12)}...\`` : '-'
+    const mmHash = mm.sha256 ? `\`${mm.sha256.slice(0, 12)}...\`` : '-'
+    lines.push(`| **${s.label}** | ${repoCell} | ${s.quant || '-'} | ${llmSize} | ${llmHash} | ${mmSize} | ${mmHash} |`)
   }
   lines.push('')
-  // If the verdict block exists and the two sources have IDENTICAL
-  // LLM hashes, the verdict numbers above are noise — call that out.
-  if (sources.length === 2) {
-    const cand = sources.find((s) => s.key === 'candidate')
-    const base = sources.find((s) => s.key === 'baseline')
-    const candHash = cand && cand.provenance && cand.provenance.llm && cand.provenance.llm.sha256
-    const baseHash = base && base.provenance && base.provenance.llm && base.provenance.llm.sha256
-    if (candHash && baseHash && candHash === baseHash) {
-      lines.push('> **Heads-up**: candidate and baseline LLM blobs have **identical SHA-256** — they\'re the same file, so any perf delta in the verdict above is measurement noise.')
-      lines.push('')
-    }
-  }
   return lines.join('\n')
 }
 
@@ -410,7 +467,8 @@ function renderConsolidatedMarkdown (reports, commitInfo) {
   // being compared.
   lines.push('## Run setup')
   lines.push('')
-  lines.push(`- **Model family**: \`${firstMeta.modelId || 'unknown'}\``)
+  const modelLabel = firstMeta.modelLabel ? ` (${firstMeta.modelLabel})` : ''
+  lines.push(`- **Model**: \`${firstMeta.modelId || 'unknown'}\`${modelLabel}${firstMeta.modelQuant ? `, ${firstMeta.modelQuant}` : ''}`)
   lines.push(`- **Image**: \`${firstMeta.image || 'unknown'}\``)
   lines.push(`- **Prompt**: \`${firstMeta.prompt || 'unknown'}\``)
   if (firstMeta.groundTruth) {
@@ -458,7 +516,11 @@ function renderConsolidatedMarkdown (reports, commitInfo) {
   const platformBlocks = renderPerPlatformBlocks(reports)
   for (const ln of platformBlocks) lines.push(ln)
 
-  // Model provenance — exact source the candidate / baseline rows
+  // Verdict block — pairwise comparison verdicts across platforms.
+  const verdictBlock = renderVerdictBlock(reports)
+  if (verdictBlock) lines.push(verdictBlock)
+
+  // Model provenance — exact source the model rows
   // came from. SHA-256 + byte size + URL lets a reviewer trace which
   // blob each row used.
   const modelBlock = renderModelProvenance(reports)

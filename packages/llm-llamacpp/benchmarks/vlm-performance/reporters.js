@@ -28,13 +28,14 @@ function pickMetric (run, key) {
     case 'loadMs': return sm.loadMs != null ? sm.loadMs : null
     case 'generatedTokens': return st.generatedTokens != null ? st.generatedTokens : null
     case 'promptTokens': return st.promptTokens != null ? st.promptTokens : null
+    case 'peakRssMb': return run.peakRssMb != null ? run.peakRssMb : null
     default: return null
   }
 }
 
 function aggregateCell (cell) {
   const okRuns = cell.runs.filter((r) => r.ok)
-  const fields = ['visionEncodeMs', 'ttftMs', 'decodeTps', 'ppTps', 'decodeMs', 'loadMs', 'wallMs', 'generatedTokens', 'promptTokens']
+  const fields = ['visionEncodeMs', 'ttftMs', 'decodeTps', 'ppTps', 'decodeMs', 'loadMs', 'wallMs', 'peakRssMb', 'generatedTokens', 'promptTokens']
 
   const agg = {
     repeats: okRuns.length,
@@ -142,7 +143,7 @@ function renderFullMatrixMarkdown (summary, meta) {
   for (const [platform, rows] of byPlatform) {
     lines.push(`## ${platform}`)
     lines.push('')
-    lines.push('| Backend (requested / actual) | Source | runs | vis-enc (ms) | TTFT (ms) | TPS | wall (ms) | recall | objects | status |')
+    lines.push('| Backend (requested / actual) | Source | runs | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
     lines.push('|---|---|---|---|---|---|---|---|---|---|')
     for (const r of rows) {
       const m = r.metrics
@@ -151,13 +152,10 @@ function renderFullMatrixMarkdown (summary, meta) {
       const recall = m.recallScore_median != null
         ? `${m.objectsRecalled}/${m.objectsTotal} (${m.recallScore_median.toFixed(2)})`
         : '-'
-      const objects = m.repeats === 0
-        ? '-'
-        : (m.objectsMissed && m.objectsMissed.length ? `missed: ${m.objectsMissed.join(', ')}` : 'all')
       const repeats = m.repeatsTotal != null ? `${m.repeats}/${m.repeatsTotal}` : `${m.repeats}`
       const actual = m.actualBackends && m.actualBackends.length ? m.actualBackends.join(',') : '-'
       const backendCol = `${r.backend} / ${actual}`
-      lines.push(`| ${backendCol} | ${r.sourceLabel} | ${repeats} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.wallMs_median)} | ${recall} | ${objects} | ${status} |`)
+      lines.push(`| ${backendCol} | ${r.sourceLabel} | ${repeats} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`)
     }
     lines.push('')
   }
@@ -197,32 +195,55 @@ function renderFullMatrixMarkdown (summary, meta) {
   return lines.join('\n')
 }
 
+// Pairwise comparisons for the 3-source benchmark. Each pair answers
+// a different question:
+//   addon vs fabric   → JS binding overhead
+//   fabric vs upstream → fork divergence
+//   addon vs upstream  → combined overhead
+const COMPARISON_PAIRS = [
+  { a: 'addon', b: 'fabric', label: 'addon vs fabric-cli (JS binding overhead)' },
+  { a: 'fabric', b: 'upstream', label: 'fabric-cli vs upstream-cli (fork divergence)' },
+  { a: 'addon', b: 'upstream', label: 'addon vs upstream-cli (combined)' }
+]
+
 function renderDeltaMarkdown (summary) {
-  // Group by (platform, backend); within each group expect candidate +
-  // baseline. Emit a candidate-vs-baseline delta.
+  // Group by (platform, backend); within each group collect all sources.
   const groups = new Map()
   for (const s of summary) {
     const k = `${s.platform}-${s.arch}|${s.backend}`
     if (!groups.has(k)) groups.set(k, {})
-    if (s.sourceKey === 'candidate') groups.get(k).candidate = s
-    if (s.sourceKey === 'baseline') groups.get(k).baseline = s
+    groups.get(k)[s.sourceKey] = s
   }
 
+  // Discover which source keys are present
+  const sourceKeys = new Set(summary.map((s) => s.sourceKey))
+
   const lines = []
-  lines.push('## VLM Benchmark - candidate vs baseline')
+  lines.push('# VLM Benchmark - source comparison deltas')
   lines.push('')
-  lines.push('| Platform | Backend | vis-enc | TTFT | TPS | wall | recall (cand) | recall (base) |')
-  lines.push('|---|---|---|---|---|---|---|---|')
-  for (const [k, { candidate, baseline }] of groups) {
-    if (!candidate) continue
-    const cm = candidate.metrics
-    const bm = baseline ? baseline.metrics : {}
-    const recallC = cm.recallScore_median != null ? cm.recallScore_median.toFixed(2) : '-'
-    const recallB = bm.recallScore_median != null ? bm.recallScore_median.toFixed(2) : '-'
-    lines.push(`| ${candidate.platform}-${candidate.arch} | ${candidate.backend} | ${fmtDelta(cm.visionEncodeMs_median, bm.visionEncodeMs_median)} | ${fmtDelta(cm.ttftMs_median, bm.ttftMs_median)} | ${fmtDelta(cm.decodeTps_median, bm.decodeTps_median)} | ${fmtDelta(cm.wallMs_median, bm.wallMs_median)} | ${recallC} | ${recallB} |`)
+
+  for (const pair of COMPARISON_PAIRS) {
+    if (!sourceKeys.has(pair.a) || !sourceKeys.has(pair.b)) continue
+
+    lines.push(`## ${pair.label}`)
+    lines.push('')
+    lines.push(`| Platform | Backend | vis-enc | TTFT | TPS | RSS | wall | recall (${pair.a}) | recall (${pair.b}) |`)
+    lines.push('|---|---|---|---|---|---|---|---|---|')
+
+    for (const [, bySource] of groups) {
+      const a = bySource[pair.a]
+      const b = bySource[pair.b]
+      if (!a) continue
+      const am = a.metrics
+      const bm = b ? b.metrics : {}
+      const recallA = am.recallScore_median != null ? am.recallScore_median.toFixed(2) : '-'
+      const recallB = bm.recallScore_median != null ? bm.recallScore_median.toFixed(2) : '-'
+      lines.push(`| ${a.platform}-${a.arch} | ${a.backend} | ${fmtDelta(am.visionEncodeMs_median, bm.visionEncodeMs_median)} | ${fmtDelta(am.ttftMs_median, bm.ttftMs_median)} | ${fmtDelta(am.decodeTps_median, bm.decodeTps_median)} | ${fmtDelta(am.peakRssMb_median, bm.peakRssMb_median)} | ${fmtDelta(am.wallMs_median, bm.wallMs_median)} | ${recallA} | ${recallB} |`)
+    }
+    lines.push('')
   }
-  lines.push('')
-  lines.push('Note: vis-enc / TTFT / wall - negative delta is better. TPS - positive delta is better. Recall is not gated in V1.')
+
+  lines.push('Note: vis-enc / TTFT / wall - negative delta is better (faster). TPS - positive delta is better (more throughput).')
   return lines.join('\n')
 }
 

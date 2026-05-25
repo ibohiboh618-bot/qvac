@@ -169,15 +169,17 @@ async function main () {
       tap.clear()
       try {
         const r = await runOnce({ inference, imagePath: spec.imagePath, prompt: spec.prompt, thinkingEnabled: spec.thinkingEnabled })
+        const peakRssBytes = process.memoryUsage().rss
         const stdoutMetricsJs = parseStdoutMetrics(tap.text())
         const accuracy = scoreAnswer(r.text, spec.groundTruth)
         runs.push({
           index: i,
           ok: true,
           wallMs: r.wallMs,
+          peakRssMb: Math.round((peakRssBytes / (1024 * 1024)) * 100) / 100,
           stats: r.stats,
-          stdoutMetricsJs,           // metrics seen via the JS logger (usually empty)
-          stdoutMetrics: stdoutMetricsJs, // filled in by orchestrator from captured host stderr
+          stdoutMetricsJs,
+          stdoutMetrics: stdoutMetricsJs,
           accuracy,
           fullAnswer: truncate(r.text, spec.answerTruncChars || 8000)
         })

@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 'use strict'
 
-// Orchestrator. Sequence:
-//   1. Parse CLI args + load config.
-//   2. Make sure models are present (calls prepare-models.js if needed).
-//   3. Resolve sources (candidate + baseline).
-//   4. For each (source, backend), spawn `bare case-runner.js` once,
-//      capture the per-cell JSON, aggregate.
-//   5. Write reports (full matrix + delta MD, plus raw JSON).
+// Orchestrator for the 3-source VLM benchmark.
 //
-// Backends are picked from --backends or fall back to a sensible
-// platform default. The platform list itself is V1-fixed to "the
-// machine you're running on" when triggered locally; CI matrix overrides
-// platforms via the workflow.
+// Sequence:
+//   1. Parse CLI args + load config.
+//   2. Resolve model (single model shared by all sources).
+//   3. Resolve sources (addon, fabric-cli, upstream-cli).
+//   4. For each (source, backend):
+//        addon  → spawn `bare case-runner.js`
+//        cli    → spawn `node cli-case-runner.js`
+//   5. Write reports (full matrix + delta MD, plus raw JSON).
 
 const fs = require('fs')
 const path = require('path')
@@ -21,15 +19,11 @@ const { spawnSync } = require('child_process')
 
 const config = require('./vlm-bench.config')
 const { parseArgs, csvOrArray } = require('./utils')
+const { resolveSources } = require('./source-resolver')
 const { buildSummary, writeReports } = require('./reporters')
 const { parseStdoutMetrics } = require('./stdout-parser')
 const { detectAll, hasUsableGpu } = require('./hardware')
 
-// Software provenance: what version of @qvac/llm-llamacpp was loaded,
-// where its prebuild lives on disk, which bare CLI we spawned, plus
-// git info for this checkout. All of it gets stamped into the per-
-// platform JSON so the consolidated report can render an exact
-// "what produced this row" footprint.
 function safeExecStr (cmd, args) {
   try { return require('child_process').execFileSync(cmd, args, { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return null }
 }
@@ -39,13 +33,10 @@ function safeReadJson (filePath) {
 }
 
 function detectAddonProvenance () {
-  // Look at the npm-installed addon in our package's node_modules.
   const pkgPath = path.join(SCRIPT_DIR, 'node_modules', '@qvac', 'llm-llamacpp', 'package.json')
   const pkg = safeReadJson(pkgPath)
   if (!pkg) return null
   const addonRoot = path.dirname(pkgPath)
-  // Find the platform-matching prebuild binary actually used by the
-  // addon. Naming: prebuilds/<platform>-<arch>/qvac__llm-llamacpp.bare
   const prebuildDir = path.join(addonRoot, 'prebuilds', `${process.platform}-${process.arch}`)
   let prebuildFile = null
   let prebuildSize = null
@@ -73,8 +64,6 @@ function detectAddonProvenance () {
 }
 
 function detectBareProvenance () {
-  // Prefer the version of the local bare we invoke (set up in
-  // resolveLocalBare); fall back to a global bare on PATH.
   const localBareBin = path.join(SCRIPT_DIR, 'node_modules', 'bare', 'bin', 'bare')
   if (fs.existsSync(localBareBin)) {
     const ver = safeExecStr(process.execPath, [localBareBin, '--version'])
@@ -85,8 +74,6 @@ function detectBareProvenance () {
 }
 
 function detectGitProvenance () {
-  // Best-effort — the script may run from a worktree without git, or
-  // from a sparse-checkout. Any field can come back null.
   const sha = safeExecStr('git', ['-C', SCRIPT_DIR, 'rev-parse', 'HEAD'])
   if (!sha) return null
   return {
@@ -114,11 +101,6 @@ function parseBooleanFlag (raw) {
 }
 
 function resolveThinkingFlag (args, cfg) {
-  // CLI surface: any one of these works.
-  //   --thinking=on / --thinking=off
-  //   --enable-thinking      (force on)
-  //   --disable-thinking     (force off)
-  // Falls back to cfg.thinking.enabled (default: false).
   if ('enable-thinking' in args && args['enable-thinking'] !== false) return true
   if ('disable-thinking' in args && args['disable-thinking'] !== false) return false
   if ('thinking' in args) {
@@ -135,8 +117,6 @@ function detectPlatformKey () {
   if (p === 'darwin' && a === 'arm64') return 'macos-arm64'
   if (p === 'win32' && a === 'x64') return 'windows-x64'
   if (p === 'linux' && a === 'x64') return 'linux-x64'
-  // Mobile platforms aren't reached locally; CI builds drop us into
-  // the right context directly.
   return `${p}-${a}`
 }
 
@@ -149,35 +129,23 @@ function pickBackends (args, platformKey, hardwareInfo) {
     const platform = config.platforms[platformKey]
     backends = platform && Array.isArray(platform.backends) ? platform.backends.slice() : ['gpu']
   }
-  // Drop the 'gpu' row when the runner clearly has no real GPU
-  // (CI runners that don't expose dedicated hardware). The addon would
-  // silently fall back to CPU and produce a row that's identical to
-  // the 'cpu' row, which is misleading. Override with --force-gpu-row
-  // when you specifically want to surface that fallback behaviour.
   if (!args['force-gpu-row'] && !hasUsableGpu(hardwareInfo)) {
     backends = backends.filter((b) => b !== 'gpu')
   }
   return backends
 }
 
-function ensureModelsResolved (args, compareBaseline) {
-  // Re-run prepare-models when (a) no resolved-models.json exists,
-  // (b) --force-prepare is set, or (c) compare-baseline is on but the
-  // existing resolution didn't include a baseline.
+function ensureModelsResolved (args) {
   let cached = null
   if (fs.existsSync(RESOLVED_MODELS_PATH)) {
     try { cached = JSON.parse(fs.readFileSync(RESOLVED_MODELS_PATH, 'utf8')) } catch {}
   }
-  const needsRerun = !cached || args['force-prepare'] || (compareBaseline && !cached.baseline)
-  if (!needsRerun) return cached
+  if (cached && !args['force-prepare']) return cached
 
-  log('running prepare-models.js' + (compareBaseline ? ' (with --compare-baseline)' : ''))
+  log('running prepare-models.js')
   const passThrough = []
-  if (compareBaseline) passThrough.push('--compare-baseline')
-  if (args['local-candidate-model']) passThrough.push('--local-candidate-model', args['local-candidate-model'])
-  if (args['local-candidate-mmproj']) passThrough.push('--local-candidate-mmproj', args['local-candidate-mmproj'])
-  if (args['local-baseline-model']) passThrough.push('--local-baseline-model', args['local-baseline-model'])
-  if (args['local-baseline-mmproj']) passThrough.push('--local-baseline-mmproj', args['local-baseline-mmproj'])
+  if (args['local-model']) passThrough.push('--local-model', args['local-model'])
+  if (args['local-mmproj']) passThrough.push('--local-mmproj', args['local-mmproj'])
   const r = spawnSync(process.execPath, [path.join(SCRIPT_DIR, 'prepare-models.js'), ...passThrough], {
     cwd: SCRIPT_DIR,
     stdio: 'inherit',
@@ -189,14 +157,14 @@ function ensureModelsResolved (args, compareBaseline) {
   return JSON.parse(fs.readFileSync(RESOLVED_MODELS_PATH, 'utf8'))
 }
 
-function buildCaseSpec ({ source, backend, modelSrc, imagePath, runArgs }) {
-  return {
-    sourceKey: source.key,                       // 'candidate' or 'baseline'
-    sourceLabel: source.label,                   // 'model@hf' / 'model@registry'
-    addonRequirePath: source.addonPath || 'local',
+function buildCaseSpec ({ source, backend, model, imagePath, runArgs }) {
+  const base = {
+    sourceKey: source.key,
+    sourceLabel: source.label,
+    sourceType: source.type,
     backend,
-    llmPath: modelSrc.llmPath,
-    mmprojPath: modelSrc.mmprojPath,
+    llmPath: model.llmPath,
+    mmprojPath: model.mmprojPath,
     imagePath,
     prompt: config.case.prompt,
     ctxSize: config.model.ctxSize,
@@ -207,22 +175,25 @@ function buildCaseSpec ({ source, backend, modelSrc, imagePath, runArgs }) {
     warmupRuns: runArgs.warmupRuns,
     measuredRuns: runArgs.measuredRuns,
     cooldownMs: runArgs.cooldownMs,
+    perRunTimeoutMs: config.run.perRunTimeoutMs,
     groundTruth: config.case.groundTruth,
     answerTruncChars: config.reporting.answerTruncChars
   }
+  if (source.type === 'addon') {
+    base.addonRequirePath = source.addonPath || 'local'
+  } else if (source.type === 'cli') {
+    base.cliBinaryPath = source.binaryPath
+  }
+  return base
 }
 
 function resolveLocalBare () {
-  // Prefer the package-local `bare` (installed as a dep) over a global
-  // install — global -g bare can be missing or stale on dev hosts and
-  // requires a separate setup step, but `npm install` here gives us a
-  // known-good version pinned in package.json.
   const localBin = path.join(SCRIPT_DIR, 'node_modules', 'bare', 'bin', 'bare')
   if (fs.existsSync(localBin)) return localBin
   return null
 }
 
-function runOneCell (spec, resultsDir, cellIdx) {
+function runAddonCell (spec, resultsDir, cellIdx) {
   const specPath = path.join(resultsDir, `cell-${cellIdx}-spec.json`)
   const resultPath = path.join(resultsDir, `cell-${cellIdx}-result.json`)
   fs.writeFileSync(specPath, JSON.stringify(spec, null, 2))
@@ -235,13 +206,6 @@ function runOneCell (spec, resultsDir, cellIdx) {
 
   const localBare = resolveLocalBare()
   log(`spawning bare case-runner: ${spec.sourceLabel} / ${spec.backend}`)
-  // The local bare entry is a Node.js script (`bin/bare`) without a
-  // shebang on Windows — invoke it through node. Falls back to the
-  // global `bare` on PATH if no local install is present.
-  // stdio captured (not inherited) so the real error message ends up
-  // in the cell result on failure, instead of just "exited with 1".
-  const stdoutBuf = []
-  const stderrBuf = []
   const spawnArgs = localBare
     ? [process.execPath, [localBare, path.join(SCRIPT_DIR, 'case-runner.js')]]
     : ['bare', [path.join(SCRIPT_DIR, 'case-runner.js')]]
@@ -251,15 +215,13 @@ function runOneCell (spec, resultsDir, cellIdx) {
     shell: !localBare && process.platform === 'win32',
     encoding: 'utf8'
   })
-  if (r.stdout) { stdoutBuf.push(r.stdout); process.stdout.write(r.stdout) }
-  if (r.stderr) { stderrBuf.push(r.stderr); process.stderr.write(r.stderr) }
-  // Always persist the spawn streams alongside the per-cell JSON. The
-  // C++ stdio of the addon (vision-encode / eval-time / load-time
-  // lines) goes through the bare process's stderr, not our JS logger;
-  // we parse it after the fact and merge metrics into the per-run
-  // entries the case-runner wrote.
-  const fullLog = stderrBuf.join('') + '\n--- stdout ---\n' + stdoutBuf.join('')
-  const logPath = path.join(path.dirname(resultPath), `cell-${cellIdx}-stderr.log`)
+  const stdoutBuf = r.stdout || ''
+  const stderrBuf = r.stderr || ''
+  if (stdoutBuf) process.stdout.write(stdoutBuf)
+  if (stderrBuf) process.stderr.write(stderrBuf)
+
+  const fullLog = stderrBuf + '\n--- stdout ---\n' + stdoutBuf
+  const logPath = path.join(resultsDir, `cell-${cellIdx}-stderr.log`)
   fs.writeFileSync(logPath, fullLog)
 
   if (r.error) throw new Error(`spawn failed: ${r.error.message}`)
@@ -273,20 +235,58 @@ function runOneCell (spec, resultsDir, cellIdx) {
   }
 
   const cell = JSON.parse(fs.readFileSync(resultPath, 'utf8'))
-  // Merge host-captured stdout metrics into the run records by index,
-  // using BENCH_RUN_BEGIN/END markers the case-runner emits.
   mergeHostStdoutMetrics(cell, fullLog)
   return cell
 }
 
+function runCliCell (spec, resultsDir, cellIdx) {
+  const specPath = path.join(resultsDir, `cell-${cellIdx}-spec.json`)
+  const resultPath = path.join(resultsDir, `cell-${cellIdx}-result.json`)
+  fs.writeFileSync(specPath, JSON.stringify(spec, null, 2))
+
+  const env = {
+    ...process.env,
+    VLM_CASE_SPEC_PATH: specPath,
+    VLM_RESULT_PATH: resultPath
+  }
+
+  log(`spawning cli-case-runner: ${spec.sourceLabel} / ${spec.backend}`)
+  const r = spawnSync(process.execPath, [path.join(SCRIPT_DIR, 'cli-case-runner.js')], {
+    cwd: SCRIPT_DIR,
+    env,
+    encoding: 'utf8'
+  })
+  const stdoutBuf = r.stdout || ''
+  const stderrBuf = r.stderr || ''
+  if (stdoutBuf) process.stdout.write(stdoutBuf)
+  if (stderrBuf) process.stderr.write(stderrBuf)
+
+  const fullLog = stderrBuf + '\n--- stdout ---\n' + stdoutBuf
+  const logPath = path.join(resultsDir, `cell-${cellIdx}-stderr.log`)
+  fs.writeFileSync(logPath, fullLog)
+
+  if (r.error) throw new Error(`spawn failed: ${r.error.message}`)
+  if (r.status !== 0) {
+    const allLines = fullLog.trim().split('\n')
+    const tail = allLines.slice(-10).join('\n  ')
+    throw new Error(`cli-case-runner exited with status ${r.status} for ${spec.sourceLabel} / ${spec.backend}.\n  ${tail}\nFull log: ${logPath}`)
+  }
+
+  const cell = JSON.parse(fs.readFileSync(resultPath, 'utf8'))
+  mergeHostStdoutMetrics(cell, fullLog)
+  return cell
+}
+
+function runOneCell (spec, resultsDir, cellIdx) {
+  if (spec.sourceType === 'cli') {
+    return runCliCell(spec, resultsDir, cellIdx)
+  }
+  return runAddonCell(spec, resultsDir, cellIdx)
+}
+
 function mergeHostStdoutMetrics (cell, fullLog) {
-  // Vision-encode timing is emitted once per session — during model
-  // load / warmup, before any [BENCH_RUN_BEGIN] markers. Scrape the
-  // full log for it and attach to every measured run.
   const sessionMetrics = parseStdoutMetrics(fullLog)
 
-  // Per-run metrics (prompt eval / decode / total) appear inside the
-  // run window when llama.cpp's perf print runs at end-of-inference.
   const segmentRegex = /\[BENCH_RUN_BEGIN (warmup|measured) (\d+)\]([\s\S]*?)\[BENCH_RUN_END \1 \2\]/g
   const perRunMetrics = new Map()
   let m
@@ -300,8 +300,6 @@ function mergeHostStdoutMetrics (cell, fullLog) {
   for (const run of cell.runs) {
     if (!run.ok) continue
     const segmentMetrics = perRunMetrics.get(run.index) || {}
-    // Session-scope visionEncodeMs only — keep per-run values from the
-    // segment if the addon does emit them in newer versions.
     run.stdoutMetrics = {
       ...(run.stdoutMetrics || {}),
       ...(sessionMetrics.visionEncodeMs != null ? { visionEncodeMs: sessionMetrics.visionEncodeMs } : {}),
@@ -320,37 +318,35 @@ async function main () {
     thinkingEnabled: resolveThinkingFlag(args, config)
   }
 
-  const compareBaseline = Boolean(args['compare-baseline'])
-  const resolved = ensureModelsResolved(args, compareBaseline)
+  const resolved = ensureModelsResolved(args)
   const platformKey = detectPlatformKey()
   const hardwareInfo = detectAll()
   log(`hardware: cpu="${hardwareInfo.cpu.model}" cores=${hardwareInfo.cpu.cores} ram=${hardwareInfo.ram.totalGb}GB gpus=${hardwareInfo.gpus.length}`)
   for (const g of hardwareInfo.gpus) log(`  GPU: ${g.vendor || ''} ${g.model || '?'} ${g.memoryMb ? `(${g.memoryMb}MB)` : ''}`)
   const backends = pickBackends(args, platformKey, hardwareInfo)
   if (backends.length === 0) {
-    throw new Error('No backends resolved for this host (--force-gpu-row may help if you specifically want to surface the GPU-fallback-to-CPU case).')
+    throw new Error('No backends resolved for this host (--force-gpu-row may help).')
   }
   log(`backends to run: ${backends.join(', ')}`)
 
-  // Model sources: candidate is always run; baseline is only run when
-  // --compare-baseline was passed AND prepare-models successfully
-  // resolved it.
-  const modelSources = [
-    { key: 'candidate', label: `model@${resolved.candidate.label}`, model: resolved.candidate }
-  ]
-  if (compareBaseline) {
-    if (resolved.baseline) {
-      modelSources.push({ key: 'baseline', label: `model@${resolved.baseline.label}`, model: resolved.baseline })
-    } else {
-      log('--compare-baseline was set but no baseline was resolved; candidate-only run')
+  // Resolve the 3 inference sources
+  const sources = resolveSources(config, args)
+  const runnableSources = sources.filter((s) => {
+    if (s.type === 'cli' && s.requiresBuild) {
+      log(`skipping ${s.key}: CLI binary not built (run scripts/build-cli-sources.js first)`)
+      return false
     }
-  }
-  log(`model sources: ${modelSources.map((s) => s.label).join(', ')}`)
+    if (s.type === 'cli' && !s.binaryPath) {
+      log(`skipping ${s.key}: no binary path resolved`)
+      return false
+    }
+    return true
+  })
 
-  // Addon source is uniform — we always use the npm-installed
-  // @qvac/llm-llamacpp. The candidate vs baseline split now happens
-  // along the *model* axis.
-  const addonSource = { key: 'addon', label: 'addon@npm', addonPath: null }
+  if (runnableSources.length === 0) {
+    throw new Error('No runnable sources. Ensure at least one source is available.')
+  }
+  log(`sources: ${runnableSources.map((s) => `${s.key}(${s.type})`).join(', ')}`)
 
   const imagePath = path.resolve(SCRIPT_DIR, config.case.image)
   if (!fs.existsSync(imagePath)) {
@@ -360,37 +356,92 @@ async function main () {
   const resultsDir = path.resolve(SCRIPT_DIR, args['results-dir'] || config.reporting.resultsDir)
   fs.mkdirSync(resultsDir, { recursive: true })
 
-  // For each backend × model-source pair, spawn one bare case-runner.
-  const cells = []
-  let cellIdx = 0
-  for (const modelSrc of modelSources) {
+  // Interleaved methodology: cycle through all (source, backend) pairs
+  // once per measured iteration, with cooldown between rounds. This
+  // reduces thermal/frequency bias compared to running all iterations
+  // for one source before moving to the next.
+  //
+  // Round-robin order per iteration:
+  //   iteration 1: addon/cpu, fabric/cpu, upstream/cpu, [cooldown]
+  //   iteration 2: addon/cpu, fabric/cpu, upstream/cpu, [cooldown]
+  //   ...
+  //
+  // Each spawn gets warmupRuns on the first iteration only, measuredRuns=1.
+  // Results are merged into one cell per (source, backend) at the end.
+
+  const cellPairs = []
+  for (const source of runnableSources) {
     for (const backend of backends) {
-      const source = { ...addonSource, key: modelSrc.key, label: modelSrc.label }
-      const spec = buildCaseSpec({ source, backend, modelSrc: modelSrc.model, imagePath, runArgs })
-      try {
-        const cell = runOneCell(spec, resultsDir, cellIdx++)
-        cells.push(cell)
-      } catch (e) {
-        log(`cell failed: ${e.message}`)
-        cells.push({
-          cell: {
-            sourceKey: source.key,
-            sourceLabel: source.label,
-            backend,
-            platform: os.platform(),
-            arch: os.arch()
-          },
-          runs: [],
-          errors: [{ phase: 'spawn', message: e.message }],
-          spec
-        })
-      }
+      cellPairs.push({ source, backend })
     }
   }
+
+  // Accumulate per-iteration single-run results keyed by "sourceKey|backend"
+  const accumulated = new Map()
+  for (const { source, backend } of cellPairs) {
+    accumulated.set(`${source.key}|${backend}`, {
+      cell: {
+        sourceKey: source.key,
+        sourceLabel: source.label,
+        backend,
+        platform: os.platform(),
+        arch: os.arch()
+      },
+      runs: [],
+      errors: [],
+      spec: null
+    })
+  }
+
+  let cellIdx = 0
+  const totalIterations = runArgs.warmupRuns + runArgs.measuredRuns
+
+  for (let iter = 0; iter < totalIterations; iter++) {
+    const isWarmup = iter < runArgs.warmupRuns
+    const phase = isWarmup ? 'warmup' : 'measured'
+    const iterNum = isWarmup ? iter : iter - runArgs.warmupRuns
+    log(`--- ${phase} iteration ${iterNum} (${cellPairs.length} cells) ---`)
+
+    for (const { source, backend } of cellPairs) {
+      const spec = buildCaseSpec({
+        source, backend, model: resolved, imagePath,
+        runArgs: { ...runArgs, warmupRuns: 0, measuredRuns: 1 }
+      })
+      const accKey = `${source.key}|${backend}`
+      const acc = accumulated.get(accKey)
+      if (!acc.spec) acc.spec = spec
+
+      try {
+        const cell = runOneCell(spec, resultsDir, cellIdx++)
+        if (!isWarmup && cell.runs) {
+          for (const run of cell.runs) {
+            if (run.ok) run.index = acc.runs.filter((r) => r.ok).length
+            acc.runs.push(run)
+          }
+        }
+        if (cell.errors) acc.errors.push(...cell.errors)
+      } catch (e) {
+        log(`cell failed (${phase} ${iterNum}): ${e.message}`)
+        if (!isWarmup) {
+          acc.errors.push({ phase: 'spawn', message: e.message })
+        }
+      }
+    }
+
+    if (runArgs.cooldownMs > 0) {
+      log(`cooldown ${runArgs.cooldownMs}ms`)
+      const end = Date.now() + runArgs.cooldownMs
+      while (Date.now() < end) { /* busy-wait */ }
+    }
+  }
+
+  const cells = Array.from(accumulated.values())
 
   const summary = buildSummary(cells)
   const meta = {
     modelId: config.model.id,
+    modelLabel: config.model.label,
+    modelQuant: config.model.quant,
     image: config.case.image,
     prompt: config.case.prompt,
     groundTruth: config.case.groundTruth.map((g) => g.canonical),
@@ -402,19 +453,22 @@ async function main () {
     platformKey,
     backends,
     hardware: hardwareInfo,
-    // Single source of truth for "what is this run comparing." Used
-    // by the consolidated report to render the top-level Comparison
-    // block. Extend the enum here when we add new comparison axes
-    // (e.g. 'addon-versions', 'git-hashes', 'thinking-modes').
-    comparisonMode: modelSources.length > 1 ? 'model-variants' : 'none',
-    modelSources: modelSources.map((s) => ({
+    methodology: 'interleaved',
+    comparisonMode: config.comparisonMode || (runnableSources.length > 1 ? 'source-engines' : 'none'),
+    sources: runnableSources.map((s) => ({
       key: s.key,
+      type: s.type,
       label: s.label,
-      quant: s.model.quant || null,
-      hfRepo: s.model.hfRepo || null,
-      hfRevision: s.model.hfRevision || null,
-      provenance: s.model.provenance || null
+      commitSha: s.commitSha || null,
+      provenance: s.provenance || null
     })),
+    model: {
+      label: resolved.label,
+      quant: resolved.quant,
+      hfRepo: resolved.hfRepo,
+      hfRevision: resolved.hfRevision,
+      provenance: resolved.provenance || null
+    },
     software: {
       addon: detectAddonProvenance(),
       bare: detectBareProvenance(),
