@@ -241,9 +241,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/cli-builds
-          key: vlm-cli-${{ matrix.platform }}-${{ inputs.fabric_ref }}-${{ inputs.upstream_ref }}
+          key: vlm-cli-v2-${{ matrix.platform }}-${{ inputs.fabric_ref }}-${{ inputs.upstream_ref }}
           restore-keys: |
-            vlm-cli-${{ matrix.platform }}-
+            vlm-cli-v2-${{ matrix.platform }}-
 
       - name: Build CLI sources
         if: inputs.run_fabric_cli || inputs.run_upstream_cli

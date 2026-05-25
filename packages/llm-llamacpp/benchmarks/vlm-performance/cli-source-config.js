@@ -20,8 +20,7 @@ module.exports = {
       LLAMA_BUILD_EXAMPLES: 'OFF',
       LLAMA_BUILD_SERVER: 'OFF',
       GGML_NATIVE: 'OFF',
-      GGML_OPENMP: 'OFF',
-      GGML_LLAMAFILE: 'OFF'
+      GGML_OPENMP: 'OFF'
     }
   },
   upstream: {
@@ -38,8 +37,7 @@ module.exports = {
       LLAMA_BUILD_EXAMPLES: 'OFF',
       LLAMA_BUILD_SERVER: 'OFF',
       GGML_NATIVE: 'OFF',
-      GGML_OPENMP: 'OFF',
-      GGML_LLAMAFILE: 'OFF'
+      GGML_OPENMP: 'OFF'
     }
   }
 }
