@@ -147,6 +147,7 @@ jobs:
 
     env:
       WORKDIR: ${{ inputs.workdir }}
+      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/vcpkg-overlays
 
     steps:
       - name: Echo workflow inputs
