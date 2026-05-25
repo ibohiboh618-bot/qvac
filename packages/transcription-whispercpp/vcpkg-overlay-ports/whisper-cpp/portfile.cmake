@@ -100,20 +100,24 @@ else()
   set(DL_BACKENDS OFF)
 endif()
 
-# Same spirv-headers include-shim as in the ggml-speech port: upstream
-# ggml v0.10.2 uses spv::* enums unconditionally in ggml-vulkan.cpp, and
-# ggml-vulkan's CMakeLists.txt does not call find_package(SpirvHeaders)
-# so the vcpkg-installed include prefix isn't visible to it by default.
-# MSVC's cl.exe does not understand `-isystem` (it treats the flag as a
-# positional source file argument and tries to compile the include path),
-# so use `/I` there and the GCC/Clang `-isystem` form elsewhere.
+# spirv-headers include shim: ggml-vulkan.cpp #includes
+# <spirv/unified1/spirv.hpp> unconditionally, but ggml-vulkan's
+# CMakeLists.txt does not call find_package(SpirvHeaders), so the
+# vcpkg-installed spirv-headers include prefix must be added explicitly.
+#
+# QVAC-19213: add it via CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES (a dedicated
+# system-include variable, emitted as -isystem / /external:I per compiler for
+# every C++ target) instead of stuffing it into CMAKE_CXX_FLAGS. Passing
+# `-DCMAKE_CXX_FLAGS=...` *replaced* the triplet's VCPKG_CXX_FLAGS — notably
+# `-stdlib=libc++` on the x64-linux / arm64-linux triplets — so ggml/whisper
+# built against GNU libstdc++ while the addon links libc++, producing
+# undefined-symbol link errors (std::__cxx11::*, std::filesystem::__cxx11::*,
+# std::_V2::system_category) in the addon's C++ unit tests. This variable
+# leaves CMAKE_CXX_FLAGS untouched, so the triplet's stdlib choice is honored
+# on every platform (Android keeps using the NDK libc++ as before).
 set(SPIRV_HEADERS_CFLAGS "")
 if("vulkan" IN_LIST FEATURES)
-  if(VCPKG_TARGET_IS_WINDOWS AND NOT VCPKG_TARGET_IS_MINGW)
-    set(SPIRV_HEADERS_CFLAGS "-DCMAKE_CXX_FLAGS=/I${CURRENT_INSTALLED_DIR}/include")
-  else()
-    set(SPIRV_HEADERS_CFLAGS "-DCMAKE_CXX_FLAGS=-isystem ${CURRENT_INSTALLED_DIR}/include")
-  endif()
+  set(SPIRV_HEADERS_CFLAGS "-DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES=${CURRENT_INSTALLED_DIR}/include")
 endif()
 
 vcpkg_cmake_configure(
