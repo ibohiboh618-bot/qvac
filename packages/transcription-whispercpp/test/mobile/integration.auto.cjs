@@ -31,14 +31,21 @@ async function runMobilePerfTinyCpuTest (options = {}) { // eslint-disable-line 
   return runIntegrationModule('../integration/mobile-perf-tiny-cpu.test.js', options)
 }
 
-async function runMobilePerfTinyGpuTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/mobile-perf-tiny-gpu.test.js', options)
-}
-
 async function runModelFileValidationTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/model-file-validation.test.js', options)
 }
 
 async function runMultipleTranscriptionsTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/multiple-transcriptions.test.js', options)
+}
+
+// QVAC-19213: ordered LAST on purpose. The mobile harness runs these test
+// functions in source order (build-test-app.js parseAsyncFunctions, no sort),
+// and the bare app shares one process per device — a GPU-teardown crash
+// (whisper.cpp#2373) triggers process.exit (wdio.template.js checkAppCrash),
+// aborting everything after it. Keeping the GPU case last means that if the
+// teardown crash still fires on the Samsung S25 Ultra, the other integration
+// cases have already completed and reported.
+async function runMobilePerfTinyGpuTest (options = {}) { // eslint-disable-line no-unused-vars
+  return runIntegrationModule('../integration/mobile-perf-tiny-gpu.test.js', options)
 }

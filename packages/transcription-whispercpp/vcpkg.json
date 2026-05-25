@@ -23,12 +23,5 @@
       "platform": "osx | ios"
     },
     "gtest"
-  ],
-  "overrides": [
-    {
-      "name": "whisper-cpp",
-      "version": "1.8.4.3",
-      "port-version": 0
-    }
   ]
 }
