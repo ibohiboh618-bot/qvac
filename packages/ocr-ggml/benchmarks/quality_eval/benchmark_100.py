@@ -125,8 +125,9 @@ def run_ggml_benchmark(images, name, detector, recognizer, pipeline):
                             total_regions += len(data['boxes'])
                         if 'time_ms' in data:
                             times.append(data['time_ms'] / 1000)
-                    except Exception:
-                        pass
+                    except json.JSONDecodeError:
+                        # Skip malformed JSON lines from batch output, but keep benchmark running.
+                        print("  Warning: Skipping malformed JSON line in benchmark output")
 
         label = f"QVAC {name}"
         print(f"\n{label} Results:")
