@@ -241,8 +241,8 @@ function renderPerPlatformBlocks (reports) {
       const actual = actualBackends.size ? Array.from(actualBackends).join(',') : '-'
       lines.push(`Backend requested: \`${backend}\` / actual: \`${actual}\``)
       lines.push('')
-      lines.push('| Source | runs | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
-      lines.push('|---|---|---|---|---|---|---|---|---|')
+      lines.push('| Source | runs | tokens | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
+      lines.push('|---|---|---|---|---|---|---|---|---|---|')
 
       // One row per source
       for (const row of brows) {
@@ -277,7 +277,8 @@ function perPlatformRow (sourceKey, row) {
     ? `${m.objectsRecalled}/${m.objectsTotal} (${m.recallScore_median.toFixed(2)})`
     : '-'
   const repeats = m.repeatsTotal != null ? `${m.repeats}/${m.repeatsTotal}` : `${m.repeats || 0}`
-  return `| **${sourceKey}** \`${row.sourceLabel}\` | ${repeats} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`
+  const genTokens = fmt(m.generatedTokens_median, 0)
+  return `| **${sourceKey}** \`${row.sourceLabel}\` | ${repeats} | ${genTokens} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`
 }
 
 function perPlatformDeltaRow (a, b, label) {
@@ -294,7 +295,7 @@ function perPlatformDeltaRow (a, b, label) {
     else if (am.recallScore_median < bm.recallScore_median) recallVerdict = 'worse'
   }
   const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
-  return `| _delta ${label}_ | - | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_rss)} | ${cell(v_wall)} | ${recallVerdict} | - |`
+  return `| _delta ${label}_ | - | - | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_rss)} | ${cell(v_wall)} | ${recallVerdict} | - |`
 }
 
 // Walks every (platform, backend) bucket and emits a verdict table
