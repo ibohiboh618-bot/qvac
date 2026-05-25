@@ -78,13 +78,6 @@ constexpr int ANGLE_180 = 180;
 constexpr int ANGLE_270 = 270;
 constexpr float HALF = 0.5F;
 
-// contrast_ths in python
-// ext box with contrast lower than this value will be passed into model 2
-// times. First is with original image and second with contrast adjusted to
-// 'adjust_contrast' value. The one with more confident level will be returned
-// as a result.
-constexpr float LOW_CONF_THRESHOLD_FOR_INCREASED_CONTRAST = 0.8F;
-
 // adjust_contrast in python
 // target contrast level for low contrast text box
 constexpr float TARGET_ADJUSTED_CONTRAST = 0.5F;
@@ -196,26 +189,52 @@ float getConfidenceScoreFromPredsProb(const std::vector<float>& predsMaxProb) {
  */
 std::tuple<double, double, double> contrastGrey(const cv::Mat& img) {
   CV_Assert(img.channels() == 1);
-  std::vector<uchar> pixels;
+
+  // Build a 256-bin histogram of the uchar image. We only need the 10th and
+  // 90th percentiles, so a histogram scan is O(N) with no allocations beyond
+  // the fixed-size bin array — replaces an O(N log N) full sort.
+  std::array<size_t, 256> hist{};
+  size_t numPixels = 0;
   if (img.isContinuous()) {
-    pixels.assign(img.datastart, img.dataend);
+    const auto total = static_cast<size_t>(img.total());
+    const uchar* data = img.ptr<uchar>();
+    for (size_t i = 0; i < total; ++i) {
+      ++hist[data[i]];
+    }
+    numPixels = total;
   } else {
-    for (int i = 0; i < img.rows; i++) {
-      pixels.insert(
-          pixels.end(),
-          img.ptr<uchar>(i),
-          img.ptr<uchar>(i) +
-              img.cols); /* NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-                          */
+    for (int row = 0; row < img.rows; ++row) {
+      const uchar* rowPtr = img.ptr<uchar>(row);
+      for (int col = 0; col < img.cols; ++col) {
+        ++hist[rowPtr[col]];
+      }
+    }
+    numPixels = static_cast<size_t>(img.rows) * img.cols;
+  }
+  if (numPixels == 0) {
+    return std::make_tuple(0.0, 0.0, 0.0);
+  }
+
+  // Match the original index math: idx = floor(p * (N - 1)).
+  const size_t idx10 = static_cast<size_t>(0.1 * (numPixels - 1));
+  const size_t idx90 = static_cast<size_t>(0.9 * (numPixels - 1));
+  size_t cumulative = 0;
+  int low = 0;
+  int high = 0;
+  bool gotLow = false;
+  for (int bin = 0; bin < 256; ++bin) {
+    cumulative += hist[bin];
+    if (!gotLow && cumulative > idx10) {
+      low = bin;
+      gotLow = true;
+    }
+    if (cumulative > idx90) {
+      high = bin;
+      break;
     }
   }
-  std::ranges::sort(pixels);
-  const int numPixels = static_cast<int>(pixels.size());
-  const int idx10 = static_cast<int>(0.1 * (numPixels - 1));
-  const int idx90 = static_cast<int>(0.9 * (numPixels - 1));
-  const double low = pixels[idx10];
-  const double high = pixels[idx90];
-  const double contrast = (high - low) / std::max(10.0, high + low);
+  const double contrast =
+      static_cast<double>(high - low) / std::max(10.0, static_cast<double>(high + low));
   return std::make_tuple(contrast, high, low);
 }
 
@@ -977,8 +996,13 @@ std::pair<std::string, float> StepRecognizeText::getTextAndConfidenceFromPreds(
   for (int subcolumn = 0; subcolumn < imgSubcolumnsSize; subcolumn++) {
     float* probRow =
         predsProb.data() + (static_cast<size_t>(subcolumn) * charSpaceSize);
+    // Guard against vocab/charSpaceSize mismatch: ignoreChars_ is sized by the
+    // language table while charSpaceSize comes from the GGUF model. Mismatches
+    // are warned about during construction but not hard-failed.
+    const size_t ignoreSize = ignoreChars_.size();
     for (int charIndex = 0; charIndex < charSpaceSize; charIndex++) {
-      if (ignoreChars_[charIndex]) {
+      if (static_cast<size_t>(charIndex) < ignoreSize &&
+          ignoreChars_[charIndex]) {
         probRow[charIndex] = 0.0F;
       }
     }
@@ -1098,7 +1122,11 @@ cv::Mat ggml_run_recognizer_t(
       backend, weights, input_data, height, width, graph_size);
   const int T = first.rows;
   const int num_classes = first.cols;
-  const size_t per_img_floats = static_cast<size_t>(height) * width;
+  // Stride matches batchBuffer_ layout in runBatchInference: numChannels is
+  // fixed at 1 today but kept explicit so any future channel change is loud.
+  constexpr int kPerImgChannels = 1;
+  const size_t per_img_floats =
+      static_cast<size_t>(kPerImgChannels) * height * width;
   const size_t per_img_logits = static_cast<size_t>(T) * num_classes;
 
   std::array<int, 3> dims = {batch_size, T, num_classes};
@@ -1192,27 +1220,6 @@ cv::Mat StepRecognizeText::runBatchInference(
   return preds;
 }
 
-void StepRecognizeText::processImg(SubImage& subImage) {
-  cv::Mat resizedImg = alignAndCollate(subImage, 0.0);
-  cv::Mat preds = runInferenceOnImg(resizedImg);
-  std::tie(subImage.text, subImage.confidenceScore) =
-      getTextAndConfidenceFromPreds(preds);
-
-  if (subImage.confidenceScore < LOW_CONF_THRESHOLD_FOR_INCREASED_CONTRAST) {
-    cv::Mat resizedImg = alignAndCollate(subImage, TARGET_ADJUSTED_CONTRAST);
-    cv::Mat preds = runInferenceOnImg(resizedImg);
-    auto [newText, newConfidenceScore] = getTextAndConfidenceFromPreds(preds);
-    if (newConfidenceScore > subImage.confidenceScore) {
-      subImage.text = newText;
-      subImage.confidenceScore = newConfidenceScore;
-    }
-  }
-
-  std::u32string utf32Text = converter_.from_bytes(subImage.text);
-  if (utf32Text.size() <= 1 && subImage.isMultiCharacter) {
-    subImage.confidenceScore = 0;
-  }
-}
 
 std::vector<InferredText>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

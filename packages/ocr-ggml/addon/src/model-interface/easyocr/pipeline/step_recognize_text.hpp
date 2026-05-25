@@ -185,7 +185,6 @@ private:
   cv::Mat
   runBatchInference(const std::vector<cv::Mat>& images, int dynamicWidth);
 
-  void processImg(SubImage& subImage);
   std::vector<InferredText> processImgList(const std::atomic<bool>* cancelFlag);
   std::string decodeGreedy(const std::vector<size_t>& textIndex);
 };

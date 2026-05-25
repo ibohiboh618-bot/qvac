@@ -123,11 +123,18 @@ jobs:
         if: ${{ inputs.prebuild_package }}
         working-directory: ${{ inputs.workdir || env.PKG_DIR }}
         shell: bash
+        env:
+          PREBUILD_PACKAGE: ${{ inputs.prebuild_package }}
         run: |
+          if ! [[ "$PREBUILD_PACKAGE" =~ ^@?[A-Za-z0-9._/~^>=<-]+$ ]]; then
+            echo "ERROR: invalid prebuild_package spec" >&2
+            exit 1
+          fi
           mkdir -p prebuilds
-          npm pack ${{ inputs.prebuild_package }} --pack-destination /tmp
-          tar -xzf /tmp/*.tgz -C /tmp
-          cp -r /tmp/package/prebuilds/* prebuilds/
+          PACK_DIR="$(mktemp -d -t ocr-ggml-prebuild.XXXXXX)"
+          PACK_OUTPUT="$(npm pack "$PREBUILD_PACKAGE" --pack-destination "$PACK_DIR" --json | jq -r '.[0].filename')"
+          tar -xzf "$PACK_DIR/$PACK_OUTPUT" -C "$PACK_DIR"
+          cp -r "$PACK_DIR/package/prebuilds/." prebuilds/
 
       - name: Linux - install dependencies
         if: matrix.os == 'ubuntu-22.04-arm' || matrix.os == 'ubuntu-24.04-arm'

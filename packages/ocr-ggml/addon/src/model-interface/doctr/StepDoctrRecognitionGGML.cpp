@@ -1019,23 +1019,27 @@ cv::Mat StepDoctrRecognitionGGML::preprocessCrop(
 
 cv::Mat StepDoctrRecognitionGGML::runSingleInference(const cv::Mat& image) {
   CV_Assert(image.rows == RECOG_HEIGHT && image.cols == RECOG_WIDTH);
-  inputBuffer_.assign(
-      static_cast<size_t>(RECOG_WIDTH) * RECOG_HEIGHT * kInputChannels, 0.0F);
-  for (int y = 0; y < RECOG_HEIGHT; ++y) {
-    for (int x = 0; x < RECOG_WIDTH; ++x) {
-      const auto& pixel = image.at<cv::Vec3f>(y, x);
-      for (int c = 0; c < kInputChannels; ++c) {
-        inputBuffer_
-            [x + (static_cast<size_t>(RECOG_WIDTH) *
-                  (y + (static_cast<size_t>(RECOG_HEIGHT) * c)))] = pixel[c];
-      }
-    }
+  CV_Assert(image.channels() == kInputChannels);
+  const size_t planeFloats =
+      static_cast<size_t>(RECOG_WIDTH) * RECOG_HEIGHT;
+  inputBuffer_.assign(planeFloats * kInputChannels, 0.0F);
+
+  std::vector<cv::Mat> channels;
+  cv::split(image, channels);
+  CV_Assert(static_cast<int>(channels.size()) == kInputChannels);
+  for (int c = 0; c < kInputChannels; ++c) {
+    CV_Assert(channels[c].isContinuous() && channels[c].type() == CV_32F);
+    std::memcpy(
+        inputBuffer_.data() + (planeFloats * static_cast<size_t>(c)),
+        channels[c].ptr<float>(),
+        planeFloats * sizeof(float));
   }
 
   std::vector<float> features = impl_->runFeatureExtractor(inputBuffer_);
   logitsBuffer_ = impl_->runLstmLinear(features);
+
   const std::array<int, 3> sizes = {1, kSequenceLength, kVocabSize};
-  return {3, sizes.data(), CV_32F, logitsBuffer_.data()};
+  return cv::Mat(3, sizes.data(), CV_32F, logitsBuffer_.data()).clone();
 }
 
 StepDoctrRecognitionGGML::SoftmaxResult StepDoctrRecognitionGGML::softmaxArgmax(

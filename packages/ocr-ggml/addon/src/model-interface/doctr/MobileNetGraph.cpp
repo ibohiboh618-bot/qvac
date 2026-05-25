@@ -5,8 +5,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -17,6 +17,8 @@
 #include <ggml.h>
 #include <gguf.h>
 #include <inference-addon-cpp/Errors.hpp>
+
+#include "model-interface/easyocr/pipeline/qlog.hpp"
 
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,cppcoreguidelines-pro-bounds-constant-array-index,readability-identifier-naming,readability-identifier-length)
 // MobileNet weight loaders and graph builders use single-letter math
@@ -54,18 +56,20 @@ constexpr int kFpnFeatureTap3 = 12;
 
 void printGgufMetadataKeys(const gguf_context* gguf) {
   if (gguf == nullptr) {
-    std::cout << "[MobileNetGraph] GGUF context is null; cannot print metadata "
-                 "keys\n";
+    QLOG(
+        qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
+        "[MobileNetGraph] GGUF context is null; cannot print metadata keys");
     return;
   }
 
   const int64_t metadataCount = gguf_get_n_kv(gguf);
-  std::cout << "[MobileNetGraph] GGUF metadata keys (" << metadataCount
-            << ")\n";
+  std::ostringstream os;
+  os << "[MobileNetGraph] GGUF metadata keys (" << metadataCount << "):";
   for (int64_t i = 0; i < metadataCount; ++i) {
     const char* key = gguf_get_key(gguf, i);
-    std::cout << "  - " << (key != nullptr ? key : "<null>") << '\n';
+    os << ' ' << (key != nullptr ? key : "<null>");
   }
+  QLOG(qvac_lib_inference_addon_cpp::logger::Priority::DEBUG, os.str());
 }
 
 /// Tensors whose first dim is F16 are treated as storage-only; everything
@@ -557,16 +561,18 @@ WeightsBundle loadWeights(
   // Lazy helpers.
   auto logTensorLoad = [&](const std::string& tensorName,
                            const struct ggml_tensor* tensor) {
-    std::cout << "[MobileNetGraph] loading tensor: " << tensorName
-              << " (type: " << ggml_type_name(tensor->type) << ", shape: [";
+    std::ostringstream os;
+    os << "[MobileNetGraph] loading tensor: " << tensorName
+       << " (type: " << ggml_type_name(tensor->type) << ", shape: [";
     const int dims = ggml_n_dims(tensor);
     for (int i = 0; i < dims; ++i) {
       if (i > 0) {
-        std::cout << ", ";
+        os << ", ";
       }
-      std::cout << tensor->ne[i];
+      os << tensor->ne[i];
     }
-    std::cout << "])\n";
+    os << "])";
+    QLOG(qvac_lib_inference_addon_cpp::logger::Priority::DEBUG, os.str());
   };
 
   auto registerTensor = [&](struct ggml_tensor* dst) {

@@ -46,6 +46,8 @@ private:
   std::vector<ggml_backend_t> backends_;
   qvac_lib_infer_ggml_classification::graph::WeightsBundle weights_;
   qvac_lib_infer_ggml_classification::graph::ComputeGraph computeGraph_;
+  std::vector<float> inputBuffer_;
+  std::vector<float> logitBuffer_;
 
   // Resize + symmetric-pad to DBNET_INPUT_SIZE × DBNET_INPUT_SIZE, normalise.
   // Returns {processedMat, scale, newW, newH, padLeft, padTop}.

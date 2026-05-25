@@ -133,25 +133,25 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
   const int W = preprocessed.cols;
   CV_Assert(H == DBNET_INPUT_SIZE && W == DBNET_INPUT_SIZE);
 
-  // Convert HWC → GGML WHCN (channel-planar, W fastest).
   std::vector<cv::Mat> channels;
   cv::split(preprocessed, channels);
 
   const int numChannels = static_cast<int>(channels.size());
-  std::vector<float> inputData(static_cast<size_t>(numChannels * H * W));
+  const size_t planeFloats = static_cast<size_t>(H) * W;
+  inputBuffer_.resize(planeFloats * static_cast<size_t>(numChannels));
   for (int c = 0; c < numChannels; ++c) {
     CV_Assert(channels[c].isContinuous());
     std::memcpy(
-        inputData.data() + static_cast<size_t>(c * H * W),
+        inputBuffer_.data() + (planeFloats * static_cast<size_t>(c)),
         channels[c].ptr<float>(),
-        static_cast<size_t>(H * W) * sizeof(float));
+        planeFloats * sizeof(float));
   }
 
   ggml_backend_tensor_set(
       computeGraph_.input,
-      inputData.data(),
+      inputBuffer_.data(),
       0,
-      inputData.size() * sizeof(float));
+      inputBuffer_.size() * sizeof(float));
 
   const ggml_status status =
       ggml_backend_graph_compute(backends_[0], computeGraph_.graph);
@@ -165,18 +165,18 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
   // Apply sigmoid here: prob = 1 / (1 + exp(-logit)).
   const auto nElems =
       static_cast<size_t>(ggml_nelements(computeGraph_.output_4));
-  std::vector<float> logitBuf(nElems);
+  logitBuffer_.resize(nElems);
   ggml_backend_tensor_get(
-      computeGraph_.output_4, logitBuf.data(), 0, nElems * sizeof(float));
+      computeGraph_.output_4, logitBuffer_.data(), 0, nElems * sizeof(float));
 
   // GGML WHCN [W=1024, H=1024, C=1, N=1] lays out as [W*y + x] in memory
   // which matches OpenCV row-major [H, W] — direct wrap is safe.
-  cv::Mat logitMap(H, W, CV_32F, logitBuf.data());
+  cv::Mat logitMap(H, W, CV_32F, logitBuffer_.data());
   cv::Mat expNeg;
   cv::exp(-logitMap, expNeg);
   cv::Mat probMap = 1.0F / (1.0F + expNeg);
-  return probMap
-      .clone(); // clone to own the data before logitBuf goes out of scope
+  // Clone before logitBuffer_ may be resized by the next call.
+  return probMap.clone();
 }
 
 std::pair<std::vector<std::array<cv::Point2f, 4>>, std::vector<float>>
@@ -241,6 +241,11 @@ StepDoctrDetectionGGML::extractPolygons(
     // image midpoint before applying the aspect-ratio scale, then translate
     // back; they are intrinsic to the symmetric-pad inverse and not a tunable
     // parameter.
+    //
+    // Algebraically equivalent to undoing padLeft/padTop directly:
+    //   for origH > origW: padLeftFraction = (1 - origW/origH)/2 = (1 - 1/ratio)/2
+    //   so (nx - padLeftFraction) / (1 - 2*padLeftFraction) reduces to
+    //   (nx - 0.5)*ratio + 0.5. This is why padLeft/padTop are unused.
     // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     if (origH > origW) {
       const float ratio = static_cast<float>(origH) / static_cast<float>(origW);

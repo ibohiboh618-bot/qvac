@@ -17,7 +17,8 @@ const ERR_CODES = Object.freeze({
   MISSING_REQUIRED_PARAMETER: 8107,
   UNSUPPORTED_LANGUAGE: 8108,
   INVALID_IMAGE_OR_INSUFFICIENT_DATA: 8109,
-  UNSUPPORTED_IMAGE_FORMAT: 8110
+  UNSUPPORTED_IMAGE_FORMAT: 8110,
+  NOT_LOADED: 8111
 })
 
 addCodes(
@@ -61,6 +62,10 @@ addCodes(
     [ERR_CODES.UNSUPPORTED_IMAGE_FORMAT]: {
       name: 'UNSUPPORTED_IMAGE_FORMAT',
       message: message => `Unsupported image format: ${message}`
+    },
+    [ERR_CODES.NOT_LOADED]: {
+      name: 'NOT_LOADED',
+      message: message => `OCR model is not loaded: ${message}`
     }
   },
   {

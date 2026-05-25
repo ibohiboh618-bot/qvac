@@ -40,6 +40,7 @@ Pass --arch explicitly only for custom checkpoints not shipped by EasyOCR.
 """
 
 import argparse
+import re
 import datetime as dt
 import sys
 from pathlib import Path
@@ -267,6 +268,19 @@ def convert(
     )
 
 
+_ARCH_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _arch_arg(value: str) -> str:
+    """Restrict --arch to a conservative identifier set so it cannot be used
+    to inject arbitrary bytes into GGUF metadata."""
+    if not _ARCH_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"--arch must match {_ARCH_RE.pattern} (got: {value!r})"
+        )
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Convert an EasyOCR .pth checkpoint to GGUF.")
     p.add_argument("input", type=Path, help="Path to the .pth file")
@@ -274,6 +288,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--arch",
         default=None,
+        type=_arch_arg,
         help="Architecture tag stored in general.architecture. "
              "Auto-detected from easyocr.config when the filename matches a "
              "shipped model. Pass explicitly only for custom checkpoints.",

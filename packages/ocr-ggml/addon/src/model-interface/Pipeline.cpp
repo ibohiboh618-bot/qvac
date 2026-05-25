@@ -7,13 +7,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-// NOLINTBEGIN(readability-identifier-naming,readability-identifier-length)
-// Pipeline consolidates the EasyOCR and DocTR orchestrators into a single
-// IModel adapter, mirroring `@qvac/ocr-onnx`'s `Pipeline` class. The
-// mode-specific step sequences live in private `processEasyOcr` /
-// `processDoctr` helpers; everything else (image decode, timing, cancel,
-// runtimeStats) is shared. Backend loading is handled by OcrBackendsHandle.
-
 namespace qvac_lib_infer_ocr_ggml {
 
 namespace {
@@ -43,16 +36,12 @@ cv::Mat decodeOrWrapImage(const OcrInput& input) {
         "ocr-ggml: raw image input requires positive width/height and data");
   }
 
-  // Raw RGB bytes — wrap without copying, then clone so OcrInput can be safely
-  // destroyed afterwards.
-  // cv::Mat constructor wants non-const void* but we clone() before mutating.
-  cv::Mat raw(
+  return {
       input.imageHeight,
       input.imageWidth,
       CV_8UC3,
       const_cast<uint8_t*>( // NOLINT(cppcoreguidelines-pro-type-const-cast)
-          input.data.data()));
-  return raw.clone();
+          input.data.data())};
 }
 
 double elapsedMs(std::chrono::steady_clock::time_point start) {
@@ -212,4 +201,3 @@ qvac_lib_inference_addon_cpp::RuntimeStats Pipeline::runtimeStats() const {
 
 } // namespace qvac_lib_infer_ocr_ggml
 
-// NOLINTEND(readability-identifier-naming,readability-identifier-length)

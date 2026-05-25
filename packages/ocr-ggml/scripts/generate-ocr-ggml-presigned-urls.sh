@@ -37,7 +37,6 @@ fi
 
 echo "Generating presigned URLs for GGUF OCR models..."
 echo "  Region: $REGION"
-echo "  Bucket: $BUCKET"
 echo "  EasyOCR prefix: $EASYOCR_PREFIX"
 echo "  DocTR prefix:   $DOCTR_PREFIX"
 

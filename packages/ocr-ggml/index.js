@@ -171,10 +171,16 @@ class OcrGgml {
   async _runInternal (input) {
     this.logger.info('Starting OCR inference')
 
-    const imageInput = this._readImage(input.path)
+    if (!this.addon) {
+      throw new QvacErrorAddonOcrGgml({
+        code: ERR_CODES.NOT_LOADED,
+        adds: 'call load() before run()'
+      })
+    }
 
     const response = this._job.start()
     try {
+      const imageInput = this._readImage(input.path)
       await this.addon.runJob({
         type: 'image',
         input: imageInput,
@@ -258,7 +264,28 @@ class OcrGgml {
       })
     }
 
+    if (width <= 0 || height === 0) {
+      throw new QvacErrorAddonOcrGgml({
+        code: ERR_CODES.INVALID_IMAGE_OR_INSUFFICIENT_DATA,
+        adds: `${imagePath} (invalid BMP dimensions ${width}x${height})`
+      })
+    }
+
+    const SUPPORTED_BITS = new Set([8, 16, 24, 32])
+    if (!SUPPORTED_BITS.has(bitsPerPixel)) {
+      throw new QvacErrorAddonOcrGgml({
+        code: ERR_CODES.UNSUPPORTED_IMAGE_FORMAT,
+        adds: `BMP bitsPerPixel ${bitsPerPixel}`
+      })
+    }
+
     const pixelDataOffset = contents.readUInt32LE(10)
+    if (pixelDataOffset >= contents.length) {
+      throw new QvacErrorAddonOcrGgml({
+        code: ERR_CODES.INVALID_IMAGE_OR_INSUFFICIENT_DATA,
+        adds: `${imagePath} (BMP pixelDataOffset ${pixelDataOffset} out of range)`
+      })
+    }
     const pixelDataBuffer = contents.slice(pixelDataOffset)
 
     const bytesPerPixel = bitsPerPixel / 8
@@ -287,24 +314,50 @@ class OcrGgml {
   }
 
   _addonOutputCallback (addon, event, data, error) {
+    if (event && event.includes('Error')) {
+      return this._job.fail(error)
+    }
+
+    // JobEnded may arrive with stats payload, with null (stats disabled), or
+    // not at all on some platforms - handle the event name explicitly so
+    // await() doesn't hang when data is null.
+    if (event === 'JobEnded') {
+      const isStatsObject =
+        typeof data === 'object' &&
+        data !== null &&
+        !Array.isArray(data) &&
+        ('totalTime' in data || 'detectionTime' in data)
+      if (isStatsObject) {
+        this.logger.info('OCR inference completed. Stats:', JSON.stringify(data))
+      }
+      return this._job.end(this.opts?.stats && isStatsObject ? data : null)
+    }
+
+    // Some addon paths surface stats without a 'JobEnded' event name; keep
+    // the legacy heuristic as a fallback so we still close the job.
     const isStatsObject =
       typeof data === 'object' &&
       data !== null &&
       !Array.isArray(data) &&
       ('totalTime' in data || 'detectionTime' in data)
-
     if (isStatsObject) {
       this.logger.info('OCR inference completed. Stats:', JSON.stringify(data))
       return this._job.end(this.opts?.stats ? data : null)
     }
 
-    if (event && event.includes('Error')) {
-      return this._job.fail(error)
-    }
-
     if (Array.isArray(data)) {
       return this._job.output(data)
     }
+  }
+
+  /** Inference Manager diagnostics hook (parity with ocr-onnx). */
+  _getDiagnosticsJSON () {
+    return JSON.stringify({
+      status: this.state.destroyed
+        ? 'destroyed'
+        : (this.state.configLoaded ? 'loaded' : 'not_loaded'),
+      params: this.params
+    })
   }
 
   /** Inference Manager hooks (parity with ocr-onnx) */

@@ -242,6 +242,15 @@ void CraftWeights::build_(const GgufLoader& loader, ggml_backend_t backend) {
       const std::vector<float> beta_f32 = to_f32_vector(beta_t);
       const std::vector<float> mu_f32 = to_f32_vector(mu_t);
       const std::vector<float> var_f32 = to_f32_vector(var_t);
+      const size_t oc_sz = static_cast<size_t>(oc);
+      if (gamma_f32.size() != oc_sz || beta_f32.size() != oc_sz ||
+          mu_f32.size() != oc_sz || var_f32.size() != oc_sz) {
+        std::ostringstream os;
+        os << "BN tensor size mismatch for " << bn_path << " (expected " << oc
+           << " per-channel scalars)";
+        err_ = os.str();
+        return;
+      }
       const float* gamma = gamma_f32.data();
       const float* beta = beta_f32.data();
       const float* mu = mu_f32.data();
