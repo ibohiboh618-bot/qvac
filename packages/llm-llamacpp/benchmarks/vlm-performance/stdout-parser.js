@@ -9,8 +9,11 @@
 const VISION_ENCODE_REGEX = /image (?:slice )?encoded in\s+(\d+(?:\.\d+)?)\s*ms/i
 // Pulled verbatim from Ian's Metal plan §5.7 — same llama.cpp output
 // shape on every platform.
-const EVAL_TIME_REGEX = /(?:llama_perf_context_print:\s*)?eval time\s*=\s*(\d+(?:\.\d+)?)\s*ms\s*\/\s*(\d+)\s+(?:tokens|runs)\s*\((\d+(?:\.\d+)?)\s+tokens per second\)/i
-const PROMPT_EVAL_REGEX = /prompt eval time\s*=\s*(\d+(?:\.\d+)?)\s*ms\s*\/\s*(\d+)\s+tokens/i
+// Prompt eval must be matched BEFORE decode eval since "prompt eval time"
+// contains "eval time". The prompt regex is anchored with "prompt" prefix;
+// the decode regex uses a negative lookbehind to skip "prompt eval" lines.
+const PROMPT_EVAL_REGEX = /prompt eval time\s*=\s*(\d+(?:\.\d+)?)\s*ms\s*\/\s*(\d+)\s+tokens\s*\([^)]*?(\d+(?:\.\d+)?)\s+tokens per second\)/i
+const EVAL_TIME_REGEX = /(?<!prompt )eval time\s*=\s*(\d+(?:\.\d+)?)\s*ms\s*\/\s*(\d+)\s+(?:tokens|runs)\s*\([^)]*?(\d+(?:\.\d+)?)\s+tokens per second\)/i
 const LOAD_TIME_REGEX = /load time\s*=\s*(\d+(?:\.\d+)?)\s*ms/i
 const TOTAL_TIME_REGEX = /total time\s*=\s*(\d+(?:\.\d+)?)\s*ms/i
 
@@ -25,6 +28,7 @@ function parseStdoutMetrics (text) {
   if (prompt) {
     out.promptEvalMs = Number(prompt[1])
     out.promptTokens = Number(prompt[2])
+    if (prompt[3]) out.promptTps = Number(prompt[3])
   }
 
   const eval_ = text.match(EVAL_TIME_REGEX)
