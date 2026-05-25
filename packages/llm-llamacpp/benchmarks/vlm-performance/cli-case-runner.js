@@ -62,24 +62,24 @@ function readGgufChatTemplate (ggufPath) {
     const readStr = () => { const len = readU64(); const b = read(len); return b.toString('utf8') }
     const skipValue = (type) => {
       switch (type) {
-        case 0: read(1); break         // u8
-        case 1: read(1); break         // i8
-        case 2: read(2); break         // u16
-        case 3: read(2); break         // i16
-        case 4: read(4); break         // u32
-        case 5: read(4); break         // i32
-        case 6: read(4); break         // f32
-        case 7: read(1); break         // bool
-        case 8: readStr(); break       // string
-        case 9: {                      // array
+        case 0: read(1); break // u8
+        case 1: read(1); break // i8
+        case 2: read(2); break // u16
+        case 3: read(2); break // i16
+        case 4: read(4); break // u32
+        case 5: read(4); break // i32
+        case 6: read(4); break // f32
+        case 7: read(1); break // bool
+        case 8: readStr(); break // string
+        case 9: { // array
           const arrType = readU32()
           const arrLen = readU64()
           for (let j = 0; j < arrLen; j++) skipValue(arrType)
           break
         }
-        case 10: read(8); break        // u64
-        case 11: read(8); break        // i64
-        case 12: read(8); break        // f64
+        case 10: read(8); break // u64
+        case 11: read(8); break // i64
+        case 12: read(8); break // f64
         default: throw new Error(`unknown GGUF value type ${type}`)
       }
     }
@@ -144,13 +144,20 @@ function buildCliArgs (spec) {
   return args
 }
 
+function stripAnsi (s) {
+  let out = ''
+  let inEsc = false
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 0x1b) { inEsc = true; continue }
+    if (inEsc) { if (s[i] === 'm') inEsc = false; continue }
+    out += s[i]
+  }
+  return out
+}
+
 function extractGeneratedText (stdout) {
   if (!stdout) return ''
-  // llama-mtmd-cli prints the generated text to stdout. Strip any
-  // leading/trailing whitespace and control sequences.
-  return stdout
-    .replace(/\x1b\[[0-9;]*m/g, '')
-    .trim()
+  return stripAnsi(stdout).trim()
 }
 
 function parseMaxRssFromTimeV (stderr) {
@@ -221,7 +228,7 @@ function main () {
     try {
       runOnceCli(spec)
     } catch (e) {
-      errors.push({ phase: 'warmup', index: i, message: String(e && e.message || e) })
+      errors.push({ phase: 'warmup', index: i, message: String((e && e.message) || e) })
     }
     console.log(`[BENCH_RUN_END warmup ${i}]`)
     if (spec.cooldownMs) sleep(spec.cooldownMs)
@@ -246,7 +253,7 @@ function main () {
         fullAnswer: truncate(r.text, spec.answerTruncChars || 8000)
       })
     } catch (e) {
-      runs.push({ index: i, ok: false, error: String(e && e.message || e) })
+      runs.push({ index: i, ok: false, error: String((e && e.message) || e) })
     }
     console.log(`[BENCH_RUN_END measured ${i}]`)
     if (spec.cooldownMs) sleep(spec.cooldownMs)

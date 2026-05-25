@@ -24,7 +24,6 @@
 // }
 
 const fs = require('bare-fs')
-const path = require('bare-path')
 const process = require('bare-process')
 const os = require('bare-os')
 
@@ -129,7 +128,7 @@ async function main () {
       gpu_layers: spec.backend === 'cpu' ? '0' : '98',
       temp: String(spec.temperature ?? 0),
       seed: String(spec.seed ?? 42),
-      verbosity: '2',         // surfaces image-encoded / eval-time lines
+      verbosity: '2', // surfaces image-encoded / eval-time lines
       device: spec.backend === 'cpu' ? 'cpu' : 'gpu',
       ctx_size: String(spec.ctxSize),
       n_predict: String(spec.nPredict),
@@ -141,7 +140,7 @@ async function main () {
 
   const cellStartedAt = new Date().toISOString()
   const errors = []
-  let runs = []
+  const runs = []
 
   try {
     await inference.load()
@@ -158,7 +157,7 @@ async function main () {
       try {
         await runOnce({ inference, imagePath: spec.imagePath, prompt: spec.prompt })
       } catch (e) {
-        errors.push({ phase: 'warmup', index: i, message: String(e && e.message || e) })
+        errors.push({ phase: 'warmup', index: i, message: String((e && e.message) || e) })
       }
       console.log(`[BENCH_RUN_END warmup ${i}]`)
       if (spec.cooldownMs) await sleep(spec.cooldownMs)
@@ -184,13 +183,13 @@ async function main () {
           fullAnswer: truncate(r.text, spec.answerTruncChars || 8000)
         })
       } catch (e) {
-        runs.push({ index: i, ok: false, error: String(e && e.message || e) })
+        runs.push({ index: i, ok: false, error: String((e && e.message) || e) })
       }
       console.log(`[BENCH_RUN_END measured ${i}]`)
       if (spec.cooldownMs) await sleep(spec.cooldownMs)
     }
   } finally {
-    try { await inference.unload() } catch (e) { errors.push({ phase: 'unload', message: String(e && e.message || e) }) }
+    try { await inference.unload() } catch (e) { errors.push({ phase: 'unload', message: String((e && e.message) || e) }) }
   }
 
   const out = {
