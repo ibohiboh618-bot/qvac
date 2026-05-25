@@ -98,16 +98,18 @@ function readGgufChatTemplate (ggufPath) {
   return null
 }
 
-function getPatchedTemplate (ggufPath) {
-  if (_cachedPatchedTemplate) return _cachedPatchedTemplate
+function getPatchedTemplate (ggufPath, thinkingEnabled) {
+  const cacheKey = thinkingEnabled ? 'on' : 'off'
+  if (_cachedPatchedTemplate && _cachedPatchedTemplate._key === cacheKey) return _cachedPatchedTemplate.value
   try {
     const raw = readGgufChatTemplate(ggufPath)
     if (!raw || !raw.includes('{%')) return null
-    _cachedPatchedTemplate = raw.replace(
+    const patched = raw.replace(
       'enable_thinking is defined and enable_thinking is true',
-      'false'
+      thinkingEnabled ? 'true' : 'false'
     )
-    return _cachedPatchedTemplate
+    _cachedPatchedTemplate = { _key: cacheKey, value: patched }
+    return patched
   } catch (e) {
     console.error(`[cli-case-runner] template extraction failed: ${e.message}`)
     return null
@@ -128,14 +130,13 @@ function buildCliArgs (spec) {
     '--jinja'
   ]
 
-  // Control reasoning mode. The addon uses reasoning-budget=0 internally,
-  // but neither fabric nor upstream CLI exposes this flag. Instead, patch
-  // the model's chat template to hardcode enable_thinking=false.
-  if (!spec.thinkingEnabled) {
-    const patched = getPatchedTemplate(spec.llmPath)
-    if (patched) {
-      args.push('--chat-template', patched)
-    }
+  // Control reasoning mode. The fabric fork injects enable_thinking=true
+  // by default, but upstream doesn't — it defaults to the empty-think
+  // path. To ensure consistent behavior across sources, always patch
+  // the model's chat template to explicitly set the thinking mode.
+  const patched = getPatchedTemplate(spec.llmPath, spec.thinkingEnabled)
+  if (patched) {
+    args.push('--chat-template', patched)
   }
 
   args.push('-p', spec.prompt)

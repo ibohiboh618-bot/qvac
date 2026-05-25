@@ -61,11 +61,11 @@ module.exports = {
   sampling: { temperature: 0, seed: 42 },
 
   // ── Reasoning mode ───────────────────────────────────────────────
-  // Qwen3.5 emits <think>...</think> by default. The addon uses
-  // reasoning-budget=0 to disable it; the CLI runner passes
-  // --reasoning-budget 0 (fabric) or falls back to /no_think prompt
-  // convention (upstream).
-  thinking: { enabled: false },
+  // Thinking ON by default: the model emits <think>...</think> before
+  // the answer, generating 200-400 tokens total. This gives stable TPS
+  // measurements (16 tokens is too noisy). The accuracy scorer strips
+  // think blocks automatically so recall scoring still works.
+  thinking: { enabled: true },
 
   // ── Methodology ──────────────────────────────────────────────────
   run: {

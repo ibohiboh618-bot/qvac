@@ -68,15 +68,6 @@ on:
         required: false
         type: string
         default: "3"
-      thinking:
-        description: "Qwen3.5 reasoning mode"
-        required: false
-        type: choice
-        default: "off"
-        options:
-          - "off"
-          - "on"
-
 permissions:
   contents: read
   packages: read
@@ -255,8 +246,7 @@ jobs:
           npm run run:vlm-bench -- \
             --sources=$SOURCES \
             --warmup-runs=${{ inputs.warmup_runs }} \
-            --measured-runs=${{ inputs.measured_runs }} \
-            --thinking=${{ inputs.thinking }}
+            --measured-runs=${{ inputs.measured_runs }}
 
       - name: Upload per-platform results
         if: always()
