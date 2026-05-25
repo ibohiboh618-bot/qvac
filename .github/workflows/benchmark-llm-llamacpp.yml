@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref (branch / tag / SHA) to benchmark"
+        description: "Addon ref — qvac branch / tag / SHA (default: current branch)"
         required: false
         type: string
       warmup_runs:
