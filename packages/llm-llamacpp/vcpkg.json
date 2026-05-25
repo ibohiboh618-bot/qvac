@@ -32,7 +32,6 @@
       "dependencies": [
         {
           "name": "qvac-fabric",
-          "version>=": "8828.0.1",
           "features": [
             "force-profiler"
           ]
