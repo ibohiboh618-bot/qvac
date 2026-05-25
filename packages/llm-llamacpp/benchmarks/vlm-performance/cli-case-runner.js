@@ -32,31 +32,86 @@ function sleep (ms) {
   while (Date.now() < end) { /* busy-wait — no async in this runner */ }
 }
 
-// Extract the chat template from the GGUF model file using Python's
-// gguf library (installed via pip as a benchmark prerequisite).
-// Returns the template string or null if extraction fails.
+// Extract the chat template from a GGUF file using pure Node.js.
+// GGUF format: magic(4) + version(u32) + tensorCount(u64) + kvCount(u64)
+// then kvCount key-value pairs. We scan for the "tokenizer.chat_template" key.
 let _cachedPatchedTemplate = null
+
+const GGUF_VALUE_TYPE_STRING = 8
+
+function readGgufChatTemplate (ggufPath) {
+  const fd = fs.openSync(ggufPath, 'r')
+  try {
+    const headerBuf = Buffer.alloc(24)
+    fs.readSync(fd, headerBuf, 0, 24, 0)
+    const magic = headerBuf.toString('ascii', 0, 4)
+    if (magic !== 'GGUF') return null
+    const version = headerBuf.readUInt32LE(4)
+    if (version < 2) return null
+    const kvCount = Number(headerBuf.readBigUInt64LE(16))
+
+    let offset = 24
+    const read = (len) => {
+      const buf = Buffer.alloc(len)
+      fs.readSync(fd, buf, 0, len, offset)
+      offset += len
+      return buf
+    }
+    const readU32 = () => { const b = read(4); return b.readUInt32LE(0) }
+    const readU64 = () => { const b = read(8); return Number(b.readBigUInt64LE(0)) }
+    const readStr = () => { const len = readU64(); const b = read(len); return b.toString('utf8') }
+    const skipValue = (type) => {
+      switch (type) {
+        case 0: read(1); break         // u8
+        case 1: read(1); break         // i8
+        case 2: read(2); break         // u16
+        case 3: read(2); break         // i16
+        case 4: read(4); break         // u32
+        case 5: read(4); break         // i32
+        case 6: read(4); break         // f32
+        case 7: read(1); break         // bool
+        case 8: readStr(); break       // string
+        case 9: {                      // array
+          const arrType = readU32()
+          const arrLen = readU64()
+          for (let j = 0; j < arrLen; j++) skipValue(arrType)
+          break
+        }
+        case 10: read(8); break        // u64
+        case 11: read(8); break        // i64
+        case 12: read(8); break        // f64
+        default: throw new Error(`unknown GGUF value type ${type}`)
+      }
+    }
+
+    for (let i = 0; i < kvCount; i++) {
+      const key = readStr()
+      const valType = readU32()
+      if (key === 'tokenizer.chat_template' && valType === GGUF_VALUE_TYPE_STRING) {
+        return readStr()
+      }
+      skipValue(valType)
+    }
+  } finally {
+    fs.closeSync(fd)
+  }
+  return null
+}
 
 function getPatchedTemplate (ggufPath) {
   if (_cachedPatchedTemplate) return _cachedPatchedTemplate
   try {
-    const result = spawnSync('python3', ['-c', [
-      'from gguf import GGUFReader',
-      'import sys',
-      `reader = GGUFReader("${ggufPath.replace(/"/g, '\\"')}")`,
-      'for f in reader.fields.values():',
-      '  if "chat_template" in str(f.name):',
-      '    t = bytes(f.parts[-1]).decode("utf-8")',
-      '    t = t.replace("enable_thinking is defined and enable_thinking is true", "false")',
-      '    sys.stdout.write(t)',
-      '    break'
-    ].join('\n')], { encoding: 'utf8', timeout: 10000 })
-    if (result.status === 0 && result.stdout && result.stdout.includes('{%')) {
-      _cachedPatchedTemplate = result.stdout
-      return _cachedPatchedTemplate
-    }
-  } catch {}
-  return null
+    const raw = readGgufChatTemplate(ggufPath)
+    if (!raw || !raw.includes('{%')) return null
+    _cachedPatchedTemplate = raw.replace(
+      'enable_thinking is defined and enable_thinking is true',
+      'false'
+    )
+    return _cachedPatchedTemplate
+  } catch (e) {
+    console.error(`[cli-case-runner] template extraction failed: ${e.message}`)
+    return null
+  }
 }
 
 function buildCliArgs (spec) {
