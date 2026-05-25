@@ -1,7 +1,5 @@
 """Character Error Rate (CER) metric for OCR evaluation."""
 
-from typing import Union
-
 
 def levenshtein_distance(s1: str, s2: str) -> int:
     """Compute Levenshtein (edit) distance between two strings.
