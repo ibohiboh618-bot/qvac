@@ -1,7 +1,7 @@
 {
   "name": "@qvac/llm-llamacpp",
   "version": "0.21.0",
-  "description": "llama addon for qvac",
+  "description": "llama addon for qvac (llamafile test)",
   "addon": true,
   "scripts": {
     "build": "bare-make generate && bare-make build && bare-make install",
