@@ -1,3 +1,5 @@
+message(STATUS ">>> USING OVERLAY PORT: qvac-fabric with GGML_LLAMAFILE=ON (default) <<<")
+
 vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
   REPO tetherto/qvac-fabric-llm.cpp
