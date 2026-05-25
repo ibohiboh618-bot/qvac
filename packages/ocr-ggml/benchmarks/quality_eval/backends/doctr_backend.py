@@ -4,7 +4,7 @@ Used as the baseline when comparing against the DocTR GGML pipeline.
 """
 
 import time
-from typing import List, Optional
+from typing import Optional
 
 from .base import OCRBackend, OCRResult, BoundingBox
 
