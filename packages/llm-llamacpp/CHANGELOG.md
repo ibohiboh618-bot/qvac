@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.0] - 2026-05-26
+
+### Added
+
+- KleidiAI feature support for Android ARM64 builds, enabling ARM-optimized GEMM kernels via `qvac-fabric`.
+- `kleidiai` vcpkg feature with `android & arm64` platform constraint and explicit `version>=` pin.
+- `kleidiai` set as default feature for the package.
+
 ## [0.22.0] - 2026-05-23
 
 ### Added
