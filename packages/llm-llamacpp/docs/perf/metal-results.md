@@ -172,13 +172,13 @@ on any platform.
 
 ---
 
-## 2. Post-Projection Vision Prefix Cache (A2) — Initial Results
+## 2. Post-Projection Vision Prefix Cache (A2)
 
-> **Note**: These are initial Mac M4 results only. iPhone benchmarks pending.
-> Protocol uses the addon-level benchmark test (`benchmark-a2-vision-cache.test.js`)
-> via the interleaved A/B orchestrator, NOT the CLI `llama-mtmd-cli` used for
-> U1 results above. Addon overhead (~17–34% vs CLI, see Appendix G.1) is
-> present in both variants equally, so relative deltas are valid.
+> Protocol uses the addon-level benchmark test (`benchmark.test.js` and
+> `benchmark-a2-vision-cache.test.js`) via the interleaved A/B orchestrator,
+> NOT the CLI `llama-mtmd-cli` used for U1 results above. Addon overhead
+> (~17–34% vs CLI, see Appendix G.1) is present in both variants equally,
+> so relative deltas are valid. iPhone benchmarks pending.
 
 ### 2.1 Problem
 
@@ -196,22 +196,80 @@ deep-copied directly into the KV context.
 
 Implementation: `VisionPrefixCache` class (`VisionPrefixCache.hpp/.cpp`),
 integrated into `MtmdLlmContext.cpp`'s image chunk eval loop. Default
-capacity: 5 entries (~10 MB). Cache only persists across `inference.run()`
-calls when a `cacheKey` is provided (which prevents `resetState()` from
-clearing the cache between calls).
+budget: 100 MB (byte-based eviction), configurable via `vision_cache_budget_mb`
+config key. `vision_cache: "0"` disables the cache entirely. SHA-256 is
+self-contained (no OpenSSL dependency). Cache only persists across
+`inference.run()` calls when a `cacheKey` is provided (which prevents
+`resetState()` from clearing the cache between calls).
+
+Additional features: telemetry (`visionCacheHits`, `visionCacheMisses`,
+`visionCacheEvictions`, `visionCachePeakBytes`, `visionCacheDistinctImages`)
+exposed via `runtimeStats()`, `onMemoryWarning()` memory-pressure hook
+for iOS/Android integration, context overflow guard (A3) that rejects
+prefill when `prompt + n_predict + safety_margin(16) > n_ctx`.
 
 ### 2.3 Results
 
-#### 2.3.1 Overhead Test — No cacheKey (cache inactive)
+#### 2.3.1 Full Addon-Level A/B — main vs a2-cache (cache inactive)
 
-Verifies that cache bookkeeping (SHA-256 hashing, cache lookup, miss path)
-adds no measurable overhead when the cache is not engaged.
+Full 8-model × 2-image interleaved A/B comparison of qvac `main` branch
+(c89692dff) vs `feat/QVAC-19118-a2-vision-cache` (08705beac). No `cacheKey`
+used — state resets between calls, so every inference is a full encode.
+This measures the total branch impact, not cache overhead in isolation.
+
+Protocol: interleaved A/B (`benchmark-addon-ab-interleaved.sh`), 3 paired
+reps per variant per config, no `cacheKey`, 1 warmup per variant per config.
+Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-26.
+
+| Model | Image | TPS (main / a2) | TPS Δ | TTFT ms (main / a2) | TTFT Δ | Total ms (main / a2) | Total Δ |
+|-------|-------|-----------------|-------|---------------------|--------|----------------------|---------|
+| Gemma4 E2B Q4_K_M | elephant | 52.0 / 42.6 | −18.0% | 1080 / 1087 | −0.6% | 1554 / 1543 | +0.7% |
+| Gemma4 E2B Q4_K_M | fruit-plate | 50.6 / 41.3 | −18.4% | 1105 / 1113 | −0.7% | 1894 / 2083 | −10.0% |
+| Gemma4 E2B Q8_0 | elephant | 35.5 / 30.7 | −13.4% | 1056 / 1070 | −1.3% | 1602 / 1718 | −7.2% |
+| Gemma4 E2B Q8_0 | fruit-plate | 35.5 / 30.8 | −13.1% | 1077 / 1097 | −1.9% | 2054 / 2220 | −8.1% |
+| Gemma4 E4B Q4_K_M | elephant | 29.4 / 23.8 | −19.0% | 1636 / 1652 | −1.0% | 2443 / 2633 | −7.8% |
+| Gemma4 E4B Q4_K_M | fruit-plate | 29.4 / 23.8 | −19.0% | 1667 / 1674 | −0.4% | 2766 / 2999 | −8.4% |
+| Gemma4 E4B Q8_0 | elephant | 19.4 / 16.8 | −13.4% | 1590 / 1609 | −1.2% | 2561 / 2721 | −6.2% |
+| Gemma4 E4B Q8_0 | fruit-plate | 19.4 / 16.8 | −13.3% | 1608 / 1638 | −1.9% | 3116 / 3412 | −9.5% |
+| Qwen3.5-2B Q4_K_M | elephant | 53.2 / 38.4 | −27.7% | 789 / 916 | −16.1% | 5692 / 7620 | −33.9% |
+| Qwen3.5-2B Q8_0 | elephant | 38.3 / 30.2 | −21.2% | 943 / 923 | +2.1% | 6161 / 7500 | −21.7% |
+| Qwen3.5-4B Q4_K_M | elephant | 21.7 / 18.4 | −15.5% | 1934 / 2179 | −12.7% | 13752 / 16159 | −17.5% |
+| Qwen3.5-4B Q8_0 | elephant | 18.1 / 15.0 | −17.3% | 1852 / 2217 | −19.7% | 15814 / 19054 | −20.5% |
+
+Cell format: main / a2-cache (median of 3 paired reps). Positive TPS Δ =
+improvement. Qwen3.5 × fruit-plate configs excluded (context overflow at
+4046 + 256 + 16 > 4096, guarded by A3).
+
+**Analysis**: TPS shows 13–28% regression on the feature branch across all
+models. However, **this is NOT caused by the vision cache code**. The
+feature branch was cut from `main` before the `Sync with fabric-8828.0.1`
+commit (3a854e5c1), so the two branches diverge in core inference engine
+code. The controlled same-base overhead test (Section 2.3.2 below, where
+both variants share the same codebase) confirmed zero cache overhead.
+
+Key evidence that TPS difference is codebase divergence, not cache overhead:
+- TTFT (which includes vision encode + prefill) differs by only 0.4–1.9%
+  for all Gemma4 configs — the cache miss path adds no measurable overhead
+- Gemma4 E2B Q4KM total time is identical (1554 vs 1543 ms) despite
+  different TPS values, because both generate the same 14 tokens
+- The a2-cache TPS values (42.6, 30.7, etc.) match the controlled
+  overhead test values (42.5, 30.8) from 2026-05-21, confirming the
+  feature branch performance is stable
+
+Anchor drift (3 checks): check1 52.05 TPS → check2 52.06 TPS → check3
+52.02 TPS (<0.1% drift). Thermally stable session.
+
+#### 2.3.2 Controlled Overhead Test — Same Codebase (cache inactive)
+
+Isolates cache overhead by comparing the feature branch against itself:
+the fiber fork baseline (labeled "main" — identical codebase minus cache
+code) vs the a2-cache variant. No `cacheKey` used.
 
 Protocol: interleaved A/B, 3 reps × 3 sequential inferences per model load,
 no `cacheKey` (state resets between calls — every inference is a full encode).
 Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-21.
 
-| Model | Image | TPS (main / a2) | TPS Δ | TTFT ms (main / a2) | TTFT Δ | Total ms (main / a2) | Total Δ |
+| Model | Image | TPS (base / a2) | TPS Δ | TTFT ms (base / a2) | TTFT Δ | Total ms (base / a2) | Total Δ |
 |-------|-------|-----------------|-------|---------------------|--------|----------------------|---------|
 | Gemma4 E2B Q4_K_M | elephant | 42.7 / 42.5 | −0.3% | 1089 / 1089 | −0.0% | 1538 / 1536 | +0.1% |
 | Gemma4 E2B Q4_K_M | fruit-plate | 42.8 / 42.8 | +0.0% | 1105 / 1121 | −1.4% | 1964 / 2014 | −2.5% |
@@ -226,10 +284,10 @@ Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-21.
 | Qwen3.5-4B Q4_K_M | elephant | 17.9 / 18.0 | +0.4% | 2261 / 2266 | −0.2% | 16591 / 16533 | +0.3% |
 | Qwen3.5-4B Q8_0 | elephant | 14.8 / 14.9 | +0.6% | 2207 / 2249 | −1.9% | 19290 / 19226 | +0.3% |
 
-Cell format: main / a2-cache (median of 9 measurements: 3 reps × 3 inferences).
-Positive TPS Δ = improvement. Gemma4 E4B Q8_0 elephant TTFT outlier (−10%) is
-thermal drift — anchor check2 showed 9% TPS degradation mid-session
-(`SKIP_THERMAL=1`). No metric shows a systematic regression.
+Cell format: fiber-base / a2-cache (median of 9 measurements: 3 reps × 3
+inferences). Positive TPS Δ = improvement. Gemma4 E4B Q8_0 elephant TTFT
+outlier (−10%) is thermal drift — anchor check2 showed 9% TPS degradation
+mid-session (`SKIP_THERMAL=1`). No metric shows a systematic regression.
 
 **Conclusion**: Cache bookkeeping adds **zero measurable overhead** on the
 miss path.
@@ -238,7 +296,7 @@ Anchor drift (3 checks): check1 42.8 TPS → check2 38.9 TPS (−9%, thermal) �
 check3 42.7 TPS (recovered). Marginal thermal instability from disabled
 thermal gating; per-config pairing still controls for gradual drift.
 
-#### 2.3.2 Cache Hit Test — With cacheKey (cache active)
+#### 2.3.3 Cache Hit Test — With cacheKey (cache active)
 
 Measures the actual vision cache benefit. Model loaded once, 1 warmup run
 (no cacheKey), then 3 measured runs with `cacheKey`. Run 1 = cache miss
@@ -316,29 +374,40 @@ Session: 2026-05-21.
 - **Mac M4 only** — iPhone 16e benchmarks pending. Expected savings on iPhone
   are larger in absolute terms (vision encode takes 927–1285 ms on iPhone 16e
   vs 400–830 ms on Mac M4).
-- **Addon-level benchmark** (`benchmark-a2-vision-cache.test.js`), not CLI.
-  Addon JS overhead is present but equal for both variants.
-- **Thermal gating disabled** (`SKIP_THERMAL=1`). Some Qwen3.5 4B runs show
-  variance from thermal drift. Per-config interleaving controls for this.
-- **1 rep per config** for the cache-hit test. Additional reps would improve
-  statistical confidence but the effect size (17–49%) is well above noise.
-- Qwen3.5 fruit-plate configs excluded from cache-hit test (no result files
-  generated — likely context overflow at 4,015 tokens near ctx=4096 limit,
-  guarded by A3).
+- **Addon-level benchmark** (`benchmark.test.js` and
+  `benchmark-a2-vision-cache.test.js`), not CLI. Addon JS overhead is present
+  but equal for both variants.
+- **Thermal gating disabled** (`SKIP_THERMAL=1`) for all sessions. Per-config
+  interleaving controls for gradual drift. The full-matrix test (2026-05-26)
+  had <0.1% anchor drift.
+- **1 rep per config** for the cache-hit test (Section 2.3.3). Additional reps
+  would improve statistical confidence but the effect size (17–49%) is well
+  above noise.
+- **Branch divergence** in full-matrix test (Section 2.3.1): TPS differences
+  reflect codebase divergence between `main` (post fabric-8828.0.1 sync) and
+  the feature branch (pre-sync). The controlled same-base test (Section 2.3.2)
+  is the authoritative source for cache overhead measurement.
+- Qwen3.5 fruit-plate configs excluded (context overflow at 4046 + 256 +
+  16 > 4096, guarded by A3).
 
 ### 2.5 Files Changed
 
-- `packages/llm-llamacpp/CMakeLists.txt` — add VisionPrefixCache to build
+- `packages/llm-llamacpp/CMakeLists.txt` — add VisionPrefixCache.cpp to build
+- `packages/llm-llamacpp/addon/src/model-interface/LlamaModel.cpp` — config
+  parsing (`vision_cache`, `vision_cache_budget_mb`), telemetry in runtimeStats
+- `packages/llm-llamacpp/addon/src/model-interface/LlmContext.hpp` — virtual
+  `visionCacheStats()` and `onMemoryWarning()` base class methods
 - `packages/llm-llamacpp/addon/src/model-interface/MtmdLlmContext.cpp` — cache
-  lookup/store in image chunk eval, context overflow guard (A3)
+  lookup/store in image chunk eval, context overflow guard (A3), SHA-256
+  tagging of bitmaps in `loadMedia()`
 - `packages/llm-llamacpp/addon/src/model-interface/MtmdLlmContext.hpp` — cache
-  member declaration
+  member, `visionCacheStats()` override, `onMemoryWarning()` override
 - `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.cpp` — LRU cache
-  implementation
-- `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.hpp` — cache API +
-  `sha256OfBytes()` / `makeVisionCacheKey()`
-- `packages/llm-llamacpp/addon/third_party/picosha2.h` — SHA-256 header-only
-  library
+  with byte-based budget eviction, self-contained SHA-256
+- `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.hpp` — cache API,
+  `VisionCacheStats` struct, `makeVisionCacheKeyPrefix()`
+- `packages/llm-llamacpp/addon/src/js-interface/binding.cpp` — `onMemoryWarning`
+  JS binding, `distinctImages` telemetry field
 
 ---
 
