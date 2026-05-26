@@ -404,7 +404,10 @@ async function main () {
 
     for (const { source, backend } of cellPairs) {
       const spec = buildCaseSpec({
-        source, backend, model: resolved, imagePath,
+        source,
+        backend,
+        model: resolved,
+        imagePath,
         runArgs: { ...runArgs, warmupRuns: 0, measuredRuns: 1 }
       })
       const accKey = `${source.key}|${backend}`

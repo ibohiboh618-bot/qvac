@@ -15,9 +15,9 @@ module.exports = {
   // divergence (fabric vs upstream). Each source can be individually
   // enabled/disabled via --sources=addon,fabric,upstream.
   sources: {
-    addon:    { type: 'addon', enabled: true },
-    fabric:   { type: 'cli',  enabled: true, configKey: 'fabric' },
-    upstream: { type: 'cli',  enabled: true, configKey: 'upstream' }
+    addon: { type: 'addon', enabled: true },
+    fabric: { type: 'cli', enabled: true, configKey: 'fabric' },
+    upstream: { type: 'cli', enabled: true, configKey: 'upstream' }
   },
 
   comparisonMode: 'source-engines',

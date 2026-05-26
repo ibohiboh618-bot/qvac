@@ -81,7 +81,7 @@ function detectGpuWindows () {
 function detectGpuMac () {
   // system_profiler is on every macOS box. Apple Silicon GPUs are
   // reported under "Chipset Model: Apple M3" etc.
-  const sp = safeExec("system_profiler SPDisplaysDataType -json")
+  const sp = safeExec('system_profiler SPDisplaysDataType -json')
   if (!sp) return []
   try {
     const data = JSON.parse(sp)

@@ -122,13 +122,15 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
     log(`configuring cmake (${Object.keys(sourceConfig.cmakeFlags).length} flags)`)
     const configArgs = ['-B', buildDir, ...cmakeDefines, tmpDir]
     execFileSync('cmake', configArgs, {
-      stdio: 'inherit', timeout: 120000,
+      stdio: 'inherit',
+      timeout: 120000,
       cwd: tmpDir
     })
 
     log(`building llama-mtmd-cli (${nproc} threads)`)
     execFileSync('cmake', ['--build', buildDir, '--target', 'llama-mtmd-cli', '-j', String(nproc)], {
-      stdio: 'inherit', timeout: 600000,
+      stdio: 'inherit',
+      timeout: 600000,
       cwd: tmpDir
     })
 
