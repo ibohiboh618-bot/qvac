@@ -114,18 +114,42 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - id: matrix
         shell: bash
+        env:
+          RUN_ADDON: ${{ inputs.run_addon }}
+          RUN_FABRIC: ${{ inputs.run_fabric_cli }}
+          RUN_UPSTREAM: ${{ inputs.run_upstream_cli }}
+          RUN_WINDOWS: ${{ inputs.run_windows }}
+          RUN_LINUX: ${{ inputs.run_linux }}
         run: |
           entries='[]'
-          if [[ "${{ inputs.run_windows }}" == "true" ]]; then
-            entries=$(echo "$entries" | jq -c '. + [{"platform":"windows-x64","runner":"windows-latest"}]')
+          platforms='[]'
+          if [[ "$RUN_WINDOWS" == "true" ]]; then
+            platforms=$(echo "$platforms" | jq -c '. + [{"platform":"windows-x64","runner":"windows-latest"}]')
           fi
-          if [[ "${{ inputs.run_linux }}" == "true" ]]; then
-            entries=$(echo "$entries" | jq -c '. + [{"platform":"linux-x64","runner":"ubuntu-latest"}]')
+          if [[ "$RUN_LINUX" == "true" ]]; then
+            platforms=$(echo "$platforms" | jq -c '. + [{"platform":"linux-x64","runner":"ubuntu-latest"}]')
           fi
+          sources='[]'
+          if [[ "$RUN_ADDON" == "true" ]]; then
+            sources=$(echo "$sources" | jq -c '. + ["addon"]')
+          fi
+          if [[ "$RUN_FABRIC" == "true" ]]; then
+            sources=$(echo "$sources" | jq -c '. + ["fabric"]')
+          fi
+          if [[ "$RUN_UPSTREAM" == "true" ]]; then
+            sources=$(echo "$sources" | jq -c '. + ["upstream"]')
+          fi
+          for p in $(echo "$platforms" | jq -c '.[]'); do
+            plat=$(echo "$p" | jq -r '.platform')
+            runner=$(echo "$p" | jq -r '.runner')
+            for s in $(echo "$sources" | jq -r '.[]'); do
+              entries=$(echo "$entries" | jq -c --arg p "$plat" --arg r "$runner" --arg s "$s" '. + [{"platform":$p,"runner":$r,"source":$s}]')
+            done
+          done
           count=$(echo "$entries" | jq 'length')
           echo "value=$entries" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "Desktop matrix: $entries (count=$count)"
+          echo "Desktop matrix ($count entries): $entries"
       # Resolve commit metadata so the consolidated report can show what
       # the candidate ref + merge-base actually point at (hash, title,
       # date). Needs a real clone — sparse checkout doesn't give us git
@@ -171,9 +195,9 @@ jobs:
   desktop:
     needs: context
     if: needs.context.outputs.desktop_count != '0'
-    name: vlm-${{ matrix.platform }}
+    name: vlm-${{ matrix.platform }}-${{ matrix.source }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -187,11 +211,6 @@ jobs:
         with:
           repository: ${{ needs.context.outputs.repository }}
           ref: ${{ needs.context.outputs.ref }}
-          # Need full history so the baseline-resolve step can
-          # `git show <merge-base>:packages/llm-llamacpp/package.json`.
-          # A shallow clone (the default) fails with "exists on disk,
-          # but not in <sha>".
-          fetch-depth: 0
 
       - name: Setup Node.js and Bare tooling
         if: inputs.addon_from_source
@@ -237,30 +256,23 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Cache CLI builds
-        if: inputs.run_fabric_cli || inputs.run_upstream_cli
+        if: matrix.source != 'addon'
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/cli-builds
-          key: vlm-cli-v2-${{ matrix.platform }}-${{ inputs.fabric_ref }}-${{ inputs.upstream_ref }}
+          key: vlm-cli-v2-${{ matrix.platform }}-${{ matrix.source }}-${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
           restore-keys: |
-            vlm-cli-v2-${{ matrix.platform }}-
+            vlm-cli-v2-${{ matrix.platform }}-${{ matrix.source }}-
 
-      - name: Build CLI sources
-        if: inputs.run_fabric_cli || inputs.run_upstream_cli
+      - name: Build CLI source
+        if: matrix.source != 'addon'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: |
-          SOURCES=""
-          if [[ "${{ inputs.run_fabric_cli }}" == "true" ]]; then
-            SOURCES="${SOURCES:+$SOURCES,}fabric"
-          fi
-          if [[ "${{ inputs.run_upstream_cli }}" == "true" ]]; then
-            SOURCES="${SOURCES:+$SOURCES,}upstream"
-          fi
+          REF=${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
           node scripts/build-cli-sources.js \
-            --sources=$SOURCES \
-            --fabric-ref=${{ inputs.fabric_ref }} \
-            --upstream-ref=${{ inputs.upstream_ref }}
+            --sources=${{ matrix.source }} \
+            --${{ matrix.source }}-ref=$REF
 
       - name: Prepare models
         shell: bash
@@ -271,18 +283,8 @@ jobs:
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: |
-          SOURCES=""
-          if [[ "${{ inputs.run_addon }}" == "true" ]]; then
-            SOURCES="${SOURCES:+$SOURCES,}addon"
-          fi
-          if [[ "${{ inputs.run_fabric_cli }}" == "true" ]]; then
-            SOURCES="${SOURCES:+$SOURCES,}fabric"
-          fi
-          if [[ "${{ inputs.run_upstream_cli }}" == "true" ]]; then
-            SOURCES="${SOURCES:+$SOURCES,}upstream"
-          fi
           npm run run:vlm-bench -- \
-            --sources=$SOURCES \
+            --sources=${{ matrix.source }} \
             --warmup-runs=${{ inputs.warmup_runs }} \
             --measured-runs=${{ inputs.measured_runs }}
 
@@ -290,7 +292,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
-          name: vlm-perf-${{ matrix.platform }}-${{ github.run_number }}
+          name: vlm-perf-${{ matrix.platform }}-${{ matrix.source }}-${{ github.run_number }}
           path: |
             ${{ env.WORKDIR }}/results/vlm-perf-*.md
             ${{ env.WORKDIR }}/results/vlm-perf-*.json
