@@ -21,7 +21,6 @@ const { parseArgs } = require('./utils')
 
 const SCRIPT_DIR = __dirname
 const DEFAULT_MODELS_DIR = path.join(SCRIPT_DIR, 'models')
-const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..', '..')
 
 function log (...args) { console.log('[prepare-models]', ...args) }
 
@@ -130,7 +129,8 @@ async function main () {
   const mmprojDest = path.join(modelsDir, m.mmprojFile)
 
   const llmPath = await resolvePart({
-    label: m.label, kind: 'llm',
+    label: m.label,
+    kind: 'llm',
     url: m.url.llm,
     destination: llmDest,
     localOverride: args['local-model'],
@@ -138,7 +138,8 @@ async function main () {
   })
 
   const mmprojPath = await resolvePart({
-    label: m.label, kind: 'mmproj',
+    label: m.label,
+    kind: 'mmproj',
     url: m.url.mmproj,
     destination: mmprojDest,
     localOverride: args['local-mmproj'],

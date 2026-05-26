@@ -284,18 +284,18 @@ function perPlatformRow (sourceKey, row) {
 function perPlatformDeltaRow (a, b, label) {
   const am = a.metrics || {}
   const bm = b.metrics || {}
-  const v_vis = verdictFor(am.visionEncodeMs_median, bm.visionEncodeMs_median, true)
-  const v_ttft = verdictFor(am.ttftMs_median, bm.ttftMs_median, true)
-  const v_tps = verdictFor(am.decodeTps_median, bm.decodeTps_median, false)
-  const v_rss = verdictFor(am.peakRssMb_median, bm.peakRssMb_median, true)
-  const v_wall = verdictFor(am.wallMs_median, bm.wallMs_median, true)
+  const vVis = verdictFor(am.visionEncodeMs_median, bm.visionEncodeMs_median, true)
+  const vTtft = verdictFor(am.ttftMs_median, bm.ttftMs_median, true)
+  const vTps = verdictFor(am.decodeTps_median, bm.decodeTps_median, false)
+  const vRss = verdictFor(am.peakRssMb_median, bm.peakRssMb_median, true)
+  const vWall = verdictFor(am.wallMs_median, bm.wallMs_median, true)
   let recallVerdict = 'same'
   if (am.recallScore_median != null && bm.recallScore_median != null) {
     if (am.recallScore_median > bm.recallScore_median) recallVerdict = 'better'
     else if (am.recallScore_median < bm.recallScore_median) recallVerdict = 'worse'
   }
   const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
-  return `| _delta ${label}_ | - | - | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_rss)} | ${cell(v_wall)} | ${recallVerdict} | - |`
+  return `| _delta ${label}_ | - | - | ${cell(vVis)} | ${cell(vTtft)} | ${cell(vTps)} | ${cell(vRss)} | ${cell(vWall)} | ${recallVerdict} | - |`
 }
 
 // Walks every (platform, backend) bucket and emits a verdict table
@@ -317,9 +317,11 @@ function renderVerdictBlock (reports) {
     }
   }
 
-  const pairs = comparisonMode === 'source-engines' ? SOURCE_ENGINE_PAIRS : [
-    { a: 'candidate', b: 'baseline', label: 'candidate vs baseline' }
-  ]
+  const pairs = comparisonMode === 'source-engines'
+    ? SOURCE_ENGINE_PAIRS
+    : [
+        { a: 'candidate', b: 'baseline', label: 'candidate vs baseline' }
+      ]
 
   // Check if any pairwise comparison exists
   let hasPairs = false
@@ -345,19 +347,19 @@ function renderVerdictBlock (reports) {
     pairLines.push('| Platform / Backend | vis-enc | TTFT | TPS | wall | recall |')
     pairLines.push('|---|---|---|---|---|---|')
 
-    for (const [k, bySource] of groups) {
+    for (const [, bySource] of groups) {
       const a = bySource.get(pair.a)
       const b = bySource.get(pair.b)
       if (!a || !b) continue
       pairHasData = true
       const am = a.metrics || {}
       const bm = b.metrics || {}
-      const v_vis = verdictFor(am.visionEncodeMs_median, bm.visionEncodeMs_median, true)
-      const v_ttft = verdictFor(am.ttftMs_median, bm.ttftMs_median, true)
-      const v_tps = verdictFor(am.decodeTps_median, bm.decodeTps_median, false)
-      const v_wall = verdictFor(am.wallMs_median, bm.wallMs_median, true)
+      const vVis = verdictFor(am.visionEncodeMs_median, bm.visionEncodeMs_median, true)
+      const vTtft = verdictFor(am.ttftMs_median, bm.ttftMs_median, true)
+      const vTps = verdictFor(am.decodeTps_median, bm.decodeTps_median, false)
+      const vWall = verdictFor(am.wallMs_median, bm.wallMs_median, true)
       const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
-      pairLines.push(`| ${a.platform}-${a.arch} / ${a.backend} | ${cell(v_vis)} | ${cell(v_ttft)} | ${cell(v_tps)} | ${cell(v_wall)} | ${am.objectsRecalled ?? '-'}/${am.objectsTotal ?? '-'} vs ${bm.objectsRecalled ?? '-'}/${bm.objectsTotal ?? '-'} |`)
+      pairLines.push(`| ${a.platform}-${a.arch} / ${a.backend} | ${cell(vVis)} | ${cell(vTtft)} | ${cell(vTps)} | ${cell(vWall)} | ${am.objectsRecalled ?? '-'}/${am.objectsTotal ?? '-'} vs ${bm.objectsRecalled ?? '-'}/${bm.objectsTotal ?? '-'} |`)
     }
     pairLines.push('')
     if (pairHasData) lines.push(...pairLines)
@@ -457,7 +459,7 @@ function renderConsolidatedMarkdown (reports, commitInfo) {
 
   const firstVlm = reports.find((r) => r.kind === 'vlm-perf')
   const firstMeta = (firstVlm && firstVlm.data.meta) || {}
-  lines.push(`# VLM Benchmark - Consolidated`)
+  lines.push('# VLM Benchmark - Consolidated')
   lines.push('')
 
   // ── Run setup ───────────────────────────────────────────────────
@@ -507,7 +509,6 @@ function renderConsolidatedMarkdown (reports, commitInfo) {
   // them in any table.
   const comparisonBlock = renderComparisonBlock(reports)
   if (comparisonBlock) lines.push(comparisonBlock)
-
 
   // Per-platform sub-tables with interleaved candidate + baseline +
   // Δ rows. Replaces the previous flat platform table and the
