@@ -194,8 +194,8 @@ function main () {
 
   for (const result of results) {
     const testName = result.test
-    const ep = result.execution_provider || '-'
-    const key = `${testName}|${ep}`
+    const device = result.execution_provider || '-'
+    const key = `${testName}|${device}`
 
     if (seen.has(key)) continue
     seen.add(key)

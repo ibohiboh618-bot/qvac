@@ -105,10 +105,10 @@ function formatQualityValue (key, value) {
   return value.toFixed(2)
 }
 
-function _parseTestEp (fullName) {
+function _parseTestDevice (fullName) {
   const m = fullName.match(/^(.*?)\s*\[(CPU|GPU)\]\s*$/)
-  if (m) return { base: m[1].trim(), ep: m[2].toUpperCase() }
-  return { base: fullName, ep: '' }
+  if (m) return { base: m[1].trim(), device: m[2].toUpperCase() }
+  return { base: fullName, device: '' }
 }
 
 function _shortDeviceName (name) {
@@ -258,17 +258,17 @@ function generateDeviceDetailTables (aggregated, addonType) {
       })
       const header = ['Test']
       if (scnHasModel) header.push('Model')
-      header.push('EP', ..._VISION_DETAIL_COLUMNS.map(c => c.label))
+      header.push('Device', ..._VISION_DETAIL_COLUMNS.map(c => c.label))
       lines.push('| ' + header.join(' | ') + ' |')
       lines.push('| ' + header.map(() => '---').join(' | ') + ' |')
 
       for (const testName of buckets[scn]) {
         const metrics = tests[testName] || {}
         const cats = (categorical[devName] && categorical[devName][testName]) || {}
-        const ep = cats.execution_provider || '-'
+        const device = cats.execution_provider || '-'
         const row = [testName]
         if (scnHasModel) row.push(cats.model || '-')
-        row.push(ep)
+        row.push(device)
         for (const col of _VISION_DETAIL_COLUMNS) {
           row.push(_formatDetailCell(col.key, metrics[col.key], cats[col.key]))
         }
@@ -325,14 +325,14 @@ function generateMarkdownReport (aggregated, opts) {
     for (const t of Object.keys(tests)) allTests.add(t)
   }
 
-  const parsed = [...allTests].map(n => ({ full: n, ..._parseTestEp(n) }))
-  const epOrder = { CPU: 0, GPU: 1, '': 2 }
+  const parsed = [...allTests].map(n => ({ full: n, ..._parseTestDevice(n) }))
+  const deviceOrder = { CPU: 0, GPU: 1, '': 2 }
   parsed.sort((a, b) => {
     if (a.base !== b.base) return a.base.localeCompare(b.base)
-    return (epOrder[a.ep] || 0) - (epOrder[b.ep] || 0)
+    return (deviceOrder[a.device] || 0) - (deviceOrder[b.device] || 0)
   })
 
-  const hasEp = parsed.some(p => p.ep !== '')
+  const hasDevice = parsed.some(p => p.device !== '')
 
   // QVAC-17830: squashed step-summary layout — one mini-table per
   // headline metric, each row=test, col=device, cell="mean ±std".
@@ -421,14 +421,14 @@ function generateMarkdownReport (aggregated, opts) {
         lines.push('')
       }
 
-      const perfHeader = hasEp ? ['Test', 'EP'] : ['Test']
+      const perfHeader = hasDevice ? ['Test', 'Device'] : ['Test']
       for (const sn of scopedShortNames) perfHeader.push(sn)
       lines.push('| ' + perfHeader.join(' | ') + ' |')
       lines.push('| ' + perfHeader.map(() => '---').join(' | ') + ' |')
 
       for (const t of scopedTests) {
-        const epCell = hasEp ? (t.ep ? `**${t.ep}**` : '-') : null
-        const cells = hasEp ? [t.base, epCell] : [t.full]
+        const deviceCell = hasDevice ? (t.device ? `**${t.device}**` : '-') : null
+        const cells = hasDevice ? [t.base, deviceCell] : [t.full]
         for (const devName of scopedDeviceNames) {
           const metrics = devices[devName] && devices[devName][t.full]
           cells.push(_formatMeanStd(metrics && metrics[metricSpec.key], metricSpec.unit, metricSpec.round))
@@ -454,7 +454,7 @@ function generateMarkdownReport (aggregated, opts) {
       const qKeys = ['cer', 'wer', 'keyword_detection_rate', 'key_value_accuracy', 'chrfpp']
       const qShort = { cer: 'CER', wer: 'WER', keyword_detection_rate: 'KW', key_value_accuracy: 'KV', chrfpp: 'chrF++' }
 
-      const qHeader = hasEp ? ['Test', 'EP'] : ['Test']
+      const qHeader = hasDevice ? ['Test', 'Device'] : ['Test']
       for (const sn of shortNames) {
         for (const qk of qKeys) qHeader.push(`${sn} ${qShort[qk]}`)
       }
@@ -462,7 +462,7 @@ function generateMarkdownReport (aggregated, opts) {
       lines.push('| ' + qHeader.map(() => '---').join(' | ') + ' |')
 
       for (const t of parsed) {
-        const cells = hasEp ? [t.base, `**${t.ep}**`] : [t.full]
+        const cells = hasDevice ? [t.base, `**${t.device}**`] : [t.full]
         for (const devName of deviceNames) {
           const testQ = quality[devName] && quality[devName][t.full]
           for (const qk of qKeys) {
@@ -867,7 +867,7 @@ function _buildHtmlDetailSections (aggregated, addonType) {
       })
       const headerLabels = ['Test']
       if (scnHasModel) headerLabels.push('Model')
-      headerLabels.push('EP', ..._VISION_DETAIL_COLUMNS.map(c => c.label))
+      headerLabels.push('Device', ..._VISION_DETAIL_COLUMNS.map(c => c.label))
       const headerCells = headerLabels
         .map(h => `<th>${escapeHtml(h)}</th>`).join('')
 
@@ -875,10 +875,10 @@ function _buildHtmlDetailSections (aggregated, addonType) {
       for (const testName of buckets[scn]) {
         const metrics = tests[testName] || {}
         const cats = (categorical[devName] && categorical[devName][testName]) || {}
-        const ep = cats.execution_provider || '-'
+        const device = cats.execution_provider || '-'
         const cells = [escapeHtml(testName)]
         if (scnHasModel) cells.push(escapeHtml(cats.model || '-'))
-        cells.push(escapeHtml(ep))
+        cells.push(escapeHtml(device))
         for (const col of _VISION_DETAIL_COLUMNS) {
           cells.push(escapeHtml(_formatDetailCell(col.key, metrics[col.key], cats[col.key])))
         }

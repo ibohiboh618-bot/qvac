@@ -32,6 +32,8 @@ const cv::Scalar DOCTR_DET_STD(0.264, 0.2749, 0.287);
 // NOLINTEND(bugprone-throwing-static-initialization)
 constexpr double PIXEL_MAX = 255.0;
 
+constexpr int kNumChannels = 3;
+
 // Mean probability inside a bounding rectangle (assume_straight_pages=True).
 float boxScore(const cv::Mat& probMap, const cv::Rect& bbox) {
   const int x0 = std::max(0, bbox.x);
@@ -133,10 +135,11 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
   const int W = preprocessed.cols;
   CV_Assert(H == DBNET_INPUT_SIZE && W == DBNET_INPUT_SIZE);
 
-  std::vector<cv::Mat> channels;
-  cv::split(preprocessed, channels);
-
-  const int numChannels = static_cast<int>(channels.size());
+  // Deinterleave HWC -> CHW directly into the reusable inputBuffer_.
+  // Previously this path used `cv::split` + a per-channel `memcpy`, which
+  // allocated three full-resolution scratch `cv::Mat`s on every call
+  // (~12 MB at DBNET_INPUT_SIZE=1024).  The single-pass HWC->CHW loop
+  // below produces identical bytes but reuses `inputBuffer_` across calls.
   const size_t planeFloats = static_cast<size_t>(H) * W;
   inputBuffer_.resize(planeFloats * static_cast<size_t>(numChannels));
   for (int c = 0; c < numChannels; ++c) {

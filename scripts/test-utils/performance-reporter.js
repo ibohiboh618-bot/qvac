@@ -568,13 +568,13 @@ function createPerformanceReporter (opts) {
       const includeModel = results.some(r => r && r.model)
       const baseHeader = ['Test']
       if (includeModel) baseHeader.push('Model')
-      baseHeader.push('EP')
+      baseHeader.push('Device')
       const header = [...baseHeader, ...cols.map(c => c.label)]
       lines.push('| ' + header.join(' | ') + ' |')
       lines.push('| ' + header.map(() => '---').join(' | ') + ' |')
 
       for (const r of results) {
-        const ep = r.execution_provider || '-'
+        const device = r.execution_provider || '-'
         const vals = cols.map(c => {
           const v = r.metrics[c.key]
           if (v === null || v === undefined) return '-'
@@ -584,7 +584,7 @@ function createPerformanceReporter (opts) {
         })
         const cells = [r.test]
         if (includeModel) cells.push(r.model || '-')
-        cells.push(ep, ...vals)
+        cells.push(device, ...vals)
         lines.push('| ' + cells.join(' | ') + ' |')
       }
 

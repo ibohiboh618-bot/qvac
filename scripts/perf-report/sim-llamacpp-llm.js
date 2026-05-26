@@ -40,11 +40,11 @@ function jitter (base, pct) {
   return base + (Math.random() * 2 - 1) * delta
 }
 
-function makeImageRow (testName, ep, backend, platform, baseTotal, baseTtft, baseTps) {
+function makeImageRow (testName, device, backend, platform, baseTotal, baseTtft, baseTps) {
   return {
     test: testName,
     scenario: 'image',
-    execution_provider: ep,
+    execution_provider: device,
     metrics: {
       backend,
       platform,
@@ -60,11 +60,11 @@ function makeImageRow (testName, ep, backend, platform, baseTotal, baseTtft, bas
   }
 }
 
-function makeRow (testName, scenario, ep, backend, platform, baseTotal, baseTtft, baseTps, genTokens, promptTokens) {
+function makeRow (testName, scenario, device, backend, platform, baseTotal, baseTtft, baseTps, genTokens, promptTokens) {
   return {
     test: testName,
     scenario,
-    execution_provider: ep,
+    execution_provider: device,
     metrics: {
       backend,
       platform,
@@ -233,30 +233,30 @@ function buildResultsForDevice (d) {
   // emit two rows per model variant (cold prompt + warm follow-up).
   if (d.meta.platform !== 'darwin' || d.meta.arch !== 'x64') {
     if (d.meta.platform !== 'ios') {
-      const ep = d.gpuTotal != null ? 'gpu' : 'cpu'
-      const tag = ep.toUpperCase()
-      const backend = ep === 'gpu' ? d.backendGpu : d.backendCpu
-      const total = ep === 'gpu' ? d.gpuTotal : d.cpuTotal
-      const ttft = ep === 'gpu' ? d.gpuTtft : d.cpuTtft
-      const tps = ep === 'gpu' ? d.gpuTps : d.cpuTps
+      const device = d.gpuTotal != null ? 'gpu' : 'cpu'
+      const tag = device.toUpperCase()
+      const backend = device === 'gpu' ? d.backendGpu : d.backendCpu
+      const total = device === 'gpu' ? d.gpuTotal : d.cpuTotal
+      const ttft = device === 'gpu' ? d.gpuTtft : d.cpuTtft
+      const tps = device === 'gpu' ? d.gpuTps : d.cpuTps
 
       results.push(makeRow(
-        `[tools batch] [qwen3-1.7b] [${tag}]`, 'tool-calling', ep, backend, platformLabel,
+        `[tools batch] [qwen3-1.7b] [${tag}]`, 'tool-calling', device, backend, platformLabel,
         total * 4, ttft * 2.5, tps * 0.95, 256, 1100
       ))
       results.push(makeRow(
-        `[tools followup] [qwen3-1.7b] [${tag}]`, 'tool-calling', ep, backend, platformLabel,
+        `[tools followup] [qwen3-1.7b] [${tag}]`, 'tool-calling', device, backend, platformLabel,
         total * 1.8, ttft * 0.6, tps * 1.05, 80, 1280
       ))
 
       // Desktop also runs medgemma-4b-it.
       if (d.meta.platform !== 'android') {
         results.push(makeRow(
-          `[tools batch] [medgemma-4b-it] [${tag}]`, 'tool-calling', ep, backend, platformLabel,
+          `[tools batch] [medgemma-4b-it] [${tag}]`, 'tool-calling', device, backend, platformLabel,
           total * 6.5, ttft * 3.5, tps * 0.9, 256, 1100
         ))
         results.push(makeRow(
-          `[tools followup] [medgemma-4b-it] [${tag}]`, 'tool-calling', ep, backend, platformLabel,
+          `[tools followup] [medgemma-4b-it] [${tag}]`, 'tool-calling', device, backend, platformLabel,
           total * 2.5, ttft * 0.75, tps * 1.0, 80, 1280
         ))
       }

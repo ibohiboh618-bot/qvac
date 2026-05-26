@@ -123,16 +123,16 @@ function renderMarkdown (report, opts) {
   const includeModel = results.some(r => r && r.model)
   const baseHeader = ['Test']
   if (includeModel) baseHeader.push('Model')
-  baseHeader.push('EP')
+  baseHeader.push('Device')
   const header = [...baseHeader, ...cols.map(c => c.label)]
   lines.push('| ' + header.join(' | ') + ' |')
   lines.push('| ' + header.map(() => '---').join(' | ') + ' |')
 
   for (const r of results) {
-    const ep = r.execution_provider || '-'
+    const device = r.execution_provider || '-'
     const cells = [r.test || '-']
     if (includeModel) cells.push(r.model || '-')
-    cells.push(ep)
+    cells.push(device)
     for (const c of cols) cells.push(fmtMetric(c, (r.metrics || {})[c.key]))
     lines.push('| ' + cells.join(' | ') + ' |')
   }

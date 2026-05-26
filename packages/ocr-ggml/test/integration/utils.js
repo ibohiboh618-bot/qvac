@@ -678,6 +678,51 @@ async function runDoctrOCR (t, params, imagePath) {
   }
 }
 
+async function runEasyOcrOCR (t, params, imagePath) {
+  const { OcrGgml } = require('../..')
+
+  const ocrGgml = new OcrGgml({
+    params: {
+      langList: ['en'],
+      pipelineType: 'easyocr',
+      nThreads: 4,
+      ...params
+    },
+    opts: { stats: true }
+  })
+
+  await ocrGgml.load()
+  console.log('[runEasyOcrOCR] loaded, starting run...')
+
+  try {
+    const response = await ocrGgml.run({
+      path: imagePath,
+      options: { paragraph: false }
+    })
+    console.log('[runEasyOcrOCR] run() returned, awaiting results...')
+
+    let results = []
+
+    await response
+      .onUpdate(output => {
+        t.ok(Array.isArray(output), 'output should be an array')
+        console.log('[runEasyOcrOCR] onUpdate: got ' + output.length + ' items')
+        results = output.map(o => ({ text: o[1], confidence: o[2], bbox: o[0] }))
+        console.log('[runEasyOcrOCR] onUpdate: mapped ' + results.length + ' results')
+      })
+      .onError(error => {
+        t.fail('unexpected error: ' + JSON.stringify(error))
+      })
+      .await()
+
+    console.log('[runEasyOcrOCR] await() completed, returning results')
+    return { results, stats: response.stats || {} }
+  } finally {
+    await safeUnload(ocrGgml)
+    await new Promise(resolve => setTimeout(resolve, 2000))
+  }
+}
+
 module.exports = {
   isMobile,
   isWindows,
@@ -690,5 +735,6 @@ module.exports = {
   formatOCRPerformanceMetrics,
   safeUnload,
   runDoctrOCR,
+  runEasyOcrOCR,
   flushPerfReport: _flushPerfReport
 }
