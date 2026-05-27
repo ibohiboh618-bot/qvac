@@ -180,12 +180,12 @@ struct GraphBuilder {
   struct ggml_tensor* convBnAct(
       struct ggml_tensor* x, const std::string& convPrefix,
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-      const std::string& bnPrefix, int stride, int kernel, bool activate,
+       int stride, int kernel, bool activate,
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
     struct ggml_tensor* conv =
-        ggml_conv_2d(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+        ggml_conv_2d_direct(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
 
     if (!activate) {
@@ -201,7 +201,6 @@ struct GraphBuilder {
     return convBnAct(
         input,
         base + ".0",
-        base + ".1",
         /*stride=*/1,
         /*kernel=*/1,
         /*activate=*/true,
@@ -234,7 +233,6 @@ struct GraphBuilder {
     struct ggml_tensor* output = convBnAct(
         input,
         base + ".0",
-        base + ".1",
         /*stride=*/1,
         /*kernel=*/3,
         /*activate=*/true,
@@ -254,8 +252,7 @@ struct GraphBuilder {
   }
 
   struct ggml_tensor* convTransposeBnAct(
-      struct ggml_tensor* input, const std::string& convPrefix,
-      const std::string& bnPrefix) const {
+      struct ggml_tensor* input, const std::string& convPrefix) const {
     struct ggml_tensor* conv =
         ggml_conv_transpose_2d_p0(ctx, t(convPrefix + ".weight"), input, 2);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
@@ -266,13 +263,12 @@ struct GraphBuilder {
     struct ggml_tensor* output = convBnAct(
         input,
         "dbnet.prob_head.0",
-        "dbnet.prob_head.1",
         /*stride=*/1,
         /*kernel=*/3,
         /*activate=*/true,
         /*useHardswish=*/false);
     output =
-        convTransposeBnAct(output, "dbnet.prob_head.3", "dbnet.prob_head.4");
+        convTransposeBnAct(output, "dbnet.prob_head.3");
     output = ggml_conv_transpose_2d_p0(
         ctx, t("dbnet.prob_head.6.weight"), output, 2);
     return ggml_add(ctx, output, t("dbnet.prob_head.6.bias_br"));
@@ -281,7 +277,7 @@ struct GraphBuilder {
   /// Depthwise Conv2d (BN folded offline into weights+bias) + activation.
   struct ggml_tensor* dwConvBnAct(
       struct ggml_tensor* x, const std::string& convPrefix,
-      const std::string& bnPrefix, int stride, int kernel,
+      int stride, int kernel,
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
@@ -307,13 +303,13 @@ struct GraphBuilder {
         0,
         0);
 
-    struct ggml_tensor* fc1 = ggml_conv_2d(
+    struct ggml_tensor* fc1 = ggml_conv_2d_direct(
         ctx, t(sePrefix + ".fc1.weight"), pooled, 1, 1, 0, 0, 1, 1);
     fc1 = ggml_add(ctx, fc1, t(sePrefix + ".fc1.bias_br"));
     fc1 = ggml_relu(ctx, fc1);
 
     struct ggml_tensor* fc2 =
-        ggml_conv_2d(ctx, t(sePrefix + ".fc2.weight"), fc1, 1, 1, 0, 0, 1, 1);
+        ggml_conv_2d_direct(ctx, t(sePrefix + ".fc2.weight"), fc1, 1, 1, 0, 0, 1, 1);
     fc2 = ggml_add(ctx, fc2, t(sePrefix + ".fc2.bias_br"));
 
     // torchvision's SE uses hardsigmoid on the scale branch.
@@ -340,7 +336,6 @@ struct GraphBuilder {
       y = convBnAct(
           y,
           base + ".block.0.0",
-          base + ".block.0.1",
           /*stride=*/1,
           /*kernel=*/1,
           /*activate=*/true,
@@ -367,7 +362,6 @@ struct GraphBuilder {
     y = dwConvBnAct(
         y,
         dwPrefix + ".0",
-        dwPrefix + ".1",
         cfg.stride,
         cfg.depthwiseKernel,
         cfg.useHardswish);
@@ -388,7 +382,6 @@ struct GraphBuilder {
     y = convBnAct(
         y,
         projPrefix + ".0",
-        projPrefix + ".1",
         /*stride=*/1,
         /*kernel=*/1,
         /*activate=*/false,
@@ -841,7 +834,6 @@ ComputeGraph buildGraph(
   struct ggml_tensor* x = gb.convBnAct(
       cg.input,
       "features.0.0",
-      "features.0.1",
       /*stride=*/2,
       /*kernel=*/3,
       /*activate=*/true,
@@ -876,7 +868,6 @@ ComputeGraph buildGraph(
   x = gb.convBnAct(
       x,
       "features.16.0",
-      "features.16.1",
       /*stride=*/1,
       /*kernel=*/1,
       /*activate=*/true,

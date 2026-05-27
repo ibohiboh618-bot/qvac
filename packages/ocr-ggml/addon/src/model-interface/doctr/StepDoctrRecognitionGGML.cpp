@@ -399,7 +399,7 @@ struct GraphBuilder {
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
       const std::string& convPrefix, const std::string& bnPrefix, int strideW,
       int strideH, int kernel, bool applyActivation, bool useHardswish) const {
-    struct ggml_tensor* conv = ggml_conv_2d(
+    struct ggml_tensor* conv = ggml_conv_2d_direct(
         ctx,
         t(convPrefix + ".weight"),
         x,
@@ -436,7 +436,7 @@ struct GraphBuilder {
       struct ggml_tensor* x, const std::string& convPrefix,
       bool applyActivation, bool useHardswish) const {
     struct ggml_tensor* conv =
-        ggml_conv_2d(ctx, t(convPrefix + ".weight"), x, 1, 1, 0, 0, 1, 1);
+        ggml_conv_2d_direct(ctx, t(convPrefix + ".weight"), x, 1, 1, 0, 0, 1, 1);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
     return applyActivation ? activate(conv, useHardswish) : conv;
   }
