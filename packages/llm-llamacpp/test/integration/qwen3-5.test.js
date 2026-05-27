@@ -19,12 +19,12 @@ const useCpu = isDarwinX64 || isLinuxArm64
 
 const QWEN3_5_MODEL = {
   name: 'Qwen3.5-0.8B-Q8_0.gguf',
-  url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf'
+  url: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_0.gguf'
 }
 
 const QWEN3_5_PROJ_MODEL = {
   name: 'mmproj-Qwen3.5-0.8B-F16.gguf',
-  url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf'
+  url: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/mmproj-F16.gguf'
 }
 
 const BASE_PROMPT = [
