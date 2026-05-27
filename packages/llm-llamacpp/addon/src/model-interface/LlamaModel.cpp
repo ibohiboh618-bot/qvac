@@ -31,6 +31,7 @@
 #include "utils/LoggingMacros.hpp"
 #include "utils/ScopeGuard.hpp"
 #include "utils/SharedSnapshot.hpp"
+#include "utils/AndroidDeviceInfo.hpp"
 
 using namespace qvac_lib_inference_addon_llama::errors;
 using namespace qvac_lib_inference_addon_cpp::logger;
@@ -928,9 +929,11 @@ void LlamaModel::commonParamsParse(
           arch.c_str(),
           isVlm ? "true" : "false"));
 #ifdef __ANDROID__
-      if (arch == "qwen35" && isVlm) {
+      using namespace qvac_lib_inference_addon_llama::android_device;
+      
+      if (arch == "qwen35" && isVlm && isSamsung() && isUltraDevice()) {
         params.mmproj_use_gpu = true;
-        QLOG_IF(Priority::INFO, "[LlamaModel] mmproj_use_gpu set to true for android device");
+        QLOG_IF(Priority::INFO, "[LlamaModel] mmproj_use_gpu set to true for android device S25 Ultra or S26 Ultra");
       } else {
         params.mmproj_use_gpu = false;
       }
