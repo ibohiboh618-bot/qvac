@@ -918,8 +918,22 @@ void LlamaModel::commonParamsParse(
 
     if (chosenBackend.first == BackendType::GPU) {
       params.mmproj_backend = chosenBackend.second;
+      auto archOpt = metadata_.tryGetString("general.architecture");
+      bool isVlm = !constructionArgs_.projectionPath.empty();
+      std::string arch = archOpt.value_or("unknown");
+      
+      QLOG_IF(Priority::INFO, 
+
+        string_format("[LlamaModel] GPU backend selected - arch=%s, VLM=%s\n",
+          arch.c_str(),
+          isVlm ? "true" : "false"));
 #ifdef __ANDROID__
-      params.mmproj_use_gpu = true;
+      if (arch == "qwen35" && isVlm) {
+        params.mmproj_use_gpu = true;
+        QLOG_IF(Priority::INFO, "[LlamaModel] mmproj_use_gpu set to true for android device");
+      } else {
+        params.mmproj_use_gpu = false;
+      }
 #else
       params.mmproj_use_gpu = true;
 #endif
