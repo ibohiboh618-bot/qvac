@@ -919,7 +919,7 @@ void LlamaModel::commonParamsParse(
     if (chosenBackend.first == BackendType::GPU) {
       params.mmproj_backend = chosenBackend.second;
 #ifdef __ANDROID__
-      params.mmproj_use_gpu = false;
+      params.mmproj_use_gpu = true;
 #else
       params.mmproj_use_gpu = true;
 #endif
