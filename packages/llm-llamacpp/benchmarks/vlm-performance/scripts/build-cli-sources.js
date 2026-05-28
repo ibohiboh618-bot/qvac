@@ -146,7 +146,15 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild, backend) {
     })
 
     log(`building llama-mtmd-cli (${nproc} threads)`)
-    execFileSync('cmake', ['--build', buildDir, '--target', 'llama-mtmd-cli', '-j', String(nproc)], {
+    // On Windows (MSBuild/Visual Studio multi-config generator),
+    // CMAKE_BUILD_TYPE in the configure step is ignored — the
+    // generator builds Debug by default unless --config is passed.
+    // Pass it explicitly so Release artifacts land in build/bin/Release/.
+    const buildArgs = ['--build', buildDir, '--target', 'llama-mtmd-cli', '-j', String(nproc)]
+    if (os.platform() === 'win32') {
+      buildArgs.push('--config', 'Release')
+    }
+    execFileSync('cmake', buildArgs, {
       stdio: 'inherit',
       timeout: 600000,
       cwd: tmpDir
