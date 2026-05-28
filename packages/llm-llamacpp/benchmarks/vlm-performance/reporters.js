@@ -14,13 +14,22 @@ function tsStamp () {
 // exposes. The addon's `response.stats` uses uppercase keys (TTFT,
 // TPS, ppTPS); host-stderr regex parsing fills in vision-encode timings
 // that aren't in the addon stats payload.
+//
+// TTFT is computed uniformly across addon and CLI sources from the
+// same parsed llama.cpp stdout lines (vision-encode + prompt-eval).
+// The addon's stats.TTFT is intentionally ignored — it includes
+// first-decode time which the CLI counterpart does not, so using it
+// would make the addon/CLI comparison apples-to-oranges.
 function pickMetric (run, key) {
   if (!run || !run.ok) return null
   const sm = run.stdoutMetrics || {}
   const st = run.stats || {}
   switch (key) {
     case 'wallMs': return run.wallMs
-    case 'ttftMs': return (st.TTFT != null ? st.TTFT : (sm.promptEvalMs != null ? sm.promptEvalMs : null))
+    case 'ttftMs': {
+      if (sm.promptEvalMs == null) return null
+      return sm.promptEvalMs + (sm.visionEncodeMs || 0)
+    }
     case 'decodeTps': return (st.TPS != null ? st.TPS : (sm.decodeTps != null ? sm.decodeTps : null))
     case 'ppTps': return (st.ppTPS != null ? st.ppTPS : null)
     case 'visionEncodeMs': return sm.visionEncodeMs != null ? sm.visionEncodeMs : null
