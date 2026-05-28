@@ -8,7 +8,11 @@
 // Usage:
 //   node scripts/build-cli-sources.js [--sources=fabric,upstream]
 //       [--fabric-ref=v8189.0.2] [--upstream-ref=b8189]
-//       [--builds-dir=cli-builds] [--force-rebuild]
+//       [--backend=cpu|gpu] [--builds-dir=cli-builds] [--force-rebuild]
+//
+// --backend=gpu adds the platform-appropriate GGML accelerator flag
+// (Vulkan on linux/win, Metal on darwin) so the CLI legs go through
+// the same GPU code path as the addon's qvac-fabric prebuild.
 
 const fs = require('fs')
 const path = require('path')
@@ -73,12 +77,24 @@ function resolveRemoteSha (repo, ref) {
   } catch { return null }
 }
 
-function cacheKey (sourceKey, sha) {
-  return `${sourceKey}-${os.platform()}-${os.arch()}-${sha.slice(0, 12)}`
+function cacheKey (sourceKey, sha, backend) {
+  return `${sourceKey}-${os.platform()}-${os.arch()}-${backend}-${sha.slice(0, 12)}`
 }
 
-function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
-  log(`--- ${sourceKey} ---`)
+// Backend-specific cmake flag overlay. We merge these onto the
+// per-source CPU flags so the GPU code paths get compiled in. Vulkan
+// is chosen on linux/win to match the addon's qvac-fabric build
+// (which links the Vulkan ggml backend); macOS uses Metal natively.
+function backendCmakeFlags (backend) {
+  if (backend !== 'gpu') return {}
+  if (os.platform() === 'darwin') {
+    return { GGML_METAL: 'ON' }
+  }
+  return { GGML_VULKAN: 'ON' }
+}
+
+function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild, backend) {
+  log(`--- ${sourceKey} (${backend}) ---`)
   log(`repo: ${sourceConfig.repo}`)
   log(`ref:  ${sourceConfig.ref}`)
 
@@ -88,7 +104,9 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
   }
   log(`resolved SHA: ${remoteSha.slice(0, 12)}`)
 
-  const key = cacheKey(sourceKey, remoteSha)
+  const mergedFlags = { ...sourceConfig.cmakeFlags, ...backendCmakeFlags(backend) }
+
+  const key = cacheKey(sourceKey, remoteSha, backend)
   const cacheDir = path.join(buildsDir, key)
   const binaryPath = path.join(cacheDir, BINARY_NAME)
   const provenancePath = path.join(cacheDir, 'provenance.json')
@@ -113,13 +131,13 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
       encoding: 'utf8', timeout: 5000
     }).trim()
 
-    const cmakeDefines = Object.entries(sourceConfig.cmakeFlags)
+    const cmakeDefines = Object.entries(mergedFlags)
       .map(([k, v]) => `-D${k}=${v}`)
 
     const buildDir = path.join(tmpDir, 'build')
     const nproc = os.cpus().length
 
-    log(`configuring cmake (${Object.keys(sourceConfig.cmakeFlags).length} flags)`)
+    log(`configuring cmake (${Object.keys(mergedFlags).length} flags, backend=${backend})`)
     const configArgs = ['-B', buildDir, ...cmakeDefines, tmpDir]
     execFileSync('cmake', configArgs, {
       stdio: 'inherit',
@@ -159,7 +177,8 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild) {
       builtAt: new Date().toISOString(),
       platform: os.platform(),
       arch: os.arch(),
-      cmakeFlags: sourceConfig.cmakeFlags,
+      backend,
+      cmakeFlags: mergedFlags,
       binarySizeMb: Math.round((stat.size / (1024 * 1024)) * 100) / 100
     }
     fs.writeFileSync(provenancePath, JSON.stringify(provenance, null, 2))
@@ -179,6 +198,10 @@ function main () {
 
   const buildsDir = path.resolve(args['builds-dir'] || DEFAULT_BUILDS_DIR)
   const forceRebuild = Boolean(args['force-rebuild'])
+  const backend = (args.backend || 'cpu').toString()
+  if (backend !== 'cpu' && backend !== 'gpu') {
+    throw new Error(`--backend must be 'cpu' or 'gpu', got '${backend}'`)
+  }
 
   if (args['fabric-ref']) CLI_SOURCES.fabric.ref = args['fabric-ref']
   if (args['upstream-ref']) CLI_SOURCES.upstream.ref = args['upstream-ref']
@@ -194,7 +217,7 @@ function main () {
       continue
     }
     try {
-      resolved[key] = buildOne(key, cfg, buildsDir, forceRebuild)
+      resolved[key] = buildOne(key, cfg, buildsDir, forceRebuild, backend)
     } catch (e) {
       logErr(`failed to build ${key}: ${e.message}`)
       process.exitCode = 1

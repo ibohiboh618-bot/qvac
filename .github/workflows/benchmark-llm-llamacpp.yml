@@ -46,17 +46,16 @@ on:
         required: false
         type: string
         default: "b8189"
-      # ── Platforms ─────────────────────────────────────────────
-      run_linux:
-        description: "── PLATFORM ── Linux (ubuntu-latest, CPU)"
+      # ── Platforms × backends ──────────────────────────────────
+      # Comma-separated selection. Tokens: linux-cpu, linux-gpu,
+      # windows-cpu, windows-gpu, macos. "all" expands to every desktop
+      # cell. GPU rows for Linux/Windows go to self-hosted Vulkan runners;
+      # macOS uses Metal on GitHub-hosted macos-15-xlarge.
+      platforms:
+        description: "── PLATFORMS ── e.g. linux-cpu,linux-gpu,windows-cpu,windows-gpu,macos (or 'all')"
         required: false
-        type: boolean
-        default: true
-      run_windows:
-        description: "── PLATFORM ── Windows (windows-latest, CPU)"
-        required: false
-        type: boolean
-        default: false
+        type: string
+        default: "linux-cpu,linux-gpu,windows-cpu,windows-gpu,macos"
       run_android:
         description: "── PLATFORM ── Android (stub)"
         required: false
@@ -118,17 +117,9 @@ jobs:
           RUN_ADDON: ${{ inputs.run_addon }}
           RUN_FABRIC: ${{ inputs.run_fabric_cli }}
           RUN_UPSTREAM: ${{ inputs.run_upstream_cli }}
-          RUN_WINDOWS: ${{ inputs.run_windows }}
-          RUN_LINUX: ${{ inputs.run_linux }}
+          PLATFORMS: ${{ inputs.platforms }}
         run: |
-          entries='[]'
-          platforms='[]'
-          if [[ "$RUN_WINDOWS" == "true" ]]; then
-            platforms=$(echo "$platforms" | jq -c '. + [{"platform":"windows-x64","runner":"windows-latest"}]')
-          fi
-          if [[ "$RUN_LINUX" == "true" ]]; then
-            platforms=$(echo "$platforms" | jq -c '. + [{"platform":"linux-x64","runner":"ubuntu-latest"}]')
-          fi
+          # Sources
           sources='[]'
           if [[ "$RUN_ADDON" == "true" ]]; then
             sources=$(echo "$sources" | jq -c '. + ["addon"]')
@@ -139,17 +130,36 @@ jobs:
           if [[ "$RUN_UPSTREAM" == "true" ]]; then
             sources=$(echo "$sources" | jq -c '. + ["upstream"]')
           fi
-          for p in $(echo "$platforms" | jq -c '.[]'); do
-            plat=$(echo "$p" | jq -r '.platform')
-            runner=$(echo "$p" | jq -r '.runner')
-            for s in $(echo "$sources" | jq -r '.[]'); do
-              entries=$(echo "$entries" | jq -c --arg p "$plat" --arg r "$runner" --arg s "$s" '. + [{"platform":$p,"runner":$r,"source":$s}]')
+          # Selected platform×backend tokens
+          selected="${PLATFORMS:-linux-cpu}"
+          if [[ "$selected" == "all" ]]; then
+            selected="linux-cpu,linux-gpu,windows-cpu,windows-gpu,macos"
+          fi
+          # Build cells from tokens. Each token maps to a fixed
+          # (platform, arch, backend, runner) tuple.
+          cells='[]'
+          IFS=',' read -ra tokens <<< "$selected"
+          for raw in "${tokens[@]}"; do
+            sel=$(echo "$raw" | xargs)
+            case "$sel" in
+              linux-cpu)    plat=linux-x64;   arch=x64;   backend=cpu; runner=ubuntu-latest ;;
+              linux-gpu)    plat=linux-x64;   arch=x64;   backend=gpu; runner=qvac-ubuntu2404-x64-gpu ;;
+              windows-cpu)  plat=windows-x64; arch=x64;   backend=cpu; runner=windows-latest ;;
+              windows-gpu)  plat=windows-x64; arch=x64;   backend=gpu; runner=qvac-win25-x64-gpu ;;
+              macos)        plat=macos-arm64; arch=arm64; backend=gpu; runner=macos-15-xlarge ;;
+              "")           continue ;;
+              *) echo "::warning::Unknown platform token '$sel' (known: linux-cpu, linux-gpu, windows-cpu, windows-gpu, macos)"; continue ;;
+            esac
+            for src in $(echo "$sources" | jq -r '.[]'); do
+              cells=$(echo "$cells" | jq -c \
+                --arg p "$plat" --arg a "$arch" --arg b "$backend" --arg r "$runner" --arg s "$src" \
+                '. + [{"platform":$p,"arch":$a,"backend":$b,"runner":$r,"source":$s}]')
             done
           done
-          count=$(echo "$entries" | jq 'length')
-          echo "value=$entries" >> "$GITHUB_OUTPUT"
+          count=$(echo "$cells" | jq 'length')
+          echo "value=$cells" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "Desktop matrix ($count entries): $entries"
+          echo "Desktop matrix ($count entries): $cells"
       # Resolve commit metadata so the consolidated report can show what
       # the candidate ref + merge-base actually point at (hash, title,
       # date). Needs a real clone — sparse checkout doesn't give us git
@@ -188,14 +198,15 @@ jobs:
 
   # ── Desktop benchmark matrix ───────────────────────────────────────
   # Each leg is the same shape — pick the runner via matrix.runner.
-  # GitHub-hosted runners are CPU-only; GPU coverage moves to the
-  # self-hosted runners (qvac-win25-x64-gpu, ai-run-linux-gpu) in a
-  # later iteration. The matrix itself is built dynamically by the
-  # context job above based on run_windows / run_linux inputs.
+  # GPU rows (linux-x64 / windows-x64) target self-hosted Vulkan
+  # runners pre-provisioned with the Vulkan SDK; macOS arm64 uses
+  # Metal on the GitHub-hosted macos-15-xlarge runner. The matrix
+  # itself is built dynamically by the context job above from the
+  # `platforms` input.
   desktop:
     needs: context
     if: needs.context.outputs.desktop_count != '0'
-    name: vlm-${{ matrix.platform }}-${{ matrix.source }}
+    name: vlm-${{ matrix.platform }}-${{ matrix.backend }}-${{ matrix.source }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -255,14 +266,30 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund
 
+      # Vulkan SDK is pre-installed on the self-hosted GPU runners
+      # (qvac-ubuntu2404-x64-gpu, qvac-win25-x64-gpu) at the well-known
+      # paths shown below — same convention reusable-prebuilds.yml uses.
+      # macOS GPU goes through Metal and needs no SDK.
+      - name: Configure Vulkan SDK env (Linux GPU)
+        if: matrix.backend == 'gpu' && matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          echo "VULKAN_SDK=/opt/vulkansdk/x86_64" >> "$GITHUB_ENV"
+          echo "/opt/vulkansdk/x86_64/bin" >> "$GITHUB_PATH"
+      - name: Configure Vulkan SDK env (Windows GPU)
+        if: matrix.backend == 'gpu' && matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          "VULKAN_SDK=C:\VulkanSDK" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Cache CLI builds
         if: matrix.source != 'addon'
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/cli-builds
-          key: vlm-cli-v2-${{ matrix.platform }}-${{ matrix.source }}-${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
+          key: vlm-cli-v3-${{ matrix.platform }}-${{ matrix.backend }}-${{ matrix.source }}-${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
           restore-keys: |
-            vlm-cli-v2-${{ matrix.platform }}-${{ matrix.source }}-
+            vlm-cli-v3-${{ matrix.platform }}-${{ matrix.backend }}-${{ matrix.source }}-
 
       - name: Build CLI source
         if: matrix.source != 'addon'
@@ -272,7 +299,8 @@ jobs:
           REF=${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
           node scripts/build-cli-sources.js \
             --sources=${{ matrix.source }} \
-            --${{ matrix.source }}-ref=$REF
+            --${{ matrix.source }}-ref=$REF \
+            --backend=${{ matrix.backend }}
 
       - name: Prepare models
         shell: bash
@@ -285,6 +313,8 @@ jobs:
         run: |
           npm run run:vlm-bench -- \
             --sources=${{ matrix.source }} \
+            --backend=${{ matrix.backend }} \
+            --force-gpu-row \
             --warmup-runs=${{ inputs.warmup_runs }} \
             --measured-runs=${{ inputs.measured_runs }}
 
@@ -292,7 +322,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
-          name: vlm-perf-${{ matrix.platform }}-${{ matrix.source }}-${{ github.run_number }}
+          name: vlm-perf-${{ matrix.platform }}-${{ matrix.backend }}-${{ matrix.source }}-${{ github.run_number }}
           path: |
             ${{ env.WORKDIR }}/results/vlm-perf-*.md
             ${{ env.WORKDIR }}/results/vlm-perf-*.json
