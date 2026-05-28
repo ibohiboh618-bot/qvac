@@ -105,36 +105,15 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
 
-      - if: ${{ startsWith(matrix.os, 'macos') }}
-        name: Install vcpkg on macOS
-        shell: bash
-        run: |
-          git clone --branch 2025.12.12 --single-branch https://github.com/microsoft/vcpkg.git vcpkg_microsoft
-          cd vcpkg_microsoft && ./bootstrap-vcpkg.sh -disableMetrics
-          VCPKG_ROOT=$(pwd)
-          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
-          echo "$VCPKG_ROOT" >> $GITHUB_PATH
-          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> $GITHUB_ENV
+      - name: Setup vcpkg
+        uses: tetherto/qvac/.github/actions/setup-vcpkg@6e8d3c306a462a58589396cda428d65e015f0d8b
+        env:
+          MODEL_S3_BUCKET: ${{ secrets.MODEL_S3_BUCKET }}
+        with:
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
 
-      - if: ${{ matrix.os == 'ubuntu-24.04' }}
-        name: Install vcpkg on linux
-        shell: bash
-        run: |
-          git clone --branch 2025.12.12 --single-branch https://github.com/microsoft/vcpkg.git vcpkg_microsoft
-          cd vcpkg_microsoft && ./bootstrap-vcpkg.sh -disableMetrics
-          VCPKG_ROOT="$(pwd)"
-          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
-          echo "$VCPKG_ROOT" >> $GITHUB_PATH
-
-      - if: ${{ matrix.os == 'windows-2025' }}
-        name: Clone and bootstrap vcpkg (Windows)
-        run: |
-          git clone --branch 2025.12.12 --single-branch https://github.com/microsoft/vcpkg.git
-          ./vcpkg/bootstrap-vcpkg.bat -disableMetrics
-          echo ("VCPKG_ROOT=$env:GITHUB_WORKSPACE/vcpkg" -replace '\\', '/') >> $env:GITHUB_ENV
-
-      - if: ${{ matrix.os == 'ubuntu-24.04' || matrix.os == 'windows-2025' }}
-        name: Cleanup vcpkg
+      - name: Cleanup vcpkg
         shell: bash
         run: |
           rm -rf $VCPKG_ROOT/buildtrees/*
@@ -165,7 +144,17 @@ jobs:
           path: ${{ github.workspace }}/${{ env.WORKDIR }}/vcpkg/cache
           restore-keys: cpp-tests-v4-${{ matrix.platform }}-${{ matrix.arch || 'x64' }}-
 
+      - name: Cache C++ test models
+        id: model-cache
+        if: startsWith(matrix.runner, 'qvac-')
+        uses: ./.github/actions/cache-models
+        with:
+          package: embed-llamacpp
+          paths: packages/embed-llamacpp/models/unit-test
+          hash-files-glob: .github/workflows/cpp-tests-embed.yml
+
       - name: Download test models (into package dir)
+        if: steps.model-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -226,7 +215,7 @@ jobs:
           fi
 
       - name: Generate Coverage Report
-        if: ${{ matrix.os == 'ubuntu-24.04' && always() }}
+        if: ${{ matrix.os == 'ubuntu-24.04' && always() && !cancelled() }}
         working-directory: ${{ env.WORKDIR }}
         shell: bash
         run: |
@@ -235,7 +224,7 @@ jobs:
           echo "LINE_COVERAGE_PERCENTAGE=${COVERAGE}" >> $GITHUB_ENV
 
       - name: Archive Coverage Results
-        if: ${{ matrix.os == 'ubuntu-24.04' && always() }}
+        if: ${{ matrix.os == 'ubuntu-24.04' && always() && !cancelled() }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
           name: cpp-coverage-report-${{ matrix.platform }}-${{ matrix.arch || 'x64' }}
@@ -248,7 +237,7 @@ jobs:
 
 
       - name: Coverage Summary
-        if: ${{ matrix.os == 'ubuntu-24.04' && always() }}
+        if: ${{ matrix.os == 'ubuntu-24.04' && always() && !cancelled() }}
         shell: bash
         run: |
           echo "## 🎯 C++ Test Coverage Summary" >> $GITHUB_STEP_SUMMARY

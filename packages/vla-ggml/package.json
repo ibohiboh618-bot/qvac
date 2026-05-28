@@ -1,6 +1,6 @@
 {
   "name": "@qvac/vla-ggml",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "SmolVLA vision-language-action inference addon for QVAC (ggml backend)",
   "addon": true,
   "engines": {
@@ -60,7 +60,7 @@
   "devDependencies": {
     "@types/node": "^24.2.1",
     "brittle": "^3.16.5",
-    "cmake-bare": "1.7.5",
+    "cmake-bare": "^1.7.5",
     "cmake-vcpkg": "^1.1.0",
     "standard": "^17.0.0",
     "typescript": "^5.9.2"

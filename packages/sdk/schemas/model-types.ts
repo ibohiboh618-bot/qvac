@@ -12,9 +12,12 @@ export const ModelType = {
   llamacppEmbedding: "llamacpp-embedding",
   nmtcppTranslation: "nmtcpp-translation",
   onnxTts: "onnx-tts",
+  ttsGgml: "tts-ggml",
   parakeetTranscription: "parakeet-transcription",
   onnxOcr: "onnx-ocr",
   sdcppGeneration: "sdcpp-generation",
+  ggmlVla: "ggml-vla",
+  ggmlClassification: "ggml-classification",
 } as const;
 
 // === INTERNAL: Alias keys (backward compat names) ===
@@ -27,6 +30,8 @@ const AliasKeys = {
   tts: "tts",
   ocr: "ocr",
   diffusion: "diffusion",
+  vla: "vla",
+  classification: "classification",
 } as const;
 
 // === INTERNAL: Aliases (backward compat mapping) ===
@@ -40,9 +45,11 @@ export const ModelTypeAliases = {
   [AliasKeys.embeddings]: ModelType.llamacppEmbedding,
   [AliasKeys.nmt]: ModelType.nmtcppTranslation,
   [AliasKeys.parakeet]: ModelType.parakeetTranscription,
-  [AliasKeys.tts]: ModelType.onnxTts,
+  [AliasKeys.tts]: ModelType.ttsGgml,
   [AliasKeys.ocr]: ModelType.onnxOcr,
   [AliasKeys.diffusion]: ModelType.sdcppGeneration,
+  [AliasKeys.vla]: ModelType.ggmlVla,
+  [AliasKeys.classification]: ModelType.ggmlClassification,
 } as const;
 
 // === TYPES ===
@@ -199,12 +206,12 @@ export type NmtModelTypeInput = z.infer<typeof nmtModelTypeSchema>;
 
 /**
  * TTS model type schema.
- * - Alias: `"tts"` → resolves to `"onnx-tts"`
- * - Canonical: `"onnx-tts"`
+ * - Alias: `"tts"` → resolves to `"tts-ggml"`
+ * - Canonical: `"tts-ggml"`
  */
 export const ttsModelTypeSchema = modelTypeInputSchema
-  .extract([AliasKeys.tts, ModelType.onnxTts])
-  .describe('TTS model type: "tts" (alias) or "onnx-tts" (canonical)');
+  .extract([AliasKeys.tts, ModelType.ttsGgml])
+  .describe('TTS model type: "tts" (alias) or "tts-ggml" (canonical)');
 export type TtsModelTypeInput = z.infer<typeof ttsModelTypeSchema>;
 
 /**
@@ -229,4 +236,28 @@ export const diffusionModelTypeSchema = modelTypeInputSchema
   );
 export type DiffusionModelTypeInput = z.infer<
   typeof diffusionModelTypeSchema
+>;
+
+/**
+ * VLA (vision-language-action) model type schema.
+ * - Alias: `"vla"` → resolves to `"ggml-vla"`
+ * - Canonical: `"ggml-vla"`
+ */
+export const vlaModelTypeSchema = modelTypeInputSchema
+  .extract([AliasKeys.vla, ModelType.ggmlVla])
+  .describe('VLA model type: "vla" (alias) or "ggml-vla" (canonical)');
+export type VlaModelTypeInput = z.infer<typeof vlaModelTypeSchema>;
+
+/**
+ * Image Classification model type schema.
+ * - Alias: `"classification"` → resolves to `"ggml-classification"`
+ * - Canonical: `"ggml-classification"`
+ */
+export const classificationModelTypeSchema = modelTypeInputSchema
+  .extract([AliasKeys.classification, ModelType.ggmlClassification])
+  .describe(
+    'Classification model type: "classification" (alias) or "ggml-classification" (canonical)',
+  );
+export type ClassificationModelTypeInput = z.infer<
+  typeof classificationModelTypeSchema
 >;

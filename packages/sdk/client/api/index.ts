@@ -29,6 +29,8 @@ export { getLoadedModelInfo } from "./get-loaded-model-info";
 export { ocr } from "./ocr";
 export { invokePlugin, invokePluginStream } from "./invoke-plugin";
 export { diffusion, type DiffusionProgressTick } from "./diffusion";
+export { classify } from "./classify";
+export { video, type VideoProgressTick } from "./video";
 export { upscale } from "./upscale";
 export {
   modelRegistryList,
@@ -39,3 +41,9 @@ export {
 export { suspend } from "./suspend";
 export { resume } from "./resume";
 export { state } from "./state";
+export { vla, vlaHparams } from "./vla";
+export {
+  vlaPreprocessImage,
+  vlaPadState,
+  VLA_DEFAULT_IMAGE_SIZE,
+} from "./vla-helpers";

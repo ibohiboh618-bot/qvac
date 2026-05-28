@@ -7,8 +7,9 @@ import {
 } from "./llamacpp-config";
 import {
   whisperConfigSchema,
-  parakeetConfigSchema,
+  parakeetLoadConfigSchema,
 } from "./transcription-config";
+import type { parakeetConfigSchema } from "./transcription-config";
 import { delegateSchema } from "./delegate";
 import { nmtConfigSchema } from "./translation-config";
 import { ttsConfigSchema } from "./text-to-speech";
@@ -28,12 +29,16 @@ import {
   ttsModelTypeSchema,
   ocrModelTypeSchema,
   diffusionModelTypeSchema,
+  vlaModelTypeSchema,
+  classificationModelTypeSchema,
   ModelType,
   ModelTypeAliases,
   type CanonicalModelType,
   type ModelTypeInput,
 } from "./model-types";
 import { sdcppConfigSchema } from "./sdcpp-config";
+import { vlaConfigSchema } from "./vla";
+import { classificationConfigSchema } from "./classification";
 
 // Set of all built-in model types (canonical + aliases) for catch-all exclusion
 const builtInModelTypes = new Set([
@@ -76,7 +81,7 @@ export const loadBuiltinModelOptionsBaseSchema = z.union([
     .object({
       ...loadModelCommonFields,
       modelType: parakeetModelTypeSchema,
-      modelConfig: parakeetConfigSchema,
+      modelConfig: parakeetLoadConfigSchema.optional(),
     })
     .strict(),
   z
@@ -112,6 +117,21 @@ export const loadBuiltinModelOptionsBaseSchema = z.union([
       ...loadModelCommonFields,
       modelType: diffusionModelTypeSchema,
       modelConfig: sdcppConfigSchema.strict().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...loadModelCommonFields,
+      modelType: vlaModelTypeSchema,
+      modelConfig: vlaConfigSchema.strict().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...loadModelCommonFields,
+      modelSrc: modelSrcInputSchema.optional(),
+      modelType: classificationModelTypeSchema,
+      modelConfig: classificationConfigSchema.strict().optional(),
     })
     .strict(),
 ]);
@@ -178,7 +198,7 @@ const loadModelOptionsToRequestBaseSchema = z.union([
     .object({
       ...loadModelRequestCommonFields,
       modelType: parakeetModelTypeSchema,
-      modelConfig: parakeetConfigSchema,
+      modelConfig: parakeetLoadConfigSchema.optional(),
     })
     .strict()
     .transform((data) => ({
@@ -248,7 +268,7 @@ const loadModelOptionsToRequestBaseSchema = z.union([
     .strict()
     .transform((data) => ({
       type: "loadModel" as const,
-      modelType: ModelType.onnxTts,
+      modelType: ModelType.ttsGgml,
       modelSrc: modelInputToSrcSchema.parse(data.modelSrc),
       modelName: modelInputToNameSchema.parse(data.modelSrc),
       modelConfig: data.modelConfig,
@@ -287,6 +307,43 @@ const loadModelOptionsToRequestBaseSchema = z.union([
       modelType: ModelType.sdcppGeneration,
       modelSrc: modelInputToSrcSchema.parse(data.modelSrc),
       modelName: modelInputToNameSchema.parse(data.modelSrc),
+      modelConfig: data.modelConfig ?? {},
+      seed: data.seed ?? false,
+      withProgress: data.withProgress ?? !!data.onProgress,
+      delegate: data.delegate,
+      ...(data.requestId !== undefined && { requestId: data.requestId }),
+    })),
+  z
+    .object({
+      ...loadModelRequestCommonFields,
+      modelType: vlaModelTypeSchema,
+      modelConfig: vlaConfigSchema.strict().optional(),
+    })
+    .strict()
+    .transform((data) => ({
+      type: "loadModel" as const,
+      modelType: ModelType.ggmlVla,
+      modelSrc: modelInputToSrcSchema.parse(data.modelSrc),
+      modelName: modelInputToNameSchema.parse(data.modelSrc),
+      modelConfig: data.modelConfig ?? {},
+      seed: data.seed ?? false,
+      withProgress: data.withProgress ?? !!data.onProgress,
+      delegate: data.delegate,
+      ...(data.requestId !== undefined && { requestId: data.requestId }),
+    })),
+  z
+    .object({
+      ...loadModelRequestCommonFields,
+      modelSrc: modelSrcInputSchema.optional(),
+      modelType: classificationModelTypeSchema,
+      modelConfig: classificationConfigSchema.strict().optional(),
+    })
+    .strict()
+    .transform((data) => ({
+      type: "loadModel" as const,
+      modelType: ModelType.ggmlClassification,
+      modelSrc: data.modelSrc ? modelInputToSrcSchema.parse(data.modelSrc) : "",
+      modelName: data.modelSrc ? modelInputToNameSchema.parse(data.modelSrc) : undefined,
       modelConfig: data.modelConfig ?? {},
       seed: data.seed ?? false,
       withProgress: data.withProgress ?? !!data.onProgress,
@@ -353,7 +410,7 @@ export const loadWhisperModelRequestSchema = commonModelConfigSchema
 export const loadParakeetModelRequestSchema = commonModelConfigSchema
   .extend({
     modelType: z.literal(ModelType.parakeetTranscription),
-    modelConfig: parakeetConfigSchema,
+    modelConfig: parakeetLoadConfigSchema.optional(),
   })
   .strict();
 
@@ -373,7 +430,7 @@ export const loadNmtModelRequestSchema = commonModelConfigSchema
 
 export const loadTtsModelRequestSchema = commonModelConfigSchema
   .extend({
-    modelType: z.literal(ModelType.onnxTts),
+    modelType: z.literal(ModelType.ttsGgml),
     modelConfig: ttsConfigSchema,
   })
   .strict();
@@ -389,6 +446,20 @@ export const loadDiffusionModelRequestSchema = commonModelConfigSchema
   .extend({
     modelType: z.literal(ModelType.sdcppGeneration),
     modelConfig: sdcppConfigSchema.optional(),
+  })
+  .strict();
+
+export const loadVlaModelRequestSchema = commonModelConfigSchema
+  .extend({
+    modelType: z.literal(ModelType.ggmlVla),
+    modelConfig: vlaConfigSchema.optional(),
+  })
+  .strict();
+
+export const loadClassificationModelRequestSchema = commonModelConfigSchema
+  .extend({
+    modelType: z.literal(ModelType.ggmlClassification),
+    modelConfig: classificationConfigSchema.optional(),
   })
   .strict();
 
@@ -412,6 +483,8 @@ export const loadModelSrcRequestSchema = z
     loadTtsModelRequestSchema,
     loadOcrModelRequestSchema,
     loadDiffusionModelRequestSchema,
+    loadVlaModelRequestSchema,
+    loadClassificationModelRequestSchema,
     loadCustomPluginModelRequestSchema,
   ])
   .transform((data) => ({
@@ -561,7 +634,7 @@ export type InferredConfig<S> = S extends {
       ? z.input<typeof embedConfigBaseSchema>
       : S extends { engine: typeof ModelType.nmtcppTranslation }
         ? z.input<typeof nmtConfigSchema>
-        : S extends { engine: typeof ModelType.onnxTts }
+        : S extends { engine: typeof ModelType.ttsGgml }
           ? z.input<typeof ttsConfigSchema>
           : S extends { engine: typeof ModelType.onnxOcr }
             ? Partial<z.input<typeof ocrConfigSchema>>
@@ -569,7 +642,9 @@ export type InferredConfig<S> = S extends {
               ? z.input<typeof parakeetConfigSchema>
               : S extends { engine: typeof ModelType.sdcppGeneration }
                 ? z.input<typeof sdcppConfigSchema>
-                : Record<string, unknown>;
+                : S extends { engine: typeof ModelType.ggmlVla }
+                  ? z.input<typeof vlaConfigSchema>
+                  : Record<string, unknown>;
 
 /**
  * `loadModel` options for descriptors that preserve a literal `engine`.

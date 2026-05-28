@@ -103,8 +103,8 @@ struct SdCtxConfig {
   float flowShift = std::numeric_limits<float>::infinity();
 
   // -- Convolution kernel options --------------------------------------------
-  bool diffusionConvDirect = false; // ggml_conv2d_direct in diffusion model
-  bool vaeConvDirect = false;       // ggml_conv2d_direct in VAE
+  bool diffusionConvDirect = true; // ggml_conv2d_direct in diffusion model
+  bool vaeConvDirect = true;       // ggml_conv2d_direct in VAE
 
   // -- SDXL compatibility ----------------------------------------------------
   bool forceSDXLVaeConvScale = false; // force SDXL VAE conv scale (compat fix)
@@ -135,8 +135,8 @@ struct SdCtxConfig {
   bool previewNoisy = false;   // also include noisy xT preview
 
   // -- ESRGAN upscaler -------------------------------------------------------
-  // NOLINTNEXTLINE(readability-magic-numbers,cppcoreguidelines-avoid-magic-numbers)
-  int upscalerTileSize = 128;
+  static constexpr int K_DEFAULT_UPSCALER_TILE_SIZE = 128;
+  int upscalerTileSize = K_DEFAULT_UPSCALER_TILE_SIZE;
   bool upscalerDirect = false;
   bool upscalerOffloadParamsToCpu = false;
   int upscalerThreads = -1;

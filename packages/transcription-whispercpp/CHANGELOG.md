@@ -5,7 +5,143 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0]
+
+### Added
+- New runtime stat keys for the active backend, populated once per
+  `load()` and reported in every `runtimeStats()` snapshot (used by
+  Android device-farm assertions):
+  - `backendDevice` — post-fallback device class: `0` CPU, `1` GPU.
+    Mirrors `transcription-parakeet`'s `backendDevice`.
+  - `backendId` — `BackendId` enum: `0` CPU, `1` Metal, `2` CUDA, `3`
+    Vulkan, `4` OpenCL, `99` other. Kept in lock-step with
+    `transcription-parakeet`'s `BackendId` so the same integer means
+    the same backend family across both speech-stack addons.
+  - `gpuMemTotalMb` — total memory of the active GPU device in MiB (or
+    `-1` if the backend does not expose memory accounting).
+    Whisper-specific extra; parakeet does not expose this.
+  - `gpuMemFreeMb` — free memory of the active GPU device in MiB (or
+    `-1` if the backend does not expose memory accounting).
+- `WhisperModel::captureActiveBackendInfo()` mirrors
+  `whisper.cpp`'s own `whisper_backend_init_gpu()` selection (only
+  `GGML_BACKEND_DEVICE_TYPE_GPU`, honour `gpu_device` index when
+  set, otherwise first GPU in enumeration order) instead of a generic
+  "first GPU/IGPU" walk, so the reported backend matches what
+  whisper actually initialised against. Emits a `WARNING` through the
+  addon logger when `use_gpu=true` was requested but no GPU device
+  registered (silent CPU fallback case, parity with
+  `ParakeetModel::loadModel()`).
+- `BackendId` enum exported from `index.d.ts` (CPU / Metal / CUDA /
+  Vulkan / OpenCL / Other), backing the new `RuntimeStats.backendDevice`
+  / `backendId` fields.
+- `metal` feature on the consumed `whisper-cpp` port (QVAC-19236). The
+  `vcpkg.json` `osx | ios` dep entry now reads
+  `whisper-cpp[metal]` for `osx` so the Apple GPU backend selection
+  is declarative just like `[vulkan]` (linux/windows) and `[vulkan,
+  opencl]` (android). iOS continues to ship without the `[metal]`
+  feature until the separate iOS Metal/MTLCompiler XPC crash is
+  resolved.
+
+### Changed
+- Bumped `whisper-cpp` to `1.8.5#0`:
+  - Pure upstream-sync of `whisper.cpp` + bundled `ggml` to
+    `ggml-org/whisper.cpp` master (~149 upstream commits, no
+    tetherto-specific behavior change). Lands the v1.8.5 version
+    string.
+  - Switches the port from `add_subdirectory(ggml)` to
+    `find_package(ggml CONFIG REQUIRED)` via
+    `WHISPER_USE_SYSTEM_GGML=ON`, so `whisper-cpp`, `parakeet-cpp` and
+    `tts-cpp` all link the **same** `ggml-speech` instance instead of
+    bringing three separate ggml builds (QVAC-18992). The bundled
+    `qvac-ext-lib-whisper.cpp/ggml/` directory is no longer walked at
+    configure time.
+  - GPU backend selection, dynamic-backend `.so` packaging on Android,
+    per-arch CPU MODULE variants, Vulkan-Headers download and the
+    spirv-headers `-isystem` shim are all owned by the `ggml-speech`
+    port now; the whisper-cpp portfile shrank from ~160 lines to ~55.
+- The `WhisperModel` native addon now `#include <ggml-backend.h>`
+  unconditionally (was: `#if defined(__ANDROID__)` only) so the new
+  `captureActiveBackendInfo()` enumerates devices on every platform,
+  not just Android.
+
+### Removed
+- `transcription-whispercpp`-side `spirv-headers` / `vulkan-headers` /
+  `vulkan-loader` registry routings related to whisper-cpp are no
+  longer required by this addon's deps (parakeet/tts already routed
+  them and they remain for those consumers). `whisper-cpp` now pulls
+  Vulkan deps transitively through `ggml-speech[vulkan]`.
+
 ## [0.8.0]
+
+### Added
+- `whisperConfig.backendsDir` config option: absolute path to the root of the
+  per-arch ggml backend `.so` modules (defaults to the package's `prebuilds/`
+  folder). The native addon appends `<bare-target>/<module-name>` and feeds
+  the result to `ggml_backend_load_all_from_path()`. Consumed only on Android;
+  no-op everywhere else. Mirrors `transcription-parakeet`'s
+  `parakeetConfig.backendsDir`.
+
+### Changed
+- Bumped `whisper-cpp` to `1.8.4.3#0`:
+  - Syncs upstream `ggml-org/whisper.cpp` master up to v1.8.4.3, including
+    the bundled-ggml bump to v0.10.2 and the upstream PR #3677 VAD streaming
+    API (`whisper_vad_detect_speech_no_reset`, `whisper_vad_reset_state`).
+  - Adds the `opencl` feature (Adreno OpenCL backend on Android).
+  - Switches the Android build to full dynamic-backend mode
+    (`GGML_BACKEND_DL=ON` + `GGML_CPU_ALL_VARIANTS=ON`): the addon `.bare`
+    prebuild now ships one `libggml-cpu-android_armv*_*.so` per microarch
+    plus dynamically-loaded `libggml-vulkan.so` / `libggml-opencl.so`, and
+    ggml's loader picks the best CPU variant + GPU backend per device at
+    runtime.
+- Re-pinned the default-registry baseline to
+  `a9d7e924de8cb7133c54c5b1d446e4d9c0508ec8`
+  ([qvac-registry-vcpkg PR #152](https://github.com/tetherto/qvac-registry-vcpkg/pull/152)).
+- Added `spirv-headers` to the `microsoft/vcpkg` registry routing — required
+  because upstream whisper.cpp v1.8.4.3 unconditionally `#include`s
+  `spirv/unified1/spirv.hpp` in `ggml-vulkan.cpp` and ggml's CMake does not
+  `find_package(SpirvHeaders)`, so the standalone tree must be on the include
+  path.
+- GPU features (`opencl`, `vulkan`) are now selected entirely through
+  `vcpkg.json` platform-gated `whisper-cpp` deps (matches
+  `transcription-parakeet`'s pattern); the `ENABLE_VULKAN` / `ENABLE_OPENCL`
+  CMake option indirection in `CMakeLists.txt` was removed. Override the
+  feature set via `VCPKG_MANIFEST_FEATURES` if you need a non-default mix.
+
+### Fixed
+- Android E2E `SIGABRT` inside `whisper_init_from_file_with_params`
+  (`ggml_abort` → `ggml_backend_dev_backend_reg+48` →
+  `whisper_init_with_params_no_state+480`). With `GGML_BACKEND_DL=ON` the
+  bundled ggml-base no longer defines `GGML_USE_CPU`, so the static
+  `ggml_backend_registry` constructor registers zero backends and whisper's
+  `ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr)` returns
+  NULL → trips `GGML_ASSERT(device)`. The addon now hands
+  `path.join(__dirname, 'prebuilds')` to the native side as
+  `configurationParams.backendsDir`; on Android `WhisperModel::load` joins it
+  with the compile-time `BACKENDS_SUBDIR` (`<bare_target>/<module_name>`)
+  and calls `ggml_backend_load_all_from_path()` exactly once per process
+  (`std::once_flag`). Mirrors
+  `packages/{diffusion-cpp,llm-llamacpp,classification-ggml,…}`.
+- `bare-make generate` on `android-arm64` failed with
+  `get_target_property() called with non-existent target
+  "ggml::ggml-cpu-android_armv8.0_1"`. With dynamic-backend mode the per-arch
+  CPU + GPU backends are MODULE libraries that upstream ggml's
+  `install(TARGETS … EXPORT)` skips; materialise a `SHARED IMPORTED` target
+  locally from each `.so` under vcpkg's `bin/` before adding it to
+  `BACKEND_DL_LIBS`. Mirrors `packages/diffusion-cpp`.
+- Android APK consumers silently lost CPU init when the addon was packaged
+  with `useLegacyPackaging=false` (the AGP ≥ 3.6 default). ggml's
+  `ggml_backend_load_best()` directory iterator finds nothing inside
+  compressed APK libs, and its on-disk filename fallback did not compose the
+  per-arch `libggml-cpu-android_armv*_*.so` names that
+  `GGML_CPU_ALL_VARIANTS=ON` produces. The upstream `whisper-cpp` bump now
+  tries the bare backend name and all seven known `cpu-android_armv*_*`
+  variants, then picks the highest-scoring one the device's HWCAP supports.
+- `whisper-cpp[vulkan]` failed to build on `x64-windows` with `c1xx: fatal
+  error C1083: Cannot open source file: '.../x64-windows/include'`. The
+  spirv-headers include shim was emitting `-isystem <path>` into
+  `CMAKE_CXX_FLAGS`, which MSVC's `cl.exe` treats as a positional source
+  argument. The port now emits `/I<path>` on MSVC and keeps `-isystem
+  <path>` on GCC/Clang.
 
 ### Removed
 - Reverted the whisper-local `WhisperOutputCallBackJs` workaround introduced in `0.7.0`:

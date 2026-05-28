@@ -106,6 +106,8 @@ export const modelInfoSchema = z.object({
       "tts",
       "ocr",
       "diffusion",
+      "vla",
+      "classification",
       "other",
     ])
     .describe("Inference addon / capability category this model belongs to."),
