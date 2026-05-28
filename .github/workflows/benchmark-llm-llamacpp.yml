@@ -311,6 +311,12 @@ jobs:
         if: matrix.source != 'addon'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
+        env:
+          # Force the VS generator on Windows. Without this CMake picks
+          # MinGW when both are present (windows-latest case), and on
+          # the self-hosted GPU runner there's no MinGW at all so the
+          # default-generator fallback breaks. Matches cpp-tests-*.yml.
+          CMAKE_GENERATOR: ${{ matrix.platform == 'windows-x64' && 'Visual Studio 17 2022' || '' }}
         run: |
           REF=${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
           node scripts/build-cli-sources.js \

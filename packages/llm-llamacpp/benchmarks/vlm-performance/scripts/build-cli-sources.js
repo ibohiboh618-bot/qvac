@@ -59,12 +59,20 @@ function validatePrereqs () {
   const git = which('git')
   if (!git) throw new Error('git not found on PATH')
 
-  const cc = which('cc') || which('clang') || which('gcc') || which('cl')
-  if (!cc) throw new Error('No C/C++ compiler found — install clang, gcc, or MSVC')
+  // On Windows, MSVC's cl.exe is normally not on PATH outside a
+  // Developer Command Prompt; cmake locates it via vswhere/registry
+  // and the Visual Studio generator. Other workflows in this repo
+  // (cpp-tests-*.yml) rely on that and only set CMAKE_GENERATOR.
+  // Skip the PATH-based compiler check there.
+  let cc = null
+  if (os.platform() !== 'win32') {
+    cc = which('cc') || which('clang') || which('gcc')
+    if (!cc) throw new Error('No C/C++ compiler found — install clang or gcc')
+  }
 
   log(`cmake: ${cmake}`)
   log(`git:   ${git}`)
-  log(`cc:    ${cc}`)
+  log(`cc:    ${cc || '(deferred to cmake/MSVC)'}`)
 }
 
 function resolveRemoteSha (repo, ref) {
