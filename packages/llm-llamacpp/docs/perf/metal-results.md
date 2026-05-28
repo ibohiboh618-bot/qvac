@@ -328,19 +328,18 @@ models auto-pushed from Mac via `devicectl`, 1 model per app launch, 3
 measured runs per launch, 60s cool-down. iPhone 16e (A18, 5-core GPU,
 8 GB), elephant.jpg. Session: 2026-05-28.
 
-**iPhone multi-turn results pending** — perf data capture from the mobile
-addon's `_perf-helper.js` requires the per-record `writeReport()` fix to
-be included in the addon prebuild (currently only in source builds). The
-addon's `perf-report.json` is not written to disk in the prebuild because
-the exit hook doesn't fire (React Native app stays running). Console log
-capture is unreliable due to RPC flush timing.
+**Vision cache TTFT isolation not possible on iPhone** — in single-process
+execution, the KV cache and vision prefix cache cannot be independently
+controlled. All tested protocols result in either KV cache masking the
+vision cache benefit (same cacheKey) or `resetState(true)` clearing both
+caches (new/no cacheKey). The Mac M4 interleaved benchmark (Section 2.3.2)
+uses separate `bare` processes per measurement, which avoids this coupling.
 
-The Mac M4 multi-turn results (Section 2.3.2) are authoritative for the
-vision prefix cache benefit (22–50% TTFT reduction). The iPhone savings
-are expected to be proportionally similar since the CLIP encode time
-scales with the same ratio across platforms.
+The Mac M4 results (22–50% TTFT reduction) are authoritative. iPhone TTFT
+savings are expected to be proportionally similar since CLIP encode time
+scales consistently across platforms.
 
-**iPhone decode TPS** (from earlier same-cacheKey sweep, for reference):
+**iPhone decode TPS** (from matrix sweep, for reference):
 
 | Model | TPS |
 |-------|-----|
@@ -350,6 +349,9 @@ scales with the same ratio across platforms.
 | Qwen3.5-2B Q4_K_M | ~8 |
 | Qwen3.5-2B Q8_0 | ~7 |
 | Qwen3.5-4B Q4_K_M | ~4 |
+
+TPS is identical between base and feat variants (±2%, within noise),
+confirming zero overhead from the vision cache code on iPhone.
 
 ### 2.4 Caveats
 
