@@ -13,7 +13,7 @@
 #   EASYOCR_S3_PREFIX           - S3 prefix for EasyOCR models
 #                                 (default: qvac_models_compiled/ocr/gguf/easyocr/2026-05-14)
 #   DOCTR_S3_PREFIX             - S3 prefix for DocTR models
-#                                 (default: qvac_models_compiled/ocr/gguf/doctrf16/2026-05-15)
+#                                 (default: qvac_models_compiled/ocr/gguf/doctrf16/2026-05-28)
 #   OUTPUT_DIR                  - Directory to write ocr-ggml-model-urls.json (default: .)
 #
 # Output:
@@ -26,7 +26,7 @@ set -e
 REGION="${AWS_REGION:-eu-central-1}"
 BUCKET="${MODEL_S3_BUCKET}"
 EASYOCR_PREFIX="${EASYOCR_S3_PREFIX:-qvac_models_compiled/ocr/gguf/easyocr/2026-05-14}"
-DOCTR_PREFIX="${DOCTR_S3_PREFIX:-qvac_models_compiled/ocr/gguf/doctrf16/2026-05-15}"
+DOCTR_PREFIX="${DOCTR_S3_PREFIX:-qvac_models_compiled/ocr/gguf/doctrf16/2026-05-28}"
 OUTPUT_DIR="${OUTPUT_DIR:-.}"
 JSON_FILE="${OUTPUT_DIR}/ocr-ggml-model-urls.json"
 
