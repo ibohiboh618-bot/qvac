@@ -298,6 +298,22 @@ jobs:
           unzip -q cmake.zip
           echo "$PWD/cmake-3.31.6-windows-x86_64/bin" >> "$GITHUB_PATH"
 
+      # The qvac-win25-x64-gpu runner uses the same LLVM+Ninja toolchain
+      # as the prebuilds workflow — it doesn't have Visual Studio
+      # installed, so the VS generator we use on windows-latest can't
+      # find an instance there. Provision LLVM (clang/clang++) and
+      # Ninja so cmake can configure with the Ninja generator and
+      # clang. Only needed for the CLI-build legs on that runner.
+      - name: Setup LLVM (Windows GPU CLI builds)
+        if: matrix.platform == 'windows-x64' && matrix.backend == 'gpu' && matrix.source != 'addon'
+        uses: ./.github/actions/setup-llvm
+      - name: Setup Ninja (Windows GPU CLI builds)
+        if: matrix.platform == 'windows-x64' && matrix.backend == 'gpu' && matrix.source != 'addon'
+        shell: bash
+        run: |
+          choco install ninja -y --no-progress
+          ninja --version
+
       - name: Cache CLI builds
         if: matrix.source != 'addon'
         uses: actions/cache@v4
@@ -312,11 +328,18 @@ jobs:
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         env:
-          # Force the VS generator on Windows. Without this CMake picks
-          # MinGW when both are present (windows-latest case), and on
-          # the self-hosted GPU runner there's no MinGW at all so the
-          # default-generator fallback breaks. Matches cpp-tests-*.yml.
-          CMAKE_GENERATOR: ${{ matrix.platform == 'windows-x64' && 'Visual Studio 17 2022' || '' }}
+          # Windows-CPU runs on windows-latest with the bundled VS — use
+          # the multi-config VS generator (matches cpp-tests-*.yml).
+          # Windows-GPU runs on the self-hosted runner with no VS — use
+          # Ninja + clang from the setup-llvm step above. The CC/CXX
+          # vars are picked up by cmake when CMAKE_C_COMPILER isn't set
+          # in the project; llama.cpp doesn't pin one, so this works.
+          CMAKE_GENERATOR: >-
+            ${{ (matrix.platform == 'windows-x64' && matrix.backend == 'gpu') && 'Ninja'
+                || matrix.platform == 'windows-x64' && 'Visual Studio 17 2022'
+                || '' }}
+          CC: ${{ (matrix.platform == 'windows-x64' && matrix.backend == 'gpu') && 'clang' || '' }}
+          CXX: ${{ (matrix.platform == 'windows-x64' && matrix.backend == 'gpu') && 'clang++' || '' }}
         run: |
           REF=${{ matrix.source == 'fabric' && inputs.fabric_ref || inputs.upstream_ref }}
           node scripts/build-cli-sources.js \

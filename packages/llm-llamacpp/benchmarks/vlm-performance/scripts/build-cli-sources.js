@@ -154,12 +154,16 @@ function buildOne (sourceKey, sourceConfig, buildsDir, forceRebuild, backend) {
     })
 
     log(`building llama-mtmd-cli (${nproc} threads)`)
-    // On Windows (MSBuild/Visual Studio multi-config generator),
-    // CMAKE_BUILD_TYPE in the configure step is ignored — the
-    // generator builds Debug by default unless --config is passed.
-    // Pass it explicitly so Release artifacts land in build/bin/Release/.
+    // Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config)
+    // ignore CMAKE_BUILD_TYPE at configure-time and need --config at
+    // build-time; single-config generators (Unix Makefiles, plain Ninja)
+    // reject --config. Detect via CMAKE_GENERATOR env (set by the
+    // workflow on Windows; unset elsewhere, where the default generator
+    // is single-config).
+    const generator = process.env.CMAKE_GENERATOR || ''
+    const isMultiConfig = /^(Visual Studio|Xcode|Ninja Multi-Config)/.test(generator)
     const buildArgs = ['--build', buildDir, '--target', 'llama-mtmd-cli', '-j', String(nproc)]
-    if (os.platform() === 'win32') {
+    if (isMultiConfig) {
       buildArgs.push('--config', 'Release')
     }
     execFileSync('cmake', buildArgs, {
