@@ -121,6 +121,77 @@ Vulkan device (unchanged): `ggml_vulkan: 0 = Radeon 8060S Graphics (RADV GFX1151
 
 ---
 
+## Strix sampling bottleneck investigation
+
+Recorded on `qvac-dev-strix-1`, commit `e9cde7d3`. Same benchmark as verbosity profiling (`bare logs/generate-image-verbosity2.js`, `threads=4`, `diffusion_fa=true`, seed 42, 512², 20 steps). No tracked source changes; experiment artifacts under `packages/diffusion-cpp/logs/` (gitignored).
+
+### Files inspected (pinned vcpkg buildtrees on Strix)
+
+| Component | Path |
+|-----------|------|
+| Upstream txt2img / sampling | `/home/dev/vcpkg/buildtrees/stable-diffusion-cpp/src/f028dfb9fe-865f9e2efc.clean/src/stable-diffusion.cpp` |
+| Diffusion API | `.../src/diffusion_model.hpp`, `.../src/flux.hpp` |
+| Attention / FA graph | `.../src/ggml_extend.hpp` |
+| ggml Vulkan backend | `/home/dev/vcpkg/buildtrees/ggml/src/45bc58f723-cbfedfc90c.clean/src/ggml-vulkan/ggml-vulkan.cpp` |
+| ggml scheduler / node debug | `.../src/ggml-backend.cpp` (`GGML_SCHED_DEBUG`) |
+| Addon `diffusion_fa` → upstream | `packages/diffusion-cpp/addon/src/model-interface/SdModel.cpp` (`params.diffusion_flash_attn`), `addon/src/handlers/SdCtxHandlers.cpp` |
+
+### Sampling call path (confirmed)
+
+1. `generate_image_internal()` → `sd_ctx->sd->sample(...)` (`stable-diffusion.cpp` ~3555).
+2. Per-step denoise loop → `work_diffusion_model->compute(n_threads, diffusion_params, &out_cond)` (~2179).
+3. FLUX.2 klein → `FluxModel::compute()` → `flux.compute(...)` (`diffusion_model.hpp` / `flux.hpp` ~1464).
+4. Graph build uses `ggml_extend` attention; with `diffusion_flash_attn` → `ggml_flash_attn_ext` when constraints pass (`ggml_extend.hpp` ~1360–1372).
+5. Execution → ggml Vulkan (`ggml_vulkan.cpp`): matmul (`ggml_vk_mul_mat*`) + `ggml_vk_flash_attn()` for `GGML_OP_FLASH_ATTN_EXT`.
+
+### `diffusion_fa` and flash attention (confirmed active)
+
+- JS `diffusion_fa: true` → addon `SdCtxConfig::diffusionFlashAttn` → `sd_ctx_params_t.diffusion_flash_attn` (`SdModel.cpp`).
+- Upstream enables diffusion-only FA when `flash_attn || diffusion_flash_attn` (`stable-diffusion.cpp` ~862–864).
+- Run logs always include: `Using flash attention in the diffusion model`.
+- Device line: `fp16: 1`, `bf16: 0`, `matrix cores: KHR_coopmat` (baseline / coopmat-on runs).
+- ggml FA path selects `FA_COOPMAT1` when `coopmat1_fa_support` + shmem/shape checks pass, else `FA_SCALAR` (`ggml-vulkan.cpp` ~8467–8523).
+
+### ggml Vulkan env vars in pinned source (`ggml-vulkan.cpp`)
+
+Present in this tree (do not use names not listed here):
+
+`GGML_VK_PREFER_HOST_MEMORY`, `GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM`, `GGML_VK_ALLOW_SYSMEM_FALLBACK`, `GGML_VK_DISABLE_GRAPH_OPTIMIZE`, `GGML_VK_DISABLE_COOPMAT`, `GGML_VK_DISABLE_COOPMAT2`, `GGML_VK_DISABLE_INTEGER_DOT_PRODUCT`, `GGML_VK_DISABLE_BFLOAT16`, `GGML_VK_ENABLE_MEMORY_PRIORITY`, `GGML_VK_DISABLE_ASYNC`, `GGML_VK_DISABLE_F16`, `GGML_VK_DISABLE_FUSION`, `GGML_VK_DISABLE_MMVQ`, `GGML_VK_FORCE_MMVQ`, `GGML_VK_DISABLE_MULTI_ADD`, `GGML_VK_FORCE_MAX_ALLOCATION_SIZE`, `GGML_VK_FORCE_MAX_BUFFER_SIZE`, `GGML_VK_SUBALLOCATION_BLOCK_SIZE`, `GGML_VK_DEBUG_MARKERS`, `GGML_VK_PERF_LOGGER`, `GGML_VK_PERF_LOGGER_CONCURRENT`, `GGML_VK_PERF_LOGGER_FREQUENCY`, `GGML_VK_SYNC_LOGGER`, `GGML_VK_MEMORY_LOGGER`, `GGML_VK_VISIBLE_DEVICES`, `GGML_VULKAN_SKIP_CHECKS`, `GGML_VULKAN_OUTPUT_TENSOR`.
+
+Related (other ggml files): `GGML_DISABLE_VULKAN` (`ggml-backend-reg.cpp`), `GGML_SCHED_DEBUG` / `GGML_SCHED_DEBUG_REALLOC` (`ggml-backend.cpp`), `GGML_OP_OFFLOAD_MIN_BATCH`.
+
+**Profiling-only (not run as timing experiments):** `GGML_VK_PERF_LOGGER=1` logs per-op Vulkan timings with tensor `name` / fusion labels (`vk_perf_logger` in `ggml-vulkan.cpp`).
+
+### Env experiments (max 3; same benchmark)
+
+| Run | Env override | Gen (s) | `generate_image` (s) | Sampling (s) | Text (s) | VAE (s) | GPU busy max/avg | VRAM max | GTT max | Coopmat | vs baseline |
+|-----|----------------|---------|----------------------|--------------|----------|---------|------------------|----------|---------|---------|-------------|
+| Baseline (verbosity profiling) | — | 39.5 | 39.42 | 38.23 | 0.56 | 0.62 | 100% / 90.5% | 2037 MiB | 8150 MiB | KHR_coopmat | — |
+| 1 `disable_coopmat` | `GGML_VK_DISABLE_COOPMAT=1` | 89.2 | 89.12 | 87.48 | 0.99 | 0.65 | 100% / 95.5% | 2035 MiB | 7790 MiB | none | **~2.3× slower** |
+| 2 `disable_graph_optimize` | `GGML_VK_DISABLE_GRAPH_OPTIMIZE=1` | 39.4 | 39.34 | 38.17 | 0.56 | 0.61 | 100% / 90.5% | 2037 MiB | 8150 MiB | KHR_coopmat | neutral (~−0.2%) |
+| 3 `prefer_host_memory` | `GGML_VK_PREFER_HOST_MEMORY=1` | 39.8 | 39.76 | 38.38 | 0.68 | 0.69 | 100% / 89.2% | 149 MiB* | 8551 MiB | KHR_coopmat | neutral (~+0.4%) |
+
+\*UMA accounting shift: sysfs VRAM counter dropped while GTT rose; sampling time unchanged.
+
+Logs: `flux2_strix_sampling_<name>.log`, sysfs: `flux2_strix_sampling_<name>_sysfs.csv`. Runner: `logs/run_sampling_experiment.sh` + `logs/experiment_env/<name>.env`.
+
+### Conclusion
+
+- **No env-only win** on Strix for this workload; baseline Vulkan path already uses cooperative matrices and graph optimization.
+- **`GGML_VK_DISABLE_COOPMAT=1` is strongly harmful** (+129% sampling time): matmul + flash-attn fall back to non-coopmat paths on RADV GFX1151.
+- Bottleneck remains **20× FLUX diffusion `compute()` per step** (flash-attn + Q8_0/BF16 matmul on Vulkan), not host memory preference or graph fusion toggles.
+- AMD RDNA-class matmul warptile tuning already applies when `vendor_id==AMD && coopmat_support` (`ggml-vulkan.cpp` ~3029).
+
+### Recommended next steps
+
+1. **Diagnostic (no code):** one run with `GGML_VK_PERF_LOGGER=1` (and optional `GGML_VK_PERF_LOGGER_FREQUENCY=20`) to rank hot ops inside the diffusion step graph.
+2. **First code-level candidate:** `ggml_vk_flash_attn()` in pinned `ggml-vulkan.cpp` (~8408–8664) — tune `FA_COOPMAT1` vs `FA_SCALAR` selection and AMD RDNA3 + RADV shmem/warptile paths for FLUX joint attention (24 heads, 512² latent). **Risk: medium** (shader path changes; must not regress other GPUs; coopmat disable proved critical).
+3. **Second candidate:** AMD `l_warptile` / `l_warptile_mmq` block for `vendor_id==AMD && coopmat_support` (~3029–3034) after perf logger identifies matmul-bound ops. **Risk: medium-high** (affects all Q8_0 diffusion matmuls).
+
+**Not recommended without measurement:** disabling `diffusion_fa` (FLUX2 VRAM hazard), `GGML_VK_DISABLE_F16`, or CPU fallback.
+
+---
+
 ## Reference (from repo inspection)
 
 ### Primary package
