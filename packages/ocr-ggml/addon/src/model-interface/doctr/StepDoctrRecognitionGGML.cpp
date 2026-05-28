@@ -79,7 +79,6 @@ constexpr int kLstmHiddenSize = 128;
 constexpr int kLstmLayerCount = 2;
 constexpr int kLstmDirectionCount = 2;
 constexpr int kLstmGateCount = 4;
-constexpr float kBatchNormEps = 1e-5F;
 constexpr double kPixelMax = 255.0;
 
 // Sizing constants for the three ggml contexts the recognizer allocates.
@@ -388,16 +387,10 @@ struct GraphBuilder {
     return useHardswish ? ggml_hardswish(ctx, x) : ggml_relu(ctx, x);
   }
 
-  struct ggml_tensor*
-  applyBn(struct ggml_tensor* x, const std::string& bnPrefix) const {
-    struct ggml_tensor* scaled = ggml_mul(ctx, x, t(bnPrefix + ".scale"));
-    return ggml_add(ctx, scaled, t(bnPrefix + ".shift"));
-  }
-
   struct ggml_tensor* convBnAct(
       struct ggml_tensor* x,
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-      const std::string& convPrefix, const std::string& bnPrefix, int strideW,
+      const std::string& convPrefix, int strideW,
       int strideH, int kernel, bool applyActivation, bool useHardswish) const {
     struct ggml_tensor* conv = ggml_conv_2d_direct(
         ctx,
@@ -409,14 +402,14 @@ struct GraphBuilder {
         samePadding(kernel),
         1,
         1);
-    conv = applyBn(conv, bnPrefix);
+    conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
     return applyActivation ? activate(conv, useHardswish) : conv;
   }
 
   struct ggml_tensor* dwConvBnAct(
       struct ggml_tensor* x,
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-      const std::string& convPrefix, const std::string& bnPrefix, int strideW,
+      const std::string& convPrefix, int strideW,
       int strideH, int kernel, bool useHardswish) const {
     struct ggml_tensor* conv = ggml_conv_2d_dw(
         ctx,
@@ -428,7 +421,7 @@ struct GraphBuilder {
         samePadding(kernel),
         1,
         1);
-    conv = applyBn(conv, bnPrefix);
+    conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
     return activate(conv, useHardswish);
   }
 
@@ -473,7 +466,6 @@ struct GraphBuilder {
       y = convBnAct(
           y,
           base + ".block.0.0",
-          base + ".block.0.1",
           1,
           1,
           1,
@@ -497,7 +489,6 @@ struct GraphBuilder {
     y = dwConvBnAct(
         y,
         dwBase + ".0",
-        dwBase + ".1",
         cfg.strideW,
         cfg.strideH,
         cfg.kernel,
@@ -510,7 +501,7 @@ struct GraphBuilder {
     const std::string projBase =
         base + ".block." + std::to_string(projBlockIdx);
     y = convBnAct(
-        y, projBase + ".0", projBase + ".1", 1, 1, 1, false, cfg.useHardswish);
+        y, projBase + ".0", 1, 1, 1, false, cfg.useHardswish);
 
     if (cfg.strideW == 1 && cfg.strideH == 1 &&
         cfg.inputChannels == cfg.outputChannels) {
@@ -715,48 +706,13 @@ private:
           newF32Tensor(graph.weightsCtx.get(), name + "_br", 4, shape.data()));
     };
 
-    auto addBnAffine = [&](const std::string& prefix) {
-      const std::vector<float> weight = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".weight").c_str()),
-          prefix + ".weight");
-      const std::vector<float> bias = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".bias").c_str()),
-          prefix + ".bias");
-      const std::vector<float> mean = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".running_mean").c_str()),
-          prefix + ".running_mean");
-      const std::vector<float> var = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".running_var").c_str()),
-          prefix + ".running_var");
-      if (weight.size() != bias.size() || weight.size() != mean.size() ||
-          weight.size() != var.size()) {
-        raise("BatchNorm tensor size mismatch for " + prefix);
-      }
-      const std::array<int64_t, 4> shape = {
-          1, 1, static_cast<int64_t>(weight.size()), 1};
-      graph.weights.emplace(
-          prefix + ".scale",
-          newF32Tensor(
-              graph.weightsCtx.get(), prefix + ".scale", 4, shape.data()));
-      graph.weights.emplace(
-          prefix + ".shift",
-          newF32Tensor(
-              graph.weightsCtx.get(), prefix + ".shift", 4, shape.data()));
-    };
-
-    auto addConvBn = [&](const std::string& convPrefix,
-                         const std::string& bnPrefix) {
-      addConvWeight(convPrefix + ".weight");
-      addBnAffine(bnPrefix);
-    };
-
     auto addConvBias = [&](const std::string& convPrefix) {
       addConvWeight(convPrefix + ".weight");
       addRaw(convPrefix + ".bias");
       addBiasBroadcast(convPrefix + ".bias");
     };
 
-    addConvBn("crnn.features.0.0", "crnn.features.0.1");
+    addConvBias("crnn.features.0.0");
     for (const BlockConfig& cfg : kBlocks) {
       const std::string base =
           "crnn.features." + std::to_string(cfg.featureIndex);
@@ -765,7 +721,7 @@ private:
       int seBlockIdx = -1;
       int projBlockIdx = 0;
       if (hasExpand) {
-        addConvBn(base + ".block.0.0", base + ".block.0.1");
+        addConvBias(base + ".block.0.0");
         dwBlockIdx = 1;
         if (cfg.useSe) {
           seBlockIdx = 2;
@@ -781,7 +737,7 @@ private:
       }
 
       const std::string dwBase = base + ".block." + std::to_string(dwBlockIdx);
-      addConvBn(dwBase + ".0", dwBase + ".1");
+      addConvBias(dwBase + ".0");
       if (cfg.useSe) {
         const std::string seBase =
             base + ".block." + std::to_string(seBlockIdx);
@@ -790,9 +746,9 @@ private:
       }
       const std::string projBase =
           base + ".block." + std::to_string(projBlockIdx);
-      addConvBn(projBase + ".0", projBase + ".1");
+      addConvBias(projBase + ".0");
     }
-    addConvBn("crnn.features.12.0", "crnn.features.12.1");
+    addConvBias("crnn.features.12.0");
 
     graph.weightsBuffer =
         ggml_backend_alloc_ctx_tensors(graph.weightsCtx.get(), graph.backend);
@@ -803,8 +759,7 @@ private:
         graph.weightsBuffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
 
     for (const auto& [name, dst] : graph.weights) {
-      if (name.ends_with(".scale") || name.ends_with(".shift") ||
-          name.ends_with("_br")) {
+      if (name.ends_with("_br")) {
         continue;
       }
       struct ggml_tensor* src = ggml_get_tensor(srcCtx, name.c_str());
@@ -839,52 +794,6 @@ private:
           dst, values.data(), 0, values.size() * sizeof(float));
     }
 
-    for (const auto& [name, dst] : graph.weights) {
-      if (!name.ends_with(".scale")) {
-        continue;
-      }
-      const std::string prefix =
-          name.substr(0, name.size() - std::string(".scale").size());
-      const std::vector<float> weight = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".weight").c_str()),
-          prefix + ".weight");
-      const std::vector<float> var = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".running_var").c_str()),
-          prefix + ".running_var");
-      std::vector<float> scale(weight.size());
-      for (size_t i = 0; i < weight.size(); ++i) {
-        scale[i] = weight[i] / std::sqrt(var[i] + kBatchNormEps);
-      }
-      ggml_backend_tensor_set(
-          dst, scale.data(), 0, scale.size() * sizeof(float));
-    }
-
-    for (const auto& [name, dst] : graph.weights) {
-      if (!name.ends_with(".shift")) {
-        continue;
-      }
-      const std::string prefix =
-          name.substr(0, name.size() - std::string(".shift").size());
-      const std::vector<float> bias = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".bias").c_str()),
-          prefix + ".bias");
-      const std::vector<float> mean = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".running_mean").c_str()),
-          prefix + ".running_mean");
-      const std::vector<float> weight = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".weight").c_str()),
-          prefix + ".weight");
-      const std::vector<float> var = tensorToF32(
-          ggml_get_tensor(srcCtx, (prefix + ".running_var").c_str()),
-          prefix + ".running_var");
-      std::vector<float> shift(bias.size());
-      for (size_t i = 0; i < bias.size(); ++i) {
-        const float scale = weight[i] / std::sqrt(var[i] + kBatchNormEps);
-        shift[i] = bias[i] - (mean[i] * scale);
-      }
-      ggml_backend_tensor_set(
-          dst, shift.data(), 0, shift.size() * sizeof(float));
-    }
   }
 
   void loadRecurrentWeights(struct ggml_context* srcCtx) {
@@ -941,7 +850,6 @@ private:
     struct ggml_tensor* x = gb.convBnAct(
         graph.input,
         "crnn.features.0.0",
-        "crnn.features.0.1",
         2,
         2,
         3,
@@ -951,7 +859,7 @@ private:
       x = gb.invertedResidual(x, cfg);
     }
     x = gb.convBnAct(
-        x, "crnn.features.12.0", "crnn.features.12.1", 1, 1, 1, true, true);
+        x, "crnn.features.12.0", 1, 1, 1, true, true);
     graph.features = x;
     ggml_set_name(graph.features, "crnn_features");
     ggml_set_output(graph.features);
