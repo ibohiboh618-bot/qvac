@@ -15,11 +15,13 @@ function tsStamp () {
 // TPS, ppTPS); host-stderr regex parsing fills in vision-encode timings
 // that aren't in the addon stats payload.
 //
-// TTFT is computed uniformly across addon and CLI sources from the
-// same parsed llama.cpp stdout lines (vision-encode + prompt-eval).
-// The addon's stats.TTFT is intentionally ignored — it includes
-// first-decode time which the CLI counterpart does not, so using it
-// would make the addon/CLI comparison apples-to-oranges.
+// TTFT = wall time to first generated token (vision-encode + prompt-eval),
+// defined uniformly across sources but sourced differently:
+//   - addon  : stats.TTFT (the binding already measures it this way;
+//              llama.cpp's `prompt eval time = ...` line is never
+//              emitted via the addon path)
+//   - CLI    : visionEncodeMs + promptEvalMs, both parsed from
+//              llama.cpp stdout
 function pickMetric (run, key) {
   if (!run || !run.ok) return null
   const sm = run.stdoutMetrics || {}
@@ -27,6 +29,7 @@ function pickMetric (run, key) {
   switch (key) {
     case 'wallMs': return run.wallMs
     case 'ttftMs': {
+      if (st.TTFT != null) return st.TTFT
       if (sm.promptEvalMs == null) return null
       return sm.promptEvalMs + (sm.visionEncodeMs || 0)
     }
