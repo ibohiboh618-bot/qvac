@@ -336,12 +336,29 @@ model's measurements.
 
 ### 2.4 Caveats
 
-- **Mac M4 only** — iPhone 16e addon benchmarks blocked by Metal
-  `ggml_metal_synchronize` SIGABRT in the addon's iOS prebuild (see
-  Section 14.5 of metal-benchmarking-plan.md). CLI-based iPhone benchmarks
-  (U1, Section 1) passed on the same device. Expected cache savings on
-  iPhone are larger in absolute terms (vision encode takes 927–1285 ms on
-  iPhone 16e vs 400–830 ms on Mac M4).
+- **Mac M4 only** — iPhone 16e addon benchmarks blocked by a systemic
+  Metal crash in the addon's iOS prebuild. A full 8-model matrix sweep
+  (2026-05-28) confirmed all models crash during `ggml_metal_init` / model
+  load on cold launch:
+
+  | Model | Crash Status |
+  |-------|-------------|
+  | Gemma4 E2B Q4_K_M | crash during `inference.load()` (benchStatus = loading) |
+  | Gemma4 E2B Q8_0 | crash during `inference.load()` |
+  | Gemma4 E4B Q4_K_M | crash during `inference.load()` |
+  | Gemma4 E4B Q8_0 | crash during `inference.load()` |
+  | Qwen3.5-2B Q4_K_M | crash before test start (no benchStatus written) |
+  | Qwen3.5-2B Q8_0 | crash before test start |
+  | Qwen3.5-4B Q4_K_M | crash before test start |
+  | Qwen3.5-4B Q8_0 | crash before test start |
+
+  CLI-based iPhone benchmarks (U1, Section 1) passed on the same device.
+  The crash is specific to the addon's bare-kit + React Native runtime
+  combined with Metal GPU initialization. Manual single-model tests
+  (SmolVLM2-500M, Gemma4-E2B-Q4KM) pass when launched interactively,
+  suggesting a Metal state initialization race on cold orchestrator-driven
+  launches. Expected cache savings on iPhone are larger in absolute terms
+  (vision encode takes 927–1285 ms on iPhone 16e vs 400–830 ms on Mac M4).
 - **Addon-level benchmark** (`benchmark.test.js` and
   `benchmark-a2-vision-cache.test.js`), not CLI. Addon JS overhead is present
   but equal for both variants.
