@@ -283,6 +283,21 @@ jobs:
           # Single-quoted to preserve the backslash literally.
           echo 'VULKAN_SDK=C:\VulkanSDK' >> "$GITHUB_ENV"
 
+      # The self-hosted qvac-win25-x64-gpu runner doesn't ship cmake on
+      # PATH (windows-latest does, via the bundled VS install). Drop a
+      # Kitware build in front of PATH so both Windows runners look the
+      # same to build-cli-sources.js. Matches the bootstrap pattern in
+      # pr-test-inference-addon-cpp-js.yml. Addon legs skip this — they
+      # use the npm prebuild and never call cmake.
+      - name: Setup CMake (Windows CLI builds)
+        if: matrix.platform == 'windows-x64' && matrix.source != 'addon'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -L https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip -o cmake.zip
+          unzip -q cmake.zip
+          echo "$PWD/cmake-3.31.6-windows-x86_64/bin" >> "$GITHUB_PATH"
+
       - name: Cache CLI builds
         if: matrix.source != 'addon'
         uses: actions/cache@v4
