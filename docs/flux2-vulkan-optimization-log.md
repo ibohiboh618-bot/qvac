@@ -70,6 +70,57 @@ bare-make install
 
 ---
 
+## Strix verbosity profiling
+
+Recorded on `qvac-dev-strix-1`, branch `feat/QVAC-18818-vulkan-flux2-optimization`, commit `f95317b5`. Raw artifacts: `packages/diffusion-cpp/logs/flux2_strix_verbosity2_profile.log`, `flux2_strix_verbosity2_profile_sysfs.csv` (gitignored). Temporary harness: `packages/diffusion-cpp/logs/generate-image-verbosity2.js` (same prompt/seed/512²/20 steps/guidance 3.5 as baseline; `verbosity: 2`; routes native logs via `addonLogging.setLogger`).
+
+### Command
+
+```bash
+cd ~/Projects/qvac/packages/diffusion-cpp
+export VCPKG_ROOT="$HOME/vcpkg"
+export MESA_VK_DEVICE_SELECT=1002:1586
+export MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1
+# sysfs sampler (1 Hz) + run (see logs/run_verbosity_profile.sh)
+bare logs/generate-image-verbosity2.js 2>&1 | tee logs/flux2_strix_verbosity2_profile.log
+```
+
+### Verbosity level
+
+- **`verbosity: 2` is sufficient** for upstream `LOG_INFO` stage timers once `addonLogging.setLogger` is configured.
+- Without `setLogger`, neither verbosity 2 nor 3 emitted upstream timing lines (only JS wrapper + `ggml_vulkan` device enumeration). Verbosity 3 was not required after wiring the logger.
+
+### Timings (upstream + JS)
+
+| Stage | Upstream log | Time |
+|-------|----------------|------|
+| Model load (JS) | `Loaded in` | 2.0 s |
+| Text encoder | `get_learned_condition completed, taking 559 ms` | 0.56 s (single line; guidance 3.5, one conditioner pass) |
+| Diffusion sampling | `sampling completed, taking 38.23s` | 38.23 s |
+| Latent generation window | `generating 1 latent images completed, taking 38.23s` | 38.23 s (matches sampling; denoise loop) |
+| VAE decode | `latent 1 decoded, taking 0.62s` / `decode_first_stage completed, taking 0.62s` | 0.62 s |
+| Upstream total | `generate_image completed in 39.42s` | 39.42 s |
+| JS generation | `Generated in` | 39.5 s |
+| PNG / addon overhead (approx.) | JS gen − upstream `generate_image` | ~0.08 s |
+
+Vulkan device (unchanged): `ggml_vulkan: 0 = Radeon 8060S Graphics (RADV GFX1151) (radv)`.
+
+### sysfs (41 samples @ 1 Hz during run)
+
+| Metric | Value |
+|--------|-------|
+| GPU busy max / avg | 100% / 90.5% |
+| Max VRAM | 2037 MiB |
+| Max GTT | 8150 MiB |
+
+### Conclusion
+
+- **Bottleneck is diffusion sampling (~97% of `generate_image`)**, not text encoding (~1.4%) or VAE decode (~1.6%).
+- GPU remains saturated (90–100% busy) with the same VRAM/GTT footprint as baseline 2–3, consistent with Vulkan/ggml kernel or memory-bandwidth limits on the denoise path.
+- PNG encode and JS/addon wrapper overhead are negligible on this run (~80 ms).
+
+---
+
 ## Reference (from repo inspection)
 
 ### Primary package
