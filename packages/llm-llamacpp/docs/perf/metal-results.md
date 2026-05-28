@@ -252,87 +252,68 @@ No metric shows a systematic regression.
 Anchor drift (3 checks): check1 51.75 TPS → check2 51.92 TPS → check3
 52.05 TPS (+0.6% drift). Thermally stable session.
 
-#### 2.3.2 Cache Hit Test — With cacheKey (cache active)
+#### 2.3.2 Multi-Turn Cache Hit Test (cache active, KV prefix invalidated)
 
-Measures the actual vision cache benefit. Model loaded once, 1 warmup run
-(no cacheKey), then 3 measured runs with `cacheKey`. Run 1 = cache miss
-(full CLIP encode + projection, result stored). Runs 2–3 = cache hit
-(skip encode, reuse cached embeddings).
+Measures the vision prefix cache benefit in a realistic multi-turn scenario.
+Each measured run uses a **different text prompt** with the same image and
+same `cacheKey`. The unique prompt forces a KV cache prefix mismatch (full
+LLM re-prefill), but the vision prefix cache (feat only) can still hit on
+the image embeddings since they're keyed by image hash.
 
-- **Base**: `base/QVAC-19118-a2-vision-cache` (`09711a41a`) — no vision cache; `cacheKey` only preserves the KV cache
-- **Feat**: `feat/QVAC-19118-a2-vision-cache` (`eed4dd880`) — vision prefix cache active; runs 2–3 skip CLIP encode
+Requires the `resetState()` fix (`95b5ee5ed`) that decouples the vision
+prefix cache from the KV cache reset lifecycle. Without this fix, the
+vision cache was cleared on every KV prefix mismatch, making it ineffective
+for multi-turn conversations.
+
+- **Base**: `base/QVAC-19118-a2-vision-cache` (`09711a41a`) — no vision cache
+- **Feat**: `feat/QVAC-19118-a2-vision-cache` (`95b5ee5ed`) — vision prefix cache active; decoupled from KV reset
 
 Protocol: interleaved A/B (`benchmark-addon-ab-interleaved.sh`,
-`BENCH_TEST=benchmark-a2-vision-cache.test.js`), 1 rep × 3 sequential
-inferences per model load, `cacheKey='bench-vision-cache-session'`.
-Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-28.
+`BENCH_TEST=benchmark-a2-vision-cache.test.js`), 3 reps per variant per
+config. Each rep loads the model, runs 1 warmup + 3 measured runs with
+different prompts per run. Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-28.
 
-**Gemma4 — Per-Run TTFT Breakdown (elephant.jpg)**
+| Model | Image | TTFT ms (base / a2) | TTFT Δ | TPS (base / a2) | TPS Δ | Total ms (base / a2) | Total Δ |
+|-------|-------|---------------------|--------|-----------------|-------|----------------------|---------|
+| Gemma4 E2B Q4_K_M | elephant | 1128 / 587 | **+48.0%** | 50.2 / 50.3 | +0.1% | 1514 / 973 | +35.7% |
+| Gemma4 E2B Q4_K_M | fruit-plate | 1146 / 588 | **+48.7%** | 50.1 / 50.2 | +0.2% | 1889 / 1358 | +28.1% |
+| Gemma4 E2B Q8_0 | elephant | 1108 / 563 | **+49.2%** | 34.3 / 34.2 | −0.2% | 1654 / 1111 | +32.8% |
+| Gemma4 E2B Q8_0 | fruit-plate | 1127 / 566 | **+49.8%** | 33.6 / 34.3 | +1.8% | 2193 / 1607 | +26.7% |
+| Gemma4 E4B Q4_K_M | elephant | 1761 / 1220 | **+30.7%** | 28.3 / 28.2 | −0.2% | 2510 / 1947 | +22.4% |
+| Gemma4 E4B Q4_K_M | fruit-plate | 1855 / 1301 | **+29.9%** | 27.6 / 27.2 | −1.3% | 3060 / 2395 | +21.7% |
+| Gemma4 E4B Q8_0 | elephant | 1834 / 1189 | **+35.2%** | 18.4 / 18.3 | −0.9% | 2631 / 2090 | +20.6% |
+| Gemma4 E4B Q8_0 | fruit-plate | 2072 / 1396 | **+32.6%** | 18.2 / 18.4 | +1.3% | 4106 / 3411 | +16.9% |
+| Qwen3.5-2B Q4_K_M | elephant | 1137 / 613 | **+46.1%** | 46.9 / 46.4 | −0.9% | 5786 / 5312 | +8.2% |
+| Qwen3.5-2B Q8_0 | elephant | 1127 / 572 | **+49.2%** | 36.7 / 36.5 | −0.7% | 6913 / 6363 | +8.0% |
+| Qwen3.5-4B Q4_K_M | elephant | 2192 / 1703 | **+22.3%** | 21.2 / 21.1 | −0.3% | 14276 / 13868 | +2.9% |
+| Qwen3.5-4B Q8_0 | elephant | 2093 / 1622 | **+22.5%** | 17.3 / 17.1 | −0.7% | 16717 / 16313 | +2.4% |
 
-| Model | Variant | Run 1 (miss) | Run 2 (hit) | Run 3 (hit) | Cache Δ (r1→r2) |
-|-------|---------|-------------|-------------|-------------|-----------------|
-| E2B Q4_K_M | base | 1125 ms | 1137 ms | 1148 ms | — |
-| E2B Q4_K_M | a2-cache | 1122 ms | **583 ms** | **597 ms** | **−48%** |
-| E2B Q8_0 | base | 1100 ms | 1131 ms | 1151 ms | — |
-| E2B Q8_0 | a2-cache | 1105 ms | **573 ms** | **588 ms** | **−48%** |
-| E4B Q4_K_M | base | 1792 ms | 1851 ms | 1885 ms | — |
-| E4B Q4_K_M | a2-cache | 1815 ms | **1285 ms** | **1318 ms** | **−29%** |
-| E4B Q8_0 | base | 2332 ms | 2412 ms | 2338 ms | — |
-| E4B Q8_0 | a2-cache | 2335 ms | **1570 ms** | **1580 ms** | **−33%** |
-
-**Gemma4 — Per-Run TTFT Breakdown (fruitPlate.png)**
-
-| Model | Variant | Run 1 (miss) | Run 2 (hit) | Run 3 (hit) | Cache Δ (r1→r2) |
-|-------|---------|-------------|-------------|-------------|-----------------|
-| E2B Q4_K_M | base | 1139 ms | 1169 ms | 1187 ms | — |
-| E2B Q4_K_M | a2-cache | 1144 ms | **592 ms** | **607 ms** | **−48%** |
-| E2B Q8_0 | base | 1125 ms | 1159 ms | 1182 ms | — |
-| E2B Q8_0 | a2-cache | 1129 ms | **575 ms** | **591 ms** | **−49%** |
-| E4B Q4_K_M | base | 2587 ms | 2631 ms | 2652 ms | — |
-| E4B Q4_K_M | a2-cache | 2684 ms | **1966 ms** | **1898 ms** | **−27%** |
-| E4B Q8_0 | base | 2187 ms | 2482 ms | 2302 ms | — |
-| E4B Q8_0 | a2-cache | 2213 ms | **1636 ms** | **1609 ms** | **−26%** |
-
-**Qwen3.5 — Per-Run TTFT Breakdown (elephant.jpg)**
-
-| Model | Variant | Run 1 (miss) | Run 2 (hit) | Run 3 (hit) | Cache Δ (r1→r2) |
-|-------|---------|-------------|-------------|-------------|-----------------|
-| 2B Q4_K_M | base | 1264 ms | 1279 ms | 1271 ms | — |
-| 2B Q4_K_M | a2-cache | 1268 ms | **687 ms** | **657 ms** | **−46%** |
-| 2B Q8_0 | base | 1210 ms | 1205 ms | 1215 ms | — |
-| 2B Q8_0 | a2-cache | 1210 ms | **621 ms** | **625 ms** | **−49%** |
-| 4B Q4_K_M | base | 2243 ms | 2306 ms | 2333 ms | — |
-| 4B Q4_K_M | a2-cache | 2280 ms | **1824 ms** | **1830 ms** | **−20%** |
-| 4B Q8_0 | base | 2212 ms | 2188 ms | 2231 ms | — |
-| 4B Q8_0 | a2-cache | 2208 ms | **1718 ms** | **1724 ms** | **−22%** |
+Cell format: base / a2-cache (median of 3 paired reps × 3 runs). Positive
+TTFT/Total Δ = improvement. Qwen3.5 × fruit-plate excluded (context
+overflow).
 
 **Key observations:**
 
-1. **Run 1 TTFT is identical** between base and a2-cache (cache miss — full
-   CLIP encode on both). This confirms the cache miss path adds no overhead.
+1. **TTFT reduction: 22–50%** across all models, with the vision prefix
+   cache skipping the CLIP vision encode on every measured run after warmup.
+   On base, all runs do a full CLIP encode because there is no vision cache.
 
-2. **Runs 2–3 on a2-cache skip the vision encode**, cutting TTFT by 20–49%
-   depending on model size. On base, all 3 runs do a full encode regardless
-   of `cacheKey` (no `VisionPrefixCache` on base — `cacheKey` only preserves
-   the KV cache there).
+2. **TPS (decode speed) is unaffected** (±1.8%, within noise) — the cache
+   only skips the vision encode + projection; decode is identical.
 
-3. **TPS (decode speed) is unaffected** — the cache only skips the vision
-   encode + projection; decode is identical.
+3. **E2B models benefit most** (~48–50% TTFT reduction) because CLIP encode
+   is a larger fraction of TTFT. E4B/4B models show 22–35% because their
+   larger LLM prefill dilutes the relative savings.
 
-4. **E2B models benefit most** (~48–49% TTFT reduction) because the CLIP
-   encode is a larger fraction of TTFT. E4B and 4B models show 20–33%
-   because their larger LLM prefill dilutes the cache savings.
-
-5. **Absolute TTFT savings** on cache hit (Mac M4):
-   - Gemma4 E2B: ~530–560 ms saved per call
-   - Gemma4 E4B: ~530–850 ms saved per call
-   - Qwen3.5-2B: ~580–590 ms saved per call
+4. **Absolute TTFT savings** on cache hit (Mac M4):
+   - Gemma4 E2B: ~540–560 ms saved per call
+   - Gemma4 E4B: ~540–680 ms saved per call
+   - Qwen3.5-2B: ~525–555 ms saved per call
    - Qwen3.5-4B: ~470–490 ms saved per call
 
-Anchor drift (3 checks): check1 48.16 TPS → check2 49.84 TPS → check3
-50.17 TPS (+4.2% drift). Session started cold; TPS increased as system
-warmed. Per-config pairing still controls for gradual drift within each
-model's measurements.
+Anchor drift (3 checks): check1 48.83 TPS → check2 50.61 TPS → check3
+45.49 TPS (7.3% drift). Per-config interleaving controls for gradual
+drift within each model's measurements.
 
 #### 2.3.3 iPhone 16e — Sequential Cache Hit Test
 
