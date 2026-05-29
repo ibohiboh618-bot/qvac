@@ -285,8 +285,11 @@ function runOneCell (spec, resultsDir, cellIdx) {
 }
 
 function mergeHostStdoutMetrics (cell, fullLog) {
-  const sessionMetrics = parseStdoutMetrics(fullLog)
-
+  // Segment-scoped per-run metrics are authoritative. We used to also
+  // merge a session-wide visionEncodeMs as a fallback, but with the
+  // matchAll-based parser that value is now the SUM across every run
+  // in the captured log — meaningless as a per-run fallback. Better
+  // to surface a missing value than a misleading one.
   const segmentRegex = /\[BENCH_RUN_BEGIN (warmup|measured) (\d+)\]([\s\S]*?)\[BENCH_RUN_END \1 \2\]/g
   const perRunMetrics = new Map()
   let m
@@ -302,7 +305,6 @@ function mergeHostStdoutMetrics (cell, fullLog) {
     const segmentMetrics = perRunMetrics.get(run.index) || {}
     run.stdoutMetrics = {
       ...(run.stdoutMetrics || {}),
-      ...(sessionMetrics.visionEncodeMs != null ? { visionEncodeMs: sessionMetrics.visionEncodeMs } : {}),
       ...segmentMetrics
     }
   }

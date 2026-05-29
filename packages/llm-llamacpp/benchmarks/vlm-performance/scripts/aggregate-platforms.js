@@ -241,8 +241,8 @@ function renderPerPlatformBlocks (reports) {
       const actual = actualBackends.size ? Array.from(actualBackends).join(',') : '-'
       lines.push(`Backend requested: \`${backend}\` / actual: \`${actual}\``)
       lines.push('')
-      lines.push('| Source | runs | tokens | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
-      lines.push('|---|---|---|---|---|---|---|---|---|---|')
+      lines.push('| Source | runs | tokens | tiles | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
+      lines.push('|---|---|---|---|---|---|---|---|---|---|---|')
 
       // One row per source
       for (const row of brows) {
@@ -278,7 +278,8 @@ function perPlatformRow (sourceKey, row) {
     : '-'
   const repeats = m.repeatsTotal != null ? `${m.repeats}/${m.repeatsTotal}` : `${m.repeats || 0}`
   const genTokens = fmt(m.generatedTokens_median, 0)
-  return `| **${sourceKey}** \`${row.sourceLabel}\` | ${repeats} | ${genTokens} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`
+  const tiles = fmt(m.visionEncodeSliceCount_median, 0)
+  return `| **${sourceKey}** \`${row.sourceLabel}\` | ${repeats} | ${genTokens} | ${tiles} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`
 }
 
 function perPlatformDeltaRow (a, b, label) {
@@ -295,7 +296,8 @@ function perPlatformDeltaRow (a, b, label) {
     else if (am.recallScore_median < bm.recallScore_median) recallVerdict = 'worse'
   }
   const cell = (v) => `${fmtDelta(v.delta)} ${v.label}`
-  return `| _delta ${label}_ | - | - | ${cell(vVis)} | ${cell(vTtft)} | ${cell(vTps)} | ${cell(vRss)} | ${cell(vWall)} | ${recallVerdict} | - |`
+  // Column shape: Source | runs | tokens | tiles | vis-enc | TTFT | TPS | RSS | wall | recall | status
+  return `| _delta ${label}_ | - | - | - | ${cell(vVis)} | ${cell(vTtft)} | ${cell(vTps)} | ${cell(vRss)} | ${cell(vWall)} | ${recallVerdict} | - |`
 }
 
 // Walks every (platform, backend) bucket and emits a verdict table

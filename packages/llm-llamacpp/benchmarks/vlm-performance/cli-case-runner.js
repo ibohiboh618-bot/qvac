@@ -224,19 +224,19 @@ function main () {
 
   // Warmup runs
   for (let i = 0; i < (spec.warmupRuns || 0); i++) {
-    console.log(`[BENCH_RUN_BEGIN warmup ${i}]`)
+    console.error(`[BENCH_RUN_BEGIN warmup ${i}]`)
     try {
       runOnceCli(spec)
     } catch (e) {
       errors.push({ phase: 'warmup', index: i, message: String((e && e.message) || e) })
     }
-    console.log(`[BENCH_RUN_END warmup ${i}]`)
+    console.error(`[BENCH_RUN_END warmup ${i}]`)
     if (spec.cooldownMs) sleep(spec.cooldownMs)
   }
 
   // Measured runs
   for (let i = 0; i < (spec.measuredRuns || 0); i++) {
-    console.log(`[BENCH_RUN_BEGIN measured ${i}]`)
+    console.error(`[BENCH_RUN_BEGIN measured ${i}]`)
     try {
       const r = runOnceCli(spec)
       const stdoutMetrics = parseStdoutMetrics(r.stderr)
@@ -255,7 +255,7 @@ function main () {
     } catch (e) {
       runs.push({ index: i, ok: false, error: String((e && e.message) || e) })
     }
-    console.log(`[BENCH_RUN_END measured ${i}]`)
+    console.error(`[BENCH_RUN_END measured ${i}]`)
     if (spec.cooldownMs) sleep(spec.cooldownMs)
   }
 

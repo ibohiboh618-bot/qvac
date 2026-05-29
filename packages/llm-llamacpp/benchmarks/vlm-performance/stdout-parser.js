@@ -6,7 +6,12 @@
 // the captured stream. If the addon ever stops surfacing these lines
 // at the JS layer, surface a `visionEncodeMs` field on stats instead.
 
-const VISION_ENCODE_REGEX = /image (?:slice )?encoded in\s+(\d+(?:\.\d+)?)\s*ms/i
+// Use /g + matchAll so we sum across every "image slice encoded" line
+// llama.cpp emits — dynamic-resolution VLMs (Qwen-VL, InternVL, etc.)
+// emit one line per tile, and reporting just the first one undercounts
+// the actual encoder workload. visionEncodeSliceCount surfaces the
+// tile count so it shows up in the report alongside the summed time.
+const VISION_ENCODE_REGEX = /image (?:slice )?encoded in\s+(\d+(?:\.\d+)?)\s*ms/gi
 // Pulled verbatim from Ian's Metal plan §5.7 — same llama.cpp output
 // shape on every platform.
 // Prompt eval must be matched BEFORE decode eval since "prompt eval time"
@@ -21,8 +26,11 @@ function parseStdoutMetrics (text) {
   if (!text) return {}
   const out = {}
 
-  const vis = text.match(VISION_ENCODE_REGEX)
-  if (vis) out.visionEncodeMs = Number(vis[1])
+  const visMatches = [...text.matchAll(VISION_ENCODE_REGEX)]
+  if (visMatches.length) {
+    out.visionEncodeMs = visMatches.reduce((sum, m) => sum + Number(m[1]), 0)
+    out.visionEncodeSliceCount = visMatches.length
+  }
 
   const prompt = text.match(PROMPT_EVAL_REGEX)
   if (prompt) {

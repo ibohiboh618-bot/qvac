@@ -36,6 +36,7 @@ function pickMetric (run, key) {
     case 'decodeTps': return (st.TPS != null ? st.TPS : (sm.decodeTps != null ? sm.decodeTps : null))
     case 'ppTps': return (st.ppTPS != null ? st.ppTPS : null)
     case 'visionEncodeMs': return sm.visionEncodeMs != null ? sm.visionEncodeMs : null
+    case 'visionEncodeSliceCount': return sm.visionEncodeSliceCount != null ? sm.visionEncodeSliceCount : null
     case 'decodeMs': return sm.decodeMs != null ? sm.decodeMs : null
     case 'loadMs': return sm.loadMs != null ? sm.loadMs : null
     case 'generatedTokens': return st.generatedTokens != null ? st.generatedTokens : null
@@ -47,7 +48,7 @@ function pickMetric (run, key) {
 
 function aggregateCell (cell) {
   const okRuns = cell.runs.filter((r) => r.ok)
-  const fields = ['visionEncodeMs', 'ttftMs', 'decodeTps', 'ppTps', 'decodeMs', 'loadMs', 'wallMs', 'peakRssMb', 'generatedTokens', 'promptTokens']
+  const fields = ['visionEncodeMs', 'visionEncodeSliceCount', 'ttftMs', 'decodeTps', 'ppTps', 'decodeMs', 'loadMs', 'wallMs', 'peakRssMb', 'generatedTokens', 'promptTokens']
 
   const agg = {
     repeats: okRuns.length,
@@ -155,8 +156,8 @@ function renderFullMatrixMarkdown (summary, meta) {
   for (const [platform, rows] of byPlatform) {
     lines.push(`## ${platform}`)
     lines.push('')
-    lines.push('| Backend | Source | runs | tokens | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
-    lines.push('|---|---|---|---|---|---|---|---|---|---|---|')
+    lines.push('| Backend | Source | runs | tokens | tiles | vis-enc (ms) | TTFT (ms) | TPS | RSS (MB) | wall (ms) | recall | status |')
+    lines.push('|---|---|---|---|---|---|---|---|---|---|---|---|')
     for (const r of rows) {
       const m = r.metrics
       const hasError = r.errors && r.errors.length > 0
@@ -168,7 +169,8 @@ function renderFullMatrixMarkdown (summary, meta) {
       const actual = m.actualBackends && m.actualBackends.length ? m.actualBackends.join(',') : '-'
       const backendCol = `${r.backend} / ${actual}`
       const genTokens = fmt(m.generatedTokens_median, 0)
-      lines.push(`| ${backendCol} | ${r.sourceLabel} | ${repeats} | ${genTokens} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`)
+      const tiles = fmt(m.visionEncodeSliceCount_median, 0)
+      lines.push(`| ${backendCol} | ${r.sourceLabel} | ${repeats} | ${genTokens} | ${tiles} | ${fmt(m.visionEncodeMs_median)} | ${fmt(m.ttftMs_median)} | ${fmt(m.decodeTps_median, 2)} | ${fmt(m.peakRssMb_median)} | ${fmt(m.wallMs_median)} | ${recall} | ${status} |`)
     }
     lines.push('')
   }

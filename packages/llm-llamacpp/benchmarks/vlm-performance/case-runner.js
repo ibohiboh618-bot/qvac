@@ -145,26 +145,29 @@ async function main () {
   try {
     await inference.load()
 
-    // Emit a marker before each run so the orchestrator can split the
-    // captured bare process stdout/stderr per-run. llama.cpp's C++
-    // stdio (where `image slice encoded in N ms`, `eval time = ...`,
-    // and `load time = ...` are printed) bypasses our JS logger; the
-    // orchestrator regex-parses the captured stream and attaches the
-    // results to the matching run by index.
+    // Emit markers on STDERR so they interleave with llama.cpp's C++
+    // stderr (where `image slice encoded in N ms`, `eval time = ...`,
+    // and `load time = ...` are printed) in emission order. If we
+    // wrote them on stdout the orchestrator's segment parser would
+    // miss those lines: run-vlm-bench captures stderr and stdout as
+    // separate buffers and concatenates stderr-first, so any C++
+    // stderr line would land outside the BENCH_RUN_BEGIN..END segment
+    // and the per-run metric would silently fall back to the
+    // session-wide first match.
     for (let i = 0; i < (spec.warmupRuns || 0); i++) {
-      console.log(`[BENCH_RUN_BEGIN warmup ${i}]`)
+      console.error(`[BENCH_RUN_BEGIN warmup ${i}]`)
       tap.clear()
       try {
         await runOnce({ inference, imagePath: spec.imagePath, prompt: spec.prompt })
       } catch (e) {
         errors.push({ phase: 'warmup', index: i, message: String((e && e.message) || e) })
       }
-      console.log(`[BENCH_RUN_END warmup ${i}]`)
+      console.error(`[BENCH_RUN_END warmup ${i}]`)
       if (spec.cooldownMs) await sleep(spec.cooldownMs)
     }
 
     for (let i = 0; i < (spec.measuredRuns || 0); i++) {
-      console.log(`[BENCH_RUN_BEGIN measured ${i}]`)
+      console.error(`[BENCH_RUN_BEGIN measured ${i}]`)
       tap.clear()
       try {
         const r = await runOnce({ inference, imagePath: spec.imagePath, prompt: spec.prompt, thinkingEnabled: spec.thinkingEnabled })
@@ -185,7 +188,7 @@ async function main () {
       } catch (e) {
         runs.push({ index: i, ok: false, error: String((e && e.message) || e) })
       }
-      console.log(`[BENCH_RUN_END measured ${i}]`)
+      console.error(`[BENCH_RUN_END measured ${i}]`)
       if (spec.cooldownMs) await sleep(spec.cooldownMs)
     }
   } finally {
