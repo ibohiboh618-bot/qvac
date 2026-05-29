@@ -31,6 +31,11 @@ on:
         required: false
         type: boolean
         default: false
+      addon_source_overlay:
+        description: "  apply the vcpkg overlay during the addon-source build (default true). Set false to rule out 'is it the overlay or something else?'"
+        required: false
+        type: boolean
+        default: true
       run_fabric_cli:
         description: "── SOURCE 2 ── fabric (qvac fork, native CLI)"
         required: false
@@ -184,6 +189,16 @@ jobs:
                   *) continue ;;
                 esac
               fi
+              # When the addon-source A/B is enabled on this cell, the
+              # addon-source leg already runs --sources=addon,addon-source
+              # in one process. The dedicated 'addon' cell would
+              # produce a duplicate row on a different runner — skip
+              # it so the consolidated report stays clean.
+              if [[ "$src" == "addon" && "$RUN_ADDON_SOURCE" == "true" ]]; then
+                case "$sel" in
+                  linux-cpu|windows-cpu) continue ;;
+                esac
+              fi
               cells=$(echo "$cells" | jq -c \
                 --arg p "$plat" --arg a "$arch" --arg b "$backend" --arg r "$runner" --arg s "$src" \
                 '. + [{"platform":$p,"arch":$a,"backend":$b,"runner":$r,"source":$s}]')
@@ -324,12 +339,29 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund
 
+      # Copy the WHOLE node_modules tree so the snapshotted addon at
+      # /tmp/npm-snapshot/node_modules/@qvac/llm-llamacpp can still
+      # resolve its sibling deps (bare-fs, bare-path, …) via standard
+      # require-walking. A naked copy of just @qvac/llm-llamacpp leaves
+      # those siblings unreachable and the snapshot fails to load.
       - name: Snapshot npm addon (addon-source A/B)
         if: matrix.source == 'addon-source'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: |
-          cp -r node_modules/@qvac/llm-llamacpp /tmp/npm-addon-snapshot
+          mkdir -p /tmp/npm-snapshot
+          cp -r node_modules /tmp/npm-snapshot/
+
+      # Optional: drop the overlay before bare-make so the from-source
+      # build matches the npm-published binary as closely as possible.
+      # Used to test "is the addon-vs-fabric gap caused by the overlay
+      # (llamafile) or by something else in the source build path?"
+      - name: Disable vcpkg overlay for addon-source A/B
+        if: matrix.source == 'addon-source' && !inputs.addon_source_overlay
+        shell: bash
+        run: |
+          rm -rf packages/llm-llamacpp/vcpkg/ports/qvac-fabric
+          echo "::notice::Overlay removed — addon-source will build with the registry version of qvac-fabric (llamafile OFF, same as npm)"
 
       - name: Build addon from source
         if: matrix.source == 'addon-source'
@@ -430,7 +462,7 @@ jobs:
             # back-to-back in one process so they hit identical hardware.
             npm run run:vlm-bench -- \
               --sources=addon,addon-source \
-              --addon-path=/tmp/npm-addon-snapshot \
+              --addon-path=/tmp/npm-snapshot/node_modules/@qvac/llm-llamacpp \
               --backend=${{ matrix.backend }} \
               --force-gpu-row \
               --warmup-runs=${{ inputs.warmup_runs }} \
