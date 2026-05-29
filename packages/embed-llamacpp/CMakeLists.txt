@@ -3,13 +3,9 @@ cmake_minimum_required(VERSION 3.25)
 option(ANDROID_STL "Android STL linkage" c++_shared)
 option(BUILD_TESTING "Build tests" OFF)
 option(ENABLE_COVERAGE "Enable coverage instrumentation for unit tests" OFF)
+option(MOBILE_DYNAMIC_LINK "Use dynamic linking for the fabric runtime on mobile" ON)
 if(BUILD_TESTING)
   list(APPEND VCPKG_MANIFEST_FEATURES "tests")
-endif()
-
-option(VK_PROFILING "Force vk performance logging in qvac-fabric" OFF)
-if(VK_PROFILING)
-  list(APPEND VCPKG_MANIFEST_FEATURES "vk-profiling")
 endif()
 
 find_package(cmake-bare REQUIRED PATHS node_modules/cmake-bare)
@@ -40,25 +36,31 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_path(QVAC_LIB_INFERENCE_ADDON_CPP_INCLUDE_DIRS "inference-addon-cpp/JsInterface.hpp")
-# llama-targets.cmake transitively requires OpenSSL::SSL via cpp-httplib's
-# IMPORTED interface. Make OpenSSL discoverable before find_package(llama)
-# so the target chain resolves on local builds.
-find_package(OpenSSL)
-find_package(llama CONFIG REQUIRED)
+
+# The llama.cpp + ggml runtime is provided by @qvac/fabric (npm dependency)
+# instead of being statically linked from the qvac-fabric vcpkg port. It ships
+# the headers (qvac-fabric::headers) and a single shared .bare module that this
+# addon dynamically links against, so the runtime is loaded once per process.
+set(qvac-fabric_DIR "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@qvac/fabric/prebuilds/share/qvac-fabric/cmake")
+find_package(qvac-fabric CONFIG REQUIRED)
 
 if(WIN32)
   add_definitions(-DNOMINMAX -DWIN32_LEAN_AND_MEAN -DNOGDI)
 endif()
 
-# Install dynamic libs to prebuild folder
-set(BACKEND_DL_LIBS "")
-if((ANDROID OR UNIX) AND NOT APPLE)
-  foreach(_backend ${GGML_AVAILABLE_BACKENDS})
-    list(APPEND BACKEND_DL_LIBS INSTALL TARGET ggml::${_backend})
-  endforeach()
-endif()  
+# Use dynamic linking (a companion qvac__fabric@0.bare) on desktop and on mobile
+# unless MOBILE_DYNAMIC_LINK is OFF, in which case the runtime is statically
+# linked from the libraries shipped in @qvac/fabric.
+set(FABRIC_STATIC_MOBILE OFF)
+if((ANDROID OR (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS")) AND NOT MOBILE_DYNAMIC_LINK)
+  set(FABRIC_STATIC_MOBILE ON)
+endif()
 
-add_bare_module(embed-llamacpp EXPORTS ${BACKEND_DL_LIBS})
+if(NOT FABRIC_STATIC_MOBILE)
+  include_bare_module("@qvac/fabric" qvac_fabric_target PREBUILD)
+endif()
+
+add_bare_module(embed-llamacpp EXPORTS)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(${embed-llamacpp}_module PRIVATE -Wl,--exclude-libs,ALL)
@@ -80,11 +82,27 @@ target_include_directories(
     ${QVAC_LIB_INFERENCE_ADDON_CPP_INCLUDE_DIRS}
     ${PROJECT_SOURCE_DIR}/addon/src
 )
-target_link_libraries(
-  ${embed-llamacpp}
-  PRIVATE
-    llama::llama llama::common
-)
+
+if(FABRIC_STATIC_MOBILE)
+  target_link_libraries(
+    ${embed-llamacpp}
+    PRIVATE
+      qvac-fabric::qvac-fabric-static
+  )
+else()
+  # Compile against the llama/ggml/common headers...
+  target_link_libraries(
+    ${embed-llamacpp}
+    PRIVATE
+      qvac-fabric::headers
+  )
+  # ...and dynamically link the shared runtime (DT_NEEDED qvac__fabric@0.bare).
+  target_link_libraries(
+    ${embed-llamacpp}_module
+    PRIVATE
+      ${qvac_fabric_target}_module
+  )
+endif()
 
 target_compile_definitions(${embed-llamacpp} PUBLIC JS_LOGGER)
 
@@ -94,6 +112,25 @@ set(BACKENDS_SUBDIR_VALUE "${bare_target_value}/${module_name}")
 message("Building embed-llamacpp with BACKENDS_SUBDIR='${BACKENDS_SUBDIR_VALUE}'")
 
 target_compile_definitions(${embed-llamacpp} PRIVATE BACKENDS_SUBDIR="${BACKENDS_SUBDIR_VALUE}")
+
+# Install the @qvac/fabric runtime as a companion library next to this addon's
+# .bare so the dynamic linker resolves qvac__fabric@0.bare via RPATH, and ship
+# any ggml backend shared libraries that @qvac/fabric staged (e.g. Android). On
+# desktop the backends are static inside the shared runtime, so the glob is
+# empty and backends self-register when qvac__fabric@0.bare is loaded.
+if(NOT FABRIC_STATIC_MOBILE)
+  bare_target(host)
+  bare_module_target("." _fabric_unused NAME addon_name)
+  install(FILES $<TARGET_FILE:${qvac_fabric_target}_module>
+    DESTINATION ${host}/${addon_name}
+    RENAME qvac__fabric@0.bare)
+
+  file(GLOB _fabric_backends
+    "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@qvac/fabric/prebuilds/${host}/qvac__fabric/*.so")
+  if(_fabric_backends)
+    install(FILES ${_fabric_backends} DESTINATION ${host}/${addon_name})
+  endif()
+endif()
 
 if(BUILD_TESTING)
   find_package(GTest CONFIG REQUIRED)

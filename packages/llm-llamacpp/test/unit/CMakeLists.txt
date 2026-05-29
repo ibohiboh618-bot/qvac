@@ -110,9 +110,8 @@ endif()
 target_link_libraries(
   addon-test
   PRIVATE
-    llama::llama
-    llama::common
-    llama::mtmd
+    qvac-fabric::headers
+    ${qvac_fabric_target}_module
     nlohmann_json::nlohmann_json
     GTest::gtest
     GTest::gtest_main
@@ -135,17 +134,14 @@ if(WIN32)
   )
 endif()
 
-# Copy ggml backend libraries next to the test executable
-if((ANDROID OR UNIX) AND NOT APPLE)
-  foreach(_backend ${GGML_AVAILABLE_BACKENDS})
-    add_custom_command(TARGET addon-test POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:ggml::${_backend}>
-        ${CMAKE_CURRENT_BINARY_DIR}
-      COMMENT "Copying ggml backend ${_backend} to test directory"
-    )
-  endforeach()
-endif()
+# Copy the shared @qvac/fabric runtime next to the test executable so it
+# resolves at runtime (on desktop the ggml backends are static inside it).
+add_custom_command(TARGET addon-test POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:${qvac_fabric_target}_module>
+    ${CMAKE_CURRENT_BINARY_DIR}
+  COMMENT "Copying qvac__fabric@0.bare to test directory"
+)
 
 add_test(NAME LlamaModelTests COMMAND addon-test)
 set_tests_properties(LlamaModelTests PROPERTIES
