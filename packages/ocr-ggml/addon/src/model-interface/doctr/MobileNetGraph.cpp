@@ -111,6 +111,24 @@ struct GraphBuilder {
     return useHardswish ? ggml_hardswish(ctx, x) : ggml_relu(ctx, x);
   }
 
+  /// Guard against silent dtype drift in the conv chain. KleidiAI's SME
+  /// conv2d dispatch fires only when {kernel, src, dst} are all the same
+  /// dtype, so any conv that mixes its kernel and activation dtypes is a
+  /// guaranteed fallback to the plain ggml-cpu kernel. Throw at graph-build
+  /// time so the mismatch surfaces immediately instead of degrading silently.
+  void requireMatchingConvDtypes(
+      const struct ggml_tensor* kernelT, const struct ggml_tensor* input,
+      const char* opLabel) const {
+    if (kernelT->type == input->type) {
+      return;
+    }
+    raise(
+        std::string("Conv dtype mismatch at ") + opLabel + ": kernel " +
+        kernelT->name + " is " + ggml_type_name(kernelT->type) +
+        " but input is " + ggml_type_name(input->type) +
+        " — KleidiAI dispatch requires matching dtypes.");
+  }
+
   /// Conv2d (BN folded offline into weights+bias), optionally followed by an
   /// activation.
   struct ggml_tensor* convBnAct(
@@ -120,6 +138,7 @@ struct GraphBuilder {
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
+    requireMatchingConvDtypes(kernelT, x, "ggml_conv_2d_direct");
     struct ggml_tensor* conv =
         ggml_conv_2d_direct(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
@@ -189,8 +208,10 @@ struct GraphBuilder {
 
   struct ggml_tensor* convTransposeBnAct(
       struct ggml_tensor* input, const std::string& convPrefix) const {
+    struct ggml_tensor* kernelT = t(convPrefix + ".weight");
+    requireMatchingConvDtypes(kernelT, input, "ggml_conv_transpose_2d_p0");
     struct ggml_tensor* conv =
-        ggml_conv_transpose_2d_p0(ctx, t(convPrefix + ".weight"), input, 2);
+        ggml_conv_transpose_2d_p0(ctx, kernelT, input, 2);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
     return ggml_relu(ctx, conv);
   }
@@ -205,9 +226,11 @@ struct GraphBuilder {
         /*useHardswish=*/false);
     output =
         convTransposeBnAct(output, "dbnet.prob_head.3");
-    output = ggml_conv_transpose_2d_p0(
-        ctx, t("dbnet.prob_head.6.weight"), output, 2);
-    auto a =t("dbnet.prob_head.6.bias_br"); 
+    struct ggml_tensor* probHead6Kernel = t("dbnet.prob_head.6.weight");
+    requireMatchingConvDtypes(
+        probHead6Kernel, output, "ggml_conv_transpose_2d_p0");
+    output = ggml_conv_transpose_2d_p0(ctx, probHead6Kernel, output, 2);
+    auto a =t("dbnet.prob_head.6.bias_br");
     return ggml_add(ctx, output, t("dbnet.prob_head.6.bias_br"));
   }
 
@@ -218,8 +241,7 @@ struct GraphBuilder {
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
-    struct ggml_tensor* conv =
-        ggml_conv_2d_dw(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+    requireMatchingConvDtypes(kernelT, x, "ggml_conv_2d_dw_direct");
     struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
         ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
@@ -242,13 +264,17 @@ struct GraphBuilder {
         0,
         0);
 
-    struct ggml_tensor* fc1 = ggml_conv_2d_direct(
-        ctx, t(sePrefix + ".fc1.weight"), pooled, 1, 1, 0, 0, 1, 1);
+    struct ggml_tensor* fc1Kernel = t(sePrefix + ".fc1.weight");
+    requireMatchingConvDtypes(fc1Kernel, pooled, "ggml_conv_2d_direct (SE fc1)");
+    struct ggml_tensor* fc1 =
+        ggml_conv_2d_direct(ctx, fc1Kernel, pooled, 1, 1, 0, 0, 1, 1);
     fc1 = ggml_add(ctx, fc1, t(sePrefix + ".fc1.bias_br"));
     fc1 = ggml_relu(ctx, fc1);
 
+    struct ggml_tensor* fc2Kernel = t(sePrefix + ".fc2.weight");
+    requireMatchingConvDtypes(fc2Kernel, fc1, "ggml_conv_2d_direct (SE fc2)");
     struct ggml_tensor* fc2 =
-        ggml_conv_2d_direct(ctx, t(sePrefix + ".fc2.weight"), fc1, 1, 1, 0, 0, 1, 1);
+        ggml_conv_2d_direct(ctx, fc2Kernel, fc1, 1, 1, 0, 0, 1, 1);
     fc2 = ggml_add(ctx, fc2, t(sePrefix + ".fc2.bias_br"));
 
     // torchvision's SE uses hardsigmoid on the scale branch.
