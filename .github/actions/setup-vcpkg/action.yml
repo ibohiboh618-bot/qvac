@@ -31,12 +31,17 @@ runs:
       run: |
         set -euo pipefail
         cd ..
-        # Shallow + blobless + sparse clone; ports/ and versions/ are not
-        # needed when consuming the S3 binary cache, so skip them to cut
-        # the download to ~a few MB.
-        git clone --depth=1 --filter=blob:none --sparse https://github.com/microsoft/vcpkg.git
-        cd vcpkg
-        git sparse-checkout set --no-cone '/*' '!/ports' '!/versions'
+        if [ -d vcpkg ]; then
+          echo "vcpkg directory already exists at $(pwd)/vcpkg; skipping clone"
+          cd vcpkg
+        else
+          # Shallow + blobless + sparse clone; ports/ and versions/ are not
+          # needed when consuming the S3 binary cache, so skip them to cut
+          # the download to ~a few MB.
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git sparse-checkout set --no-cone '/*' '!/ports' '!/versions'
+        fi
         ./bootstrap-vcpkg.sh -disableMetrics
         VCPKG_ROOT=$(pwd)
         echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
