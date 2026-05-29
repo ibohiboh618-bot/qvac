@@ -318,7 +318,7 @@ jobs:
       # The bench then runs both addon variants in this cell on the
       # same runner: addon → /tmp/npm-addon-snapshot, addon-source →
       # the workspace's freshly-built artifact.
-      - name: Install benchmark deps (addon-source: npm baseline)
+      - name: "Install benchmark deps (addon-source: npm baseline)"
         if: matrix.source == 'addon-source'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
