@@ -207,6 +207,7 @@ struct WeightsBundle {
   std::unordered_map<std::string, struct ggml_tensor*> tensors;
   ggml_backend_buffer_t backendBuffer = nullptr;
   ggml_backend_buffer_t extraBackendBuffer = nullptr;
+  std::vector<ggml_backend_buffer_t> auxBuffers;
 
   WeightsBundle() = default;
   WeightsBundle(const WeightsBundle&) = delete;

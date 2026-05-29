@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <ggml-alloc.h>
@@ -135,10 +137,15 @@ struct GraphBuilder {
       struct ggml_tensor* x, const std::string& convPrefix,
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
        int stride, int kernel, bool activate,
-      bool useHardswish) const {
+      bool useHardswish, bool convertChannelFirst = false) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
     requireMatchingConvDtypes(kernelT, x, "ggml_conv_2d_direct");
+    if(convertChannelFirst)
+    {
+      kernelT = ggml_permute(ctx, kernelT, 1, 2, 0, 3);
+      kernelT = ggml_cont(ctx, kernelT);
+    }
     struct ggml_tensor* conv =
         ggml_conv_2d_direct(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
@@ -368,7 +375,8 @@ WeightsBundle::WeightsBundle(WeightsBundle&& other) noexcept
     : ctx(std::move(other.ctx)), extraCtx(std::move(other.extraCtx)),
       tensors(std::move(other.tensors)),
       backendBuffer(other.backendBuffer),
-      extraBackendBuffer(other.extraBackendBuffer) {
+      extraBackendBuffer(other.extraBackendBuffer),
+      auxBuffers(std::move(other.auxBuffers)) {
   other.backendBuffer = nullptr;
   other.extraBackendBuffer = nullptr;
 }
@@ -381,6 +389,7 @@ WeightsBundle& WeightsBundle::operator=(WeightsBundle&& other) noexcept {
     tensors = std::move(other.tensors);
     backendBuffer = other.backendBuffer;
     extraBackendBuffer = other.extraBackendBuffer;
+    auxBuffers = std::move(other.auxBuffers);
     other.backendBuffer = nullptr;
     other.extraBackendBuffer = nullptr;
   }
@@ -399,6 +408,12 @@ void WeightsBundle::reset() {
     ggml_backend_buffer_free(extraBackendBuffer);
     extraBackendBuffer = nullptr;
   }
+  for (ggml_backend_buffer_t buf : auxBuffers) {
+    if (buf != nullptr) {
+      ggml_backend_buffer_free(buf);
+    }
+  }
+  auxBuffers.clear();
 }
 
 ComputeGraph::~ComputeGraph() { reset(); }
@@ -688,19 +703,130 @@ WeightsBundle loadWeights(
     addBiasBroadcast("dbnet.prob_head.6.bias", w->ne[2]);
   }
 
-  // (4) Two backend allocations on the same backend buffer-type: one for the
-  //     GGUF ctx (every GGUF tensor), one for the extra ctx (synthesised
-  //     bias_br tensors). The GGUF ctx is fixed-size so a single allocation
-  //     covering both isn't possible without copying tensors between ctxs.
-  ggml_backend_buffer_type_t weightsBuft =
+  // (4) Backend allocation, routed per-tensor through the CPU device's
+  //     `extra_bufts` list. The first extra buft that reports a packed size
+  //     larger than the raw tensor bytes (signalling it would prepack the
+  //     tensor at set_tensor time) wins for plain Conv2D weights — that's how
+  //     KleidiAI's SME prepack engages without our code naming
+  //     `ggml_backend_cpu_kleidiai_buffer_type` directly. A future GPU
+  //     backend would surface its preferred buft the same way.
+  //
+  //     ConvTranspose weights (`dbnet.prob_head.3.weight`,
+  //     `dbnet.prob_head.6.weight`) MUST stay in the default CPU buft. The
+  //     KleidiAI buft's set_tensor unconditionally prepacks any F32/F16
+  //     tensor it owns (it can't tell whether the tensor will be used by
+  //     GGML_OP_CONV_2D or GGML_OP_CONV_TRANSPOSE_2D). ConvTranspose ops
+  //     never dispatch through KleidiAI, so the standard CPU kernel would
+  //     read the mangled prepacked bytes as raw `[KW,KH,OC,IC]` and produce
+  //     garbage.
+  //
+  //     Synthesised bias_br tensors and the unreferenced raw GGUF .bias
+  //     tensors stay in the default CPU buft too — they aren't conv kernels.
+  ggml_backend_buffer_type_t defaultCpuBuft =
       ggml_backend_get_default_buffer_type(backends[0]);
-  bundle.backendBuffer =
-      ggml_backend_alloc_ctx_tensors_from_buft(bundle.ctx.get(), weightsBuft);
+  ggml_backend_buffer_type_t prepackBuft = nullptr;
+  {
+    ggml_backend_buffer_type_t* extraBufts = nullptr;
+    ggml_backend_dev_t cpuDev = ggml_backend_get_device(backends[0]);
+    if (cpuDev != nullptr) {
+      ggml_backend_reg_t cpuReg = ggml_backend_dev_backend_reg(cpuDev);
+      if (cpuReg != nullptr) {
+        auto* getExtras =
+            reinterpret_cast<ggml_backend_dev_get_extra_bufts_t>(
+                ggml_backend_reg_get_proc_address(
+                    cpuReg, "ggml_backend_dev_get_extra_bufts"));
+        if (getExtras != nullptr) {
+          extraBufts = getExtras(cpuDev);
+        }
+      }
+    }
+    if (extraBufts != nullptr) {
+      struct ggml_tensor* probe =
+          ggml_get_tensor(ctx, "features.0.0.weight");
+      if (probe != nullptr) {
+        for (ggml_backend_buffer_type_t* p = extraBufts; *p != nullptr; ++p) {
+          if (ggml_backend_buft_get_alloc_size(*p, probe) >
+              ggml_nbytes(probe)) {
+            prepackBuft = *p;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Names of ConvTranspose weights — `prob_head.3.weight` looks like a
+  // regular Conv2D by shape (ne=[2,2,64,64]) so it needs an explicit name
+  // entry. `prob_head.6.weight` has ne[2]=1 and is caught by the shape
+  // filter below, but list it here too for documentation.
+  const std::unordered_set<std::string> convTransposeWeightNames = {
+      "dbnet.prob_head.3.weight",
+      "dbnet.prob_head.6.weight",
+  };
+
+  // Returns true when the weight tensor is NOT a regular Conv2D kernel and
+  // therefore must NOT be routed to a prepack buft. The KleidiAI buft's
+  // set_tensor unconditionally prepacks F32/F16 tensors it owns, so any
+  // kernel whose runtime op is not GGML_OP_CONV_2D (depthwise, transpose,
+  // matmul, etc.) would get its bytes mangled into KleidiAI's NHWC layout
+  // and read as garbage by the standard CPU kernel.
+  //
+  // Depthwise kernels in MobileNetV3-Large have ne[2]==1 (one input channel
+  // per group). KleidiAI's own conv2d preconditions also reject this shape
+  // (`kernel->ne[2] == src->ne[2]` would fail with src having C channels),
+  // so `ne[2] == 1` is a sound "not a regular Conv2D kernel" filter for
+  // this network.
+  auto isPrepackable = [&](const std::string& name,
+                           const struct ggml_tensor* t) {
+    if (!name.ends_with(".weight")) {
+      return false;
+    }
+    if (convTransposeWeightNames.contains(name)) {
+      return false;
+    }
+    if (t->ne[2] == 1) {
+      return false;
+    }
+    return true;
+  };
+
+  if (prepackBuft != nullptr) {
+    // Per-tensor allocation for the prepack-eligible conv weights so their
+    // bytes flow through the KleidiAI buft's set_tensor hook at upload
+    // (which writes the magic header + NHWC-packed payload). One buffer per
+    // tensor — small surface, easy cleanup.
+    for (auto& [name, dst] : tensors) {
+      if (!isPrepackable(name, dst)) {
+        continue;
+      }
+      const size_t allocSize =
+          ggml_backend_buft_get_alloc_size(prepackBuft, dst);
+      ggml_backend_buffer_t buf =
+          ggml_backend_buft_alloc_buffer(prepackBuft, allocSize);
+      if (buf == nullptr) {
+        raise(
+            "Failed to allocate per-tensor prepack buffer for " + name);
+      }
+      ggml_tallocr tallocr = ggml_tallocr_new(buf);
+      if (ggml_tallocr_alloc(&tallocr, dst) != GGML_STATUS_SUCCESS) {
+        ggml_backend_buffer_free(buf);
+        raise("ggml_tallocr_alloc failed for " + name);
+      }
+      bundle.auxBuffers.push_back(buf);
+    }
+  }
+
+  // Everything in bundle.ctx that wasn't pre-allocated above
+  // (ConvTranspose .weight, raw .bias 1D tensors, the registered conv
+  // weights when prepackBuft is null) goes into one default-CPU buffer.
+  bundle.backendBuffer = ggml_backend_alloc_ctx_tensors_from_buft(
+      bundle.ctx.get(), defaultCpuBuft);
   if (bundle.backendBuffer == nullptr) {
     raise("Failed to allocate backend buffer for GGUF weights");
   }
+  // Synthesised bias_br tensors live in extraCtx.
   bundle.extraBackendBuffer = ggml_backend_alloc_ctx_tensors_from_buft(
-      bundle.extraCtx.get(), weightsBuft);
+      bundle.extraCtx.get(), defaultCpuBuft);
   if (bundle.extraBackendBuffer == nullptr) {
     raise("Failed to allocate backend buffer for synthesised tensors");
   }
@@ -909,6 +1035,14 @@ ComputeGraph buildGraph(
 
   if (!ggml_gallocr_alloc_graph(cg.allocr, cg.graph)) {
     raise("Failed to allocate compute graph");
+  }
+
+  if (const char* dumpPath = std::getenv("OCR_DUMP_GRAPH_DETECTOR");
+      dumpPath != nullptr && dumpPath[0] != '\0') {
+    // Forward-only graph: `gb` (1st arg) is the graph that gets walked and
+    // must be non-null; `cgraph` (2nd arg) is only consulted for coloring
+    // when gradients are present, and is null-checked, so pass nullptr.
+    ggml_graph_dump_dot(cg.graph, nullptr, dumpPath);
   }
 
   return cg;
