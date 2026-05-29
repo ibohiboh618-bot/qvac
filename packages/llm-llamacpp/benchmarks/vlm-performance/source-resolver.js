@@ -21,17 +21,34 @@ function loadCliResolved () {
   try { return JSON.parse(fs.readFileSync(CLI_RESOLVED_PATH, 'utf8')) } catch { return {} }
 }
 
-function resolveAddonSource (key) {
-  let version = 'npm'
-  const pkgPath = path.join(SCRIPT_DIR, 'node_modules', '@qvac', 'llm-llamacpp', 'package.json')
+function readAddonVersion (addonDir) {
   try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-    if (pkg.version) version = pkg.version
-  } catch {}
+    const pkg = JSON.parse(fs.readFileSync(path.join(addonDir, 'package.json'), 'utf8'))
+    return pkg.version || null
+  } catch { return null }
+}
+
+function resolveAddonSource (key, addonOverrides) {
+  // Per-source path override lets a single bench cell run multiple
+  // addon variants on the same runner (e.g. addon=npm-snapshot,
+  // addon-source=workspace-build). Without an override, both
+  // variants would resolve to require('@qvac/llm-llamacpp').
+  const overridePath = addonOverrides && addonOverrides[key]
+  if (overridePath) {
+    const version = readAddonVersion(overridePath) || 'custom'
+    return {
+      key,
+      type: 'addon',
+      label: `${key}@${version}`,
+      addonPath: overridePath
+    }
+  }
+  const defaultPath = path.join(SCRIPT_DIR, 'node_modules', '@qvac', 'llm-llamacpp')
+  const version = readAddonVersion(defaultPath) || 'npm'
   return {
     key,
     type: 'addon',
-    label: `addon@${version}`,
+    label: `${key}@${version}`,
     addonPath: null
   }
 }
@@ -87,6 +104,10 @@ function resolveSources (config, args) {
   if (args['fabric-binary']) cliOverrides['fabric-binary'] = args['fabric-binary']
   if (args['upstream-binary']) cliOverrides['upstream-binary'] = args['upstream-binary']
 
+  const addonOverrides = {}
+  if (args['addon-path']) addonOverrides.addon = args['addon-path']
+  if (args['addon-source-path']) addonOverrides['addon-source'] = args['addon-source-path']
+
   const out = []
   for (const key of enabledKeys) {
     const spec = config.sources[key]
@@ -95,7 +116,7 @@ function resolveSources (config, args) {
       continue
     }
     if (spec.type === 'addon') {
-      out.push(resolveAddonSource(key))
+      out.push(resolveAddonSource(key, addonOverrides))
     } else if (spec.type === 'cli') {
       out.push(resolveCliSource(key, spec, cliOverrides))
     } else {

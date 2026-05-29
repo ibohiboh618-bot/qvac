@@ -26,6 +26,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_addon_source:
+        description: "  A/B: also build addon from source with the vcpkg overlay applied, run alongside npm addon in one cell (same runner). x86-CPU cells only."
+        required: false
+        type: boolean
+        default: false
       run_fabric_cli:
         description: "── SOURCE 2 ── fabric (qvac fork, native CLI)"
         required: false
@@ -117,6 +122,7 @@ jobs:
           RUN_ADDON: ${{ inputs.run_addon }}
           RUN_FABRIC: ${{ inputs.run_fabric_cli }}
           RUN_UPSTREAM: ${{ inputs.run_upstream_cli }}
+          RUN_ADDON_SOURCE: ${{ inputs.run_addon_source }}
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           # Sources
@@ -129,6 +135,14 @@ jobs:
           fi
           if [[ "$RUN_UPSTREAM" == "true" ]]; then
             sources=$(echo "$sources" | jq -c '. + ["upstream"]')
+          fi
+          # addon-source is an opt-in 4th source that builds the addon
+          # from local sources (with vcpkg overlay applied) and runs it
+          # in the same cell as the npm addon. Gated to *-cpu cells
+          # because llamafile is the primary thing this exists to A/B,
+          # and that's x86-CPU-specific.
+          if [[ "$RUN_ADDON_SOURCE" == "true" ]]; then
+            sources=$(echo "$sources" | jq -c '. + ["addon-source"]')
           fi
           # Selected platform×backend tokens
           selected="${PLATFORMS:-linux-cpu}"
@@ -159,6 +173,16 @@ jobs:
               # Re-enable once the runner image ships LLVM+Ninja.
               if [[ "$sel" == "windows-gpu" && "$src" != "addon" ]]; then
                 continue
+              fi
+              # addon-source: llamafile is x86-CPU specific, so only
+              # emit the from-source A/B cell on CPU cells (linux-cpu,
+              # windows-cpu). On GPU cells the matmul path goes through
+              # Vulkan/Metal shaders that don't change with llamafile.
+              if [[ "$src" == "addon-source" ]]; then
+                case "$sel" in
+                  linux-cpu|windows-cpu) ;;
+                  *) continue ;;
+                esac
               fi
               cells=$(echo "$cells" | jq -c \
                 --arg p "$plat" --arg a "$arch" --arg b "$backend" --arg r "$runner" --arg s "$src" \
@@ -232,24 +256,22 @@ jobs:
           repository: ${{ needs.context.outputs.repository }}
           ref: ${{ needs.context.outputs.ref }}
 
-      # The addon-from-source path needs the full native toolchain
-      # (LLVM, vcpkg, bare-make) and is only relevant for the addon
-      # legs — fabric/upstream legs always build the CLI separately
-      # below. Gate on both flags so cmake/vcpkg aren't dragged in
-      # when we're only running CLI sources, or when we're using the
-      # npm prebuild.
+      # The addon-source cell needs the full native toolchain (LLVM,
+      # vcpkg, bare-make, Vulkan SDK) because it builds the addon from
+      # local sources with the vcpkg overlay applied. The 'addon',
+      # 'fabric', and 'upstream' cells stay on the lighter npm path.
       - name: Setup Node.js and Bare tooling
-        if: inputs.addon_from_source && matrix.source == 'addon'
+        if: matrix.source == 'addon-source'
         uses: ./.github/actions/setup-bare-tooling
 
       - name: Setup Node.js
-        if: ${{ !(inputs.addon_from_source && matrix.source == 'addon') }}
+        if: matrix.source != 'addon-source'
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
         with:
           node-version: 22
 
       - name: Setup LLVM
-        if: inputs.addon_from_source && matrix.source == 'addon'
+        if: matrix.source == 'addon-source'
         uses: ./.github/actions/setup-llvm
 
       # Inline vcpkg bootstrap. We can't use the repo's setup-vcpkg
@@ -259,8 +281,8 @@ jobs:
       # pre-installed vcpkg and leave VCPKG_BINARY_SOURCES at the
       # default (per-runner disk cache), which is fine for a one-off
       # bench build.
-      - name: Configure vcpkg (addon from source)
-        if: inputs.addon_from_source && matrix.source == 'addon' && runner.os == 'Linux'
+      - name: Configure vcpkg (addon-source)
+        if: matrix.source == 'addon-source' && runner.os == 'Linux'
         shell: bash
         run: |
           echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
@@ -271,16 +293,15 @@ jobs:
       # transitively requires the Vulkan SDK at build time. ubuntu-latest
       # doesn't ship one; install upstream's prebuilt SDK and stamp the
       # env so cmake's FindVulkan picks it up. Same install pattern
-      # benchmark-embed-llamacpp.yml uses.
-      - name: Install Vulkan SDK (addon from source on Linux)
-        if: inputs.addon_from_source && matrix.source == 'addon' && runner.os == 'Linux'
+      # benchmark-embed-llamacpp.yml uses. libvulkan-dev pulls
+      # libvulkan.so + libvulkan1 from the distro — the LunarG SDK
+      # 1.4.x no longer bundles the loader, so cmake's FindVulkan
+      # can't see Vulkan_LIBRARY without it.
+      - name: Install Vulkan SDK (addon-source on Linux)
+        if: matrix.source == 'addon-source' && runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
-          # libvulkan-dev pulls libvulkan.so + libvulkan1 from the
-          # distro — the LunarG SDK 1.4.x no longer bundles the loader
-          # (Bring-Your-Own-Loader), so cmake's FindVulkan can't see
-          # Vulkan_LIBRARY without it.
           sudo apt-get install -y libxi-dev libxtst-dev libxrandr-dev xz-utils libvulkan-dev
           wget -q -O /tmp/vulkansdk.tar.xz https://sdk.lunarg.com/sdk/download/latest/linux/vulkan_sdk.tar.xz
           mkdir -p "$HOME/vulkan"
@@ -291,8 +312,27 @@ jobs:
           echo "LD_LIBRARY_PATH=$VULKAN_SDK/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$VULKAN_SDK/share/pkgconfig:$VULKAN_SDK/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
 
+      # Install npm @qvac/llm-llamacpp first so we have the published
+      # addon (no llamafile) on disk, then snapshot it to /tmp before
+      # the from-source build overwrites prebuilds/ in the workspace.
+      # The bench then runs both addon variants in this cell on the
+      # same runner: addon → /tmp/npm-addon-snapshot, addon-source →
+      # the workspace's freshly-built artifact.
+      - name: Install benchmark deps (addon-source: npm baseline)
+        if: matrix.source == 'addon-source'
+        shell: bash
+        working-directory: ${{ env.WORKDIR }}
+        run: npm install --no-audit --no-fund
+
+      - name: Snapshot npm addon (addon-source A/B)
+        if: matrix.source == 'addon-source'
+        shell: bash
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          cp -r node_modules/@qvac/llm-llamacpp /tmp/npm-addon-snapshot
+
       - name: Build addon from source
-        if: inputs.addon_from_source && matrix.source == 'addon'
+        if: matrix.source == 'addon-source'
         shell: bash
         working-directory: packages/llm-llamacpp
         env:
@@ -306,14 +346,14 @@ jobs:
           bare-make build
           bare-make install
 
-      - name: Install benchmark deps (addon from source)
-        if: inputs.addon_from_source && matrix.source == 'addon'
+      - name: Re-link workspace addon (addon-source A/B)
+        if: matrix.source == 'addon-source'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund --install-links ../../
 
       - name: Install benchmark deps (addon from npm)
-        if: ${{ !(inputs.addon_from_source && matrix.source == 'addon') }}
+        if: matrix.source != 'addon-source'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund
@@ -384,12 +424,25 @@ jobs:
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: |
-          npm run run:vlm-bench -- \
-            --sources=${{ matrix.source }} \
-            --backend=${{ matrix.backend }} \
-            --force-gpu-row \
-            --warmup-runs=${{ inputs.warmup_runs }} \
-            --measured-runs=${{ inputs.measured_runs }}
+          if [[ "${{ matrix.source }}" == "addon-source" ]]; then
+            # Same-runner A/B: run npm addon (from the snapshot) AND
+            # the freshly-built source addon (workspace via @qvac/...)
+            # back-to-back in one process so they hit identical hardware.
+            npm run run:vlm-bench -- \
+              --sources=addon,addon-source \
+              --addon-path=/tmp/npm-addon-snapshot \
+              --backend=${{ matrix.backend }} \
+              --force-gpu-row \
+              --warmup-runs=${{ inputs.warmup_runs }} \
+              --measured-runs=${{ inputs.measured_runs }}
+          else
+            npm run run:vlm-bench -- \
+              --sources=${{ matrix.source }} \
+              --backend=${{ matrix.backend }} \
+              --force-gpu-row \
+              --warmup-runs=${{ inputs.warmup_runs }} \
+              --measured-runs=${{ inputs.measured_runs }}
+          fi
 
       - name: Upload per-platform results
         if: always()

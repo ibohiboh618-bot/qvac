@@ -16,6 +16,12 @@ module.exports = {
   // enabled/disabled via --sources=addon,fabric,upstream.
   sources: {
     addon: { type: 'addon', enabled: true },
+    // Opt-in second addon variant that points at a separately-installed
+    // addon package (set via --addon-source-path). Used for same-runner
+    // A/B testing of vcpkg overlay flags like GGML_LLAMAFILE, where we
+    // want the freshly-built-from-source addon to run side-by-side with
+    // the npm addon under identical hardware.
+    'addon-source': { type: 'addon', enabled: false },
     fabric: { type: 'cli', enabled: true, configKey: 'fabric' },
     upstream: { type: 'cli', enabled: true, configKey: 'upstream' }
   },
