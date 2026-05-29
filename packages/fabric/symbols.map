@@ -1,0 +1,34 @@
+{
+  global:
+    # Bare / Node-API runtime entry points (required for the .bare module).
+    bare_*;
+    napi_*;
+    js_*;
+
+    # llama.cpp public C API.
+    llama_*;
+    llava_*;
+    mtmd_*;
+
+    # llama.cpp build-info globals (from llama::build_info), e.g.
+    # LLAMA_BUILD_NUMBER / LLAMA_COMMIT, referenced by libcommon.
+    LLAMA_*;
+
+    # ggml public C API (also consumed by the dlopen'd backend .so files at
+    # runtime via ggml_backend_load_all_from_path, which resolve these symbols
+    # from this single loaded module).
+    ggml_*;
+    gguf_*;
+
+    # libcommon helpers used by consumers (e.g. common_tokenize,
+    # common_sampler_*, common_chat_*, json_schema_to_grammar). These have C++
+    # linkage, so match against demangled names. Patterns must stay unquoted:
+    # quoting would turn them into literal (non-wildcard) symbol names.
+    extern "C++" {
+      common_*;
+      json_schema_to_grammar*;
+    };
+
+  local:
+    *;
+};

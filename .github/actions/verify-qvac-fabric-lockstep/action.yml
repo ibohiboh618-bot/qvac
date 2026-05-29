@@ -1,9 +1,13 @@
 name: Verify qvac-fabric lockstep
-description: Ensures qvac-fabric dependency version is identical across selected vcpkg manifests.
+description: >-
+  Ensures the qvac-fabric runtime version is consistent across the monorepo. The
+  qvac-fabric vcpkg port version is now owned by the shared @qvac/fabric addon
+  (packages/fabric/vcpkg.json); direct vcpkg consumers must match it, and addons
+  that consume the runtime via npm must pin the same @qvac/fabric version.
 
 outputs:
   version:
-    description: The shared qvac-fabric version when lockstep check passes.
+    description: The shared qvac-fabric vcpkg version when the lockstep check passes.
     value: ${{ steps.verify.outputs.version }}
 
 runs:
@@ -14,17 +18,23 @@ runs:
       run: |
         set -euo pipefail
 
-        files=(
-          "packages/llm-llamacpp/vcpkg.json"
-          "packages/embed-llamacpp/vcpkg.json"
+        # --- vcpkg lockstep ----------------------------------------------------
+        # packages/fabric/vcpkg.json is now the canonical source for the
+        # qvac-fabric port version (it was previously pinned directly in
+        # llm-llamacpp / embed-llamacpp, which now consume it via the @qvac/fabric
+        # npm package). The remaining direct vcpkg consumer in this lockstep group
+        # must match it. Other qvac-fabric consumers (ocr-ggml, classification-ggml,
+        # vla-ggml) track their own versions and are intentionally not in lockstep.
+        vcpkg_files=(
+          "packages/fabric/vcpkg.json"
           "packages/translation-nmtcpp/vcpkg.json"
         )
 
-        versions=()
-        for file in "${files[@]}"; do
+        vcpkg_versions=()
+        for file in "${vcpkg_files[@]}"; do
           if [ ! -f "${file}" ]; then
-            echo "Missing file: ${file}"
-            exit 1
+            # Skip packages that are not present (e.g. removed/renamed).
+            continue
           fi
 
           version="$(jq -r '
@@ -42,18 +52,61 @@ runs:
           fi
 
           echo "${file}: qvac-fabric version>=${version}"
-          versions+=("${version}")
+          vcpkg_versions+=("${version}")
         done
 
-        baseline="${versions[0]}"
-        for version in "${versions[@]}"; do
+        if [ "${#vcpkg_versions[@]}" -eq 0 ]; then
+          echo "No vcpkg manifest pinning qvac-fabric was found"
+          exit 1
+        fi
+
+        baseline="${vcpkg_versions[0]}"
+        for version in "${vcpkg_versions[@]}"; do
           if [ "${version}" != "${baseline}" ]; then
-            echo "qvac-fabric versions are not in lockstep."
+            echo "qvac-fabric vcpkg versions are not in lockstep."
             echo "Expected all to match: ${baseline}"
-            printf 'Observed versions: %s\n' "${versions[@]}"
+            printf 'Observed versions: %s\n' "${vcpkg_versions[@]}"
             exit 1
           fi
         done
+        echo "qvac-fabric vcpkg lockstep verified: ${baseline}"
 
-        echo "qvac-fabric lockstep verified: ${baseline}"
+        # --- npm lockstep ------------------------------------------------------
+        # Addons that consume the runtime through the shared @qvac/fabric addon
+        # must pin the same dependency range.
+        npm_files=(
+          "packages/llm-llamacpp/package.json"
+          "packages/embed-llamacpp/package.json"
+        )
+
+        npm_versions=()
+        for file in "${npm_files[@]}"; do
+          if [ ! -f "${file}" ]; then
+            continue
+          fi
+
+          version="$(jq -r '.dependencies["@qvac/fabric"] // empty' "${file}")"
+
+          if [ -z "${version}" ] || [ "${version}" = "null" ]; then
+            echo "@qvac/fabric dependency not found in ${file}"
+            exit 1
+          fi
+
+          echo "${file}: @qvac/fabric ${version}"
+          npm_versions+=("${version}")
+        done
+
+        if [ "${#npm_versions[@]}" -gt 0 ]; then
+          npm_baseline="${npm_versions[0]}"
+          for version in "${npm_versions[@]}"; do
+            if [ "${version}" != "${npm_baseline}" ]; then
+              echo "@qvac/fabric npm versions are not in lockstep."
+              echo "Expected all to match: ${npm_baseline}"
+              printf 'Observed versions: %s\n' "${npm_versions[@]}"
+              exit 1
+            fi
+          done
+          echo "@qvac/fabric npm lockstep verified: ${npm_baseline}"
+        fi
+
         echo "version=${baseline}" >> "${GITHUB_OUTPUT}"
