@@ -220,6 +220,8 @@ struct GraphBuilder {
     const int pad = samePadding(kernel);
     struct ggml_tensor* conv =
         ggml_conv_2d_dw(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+    struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
+        ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
     return activate(conv, useHardswish);
   }
