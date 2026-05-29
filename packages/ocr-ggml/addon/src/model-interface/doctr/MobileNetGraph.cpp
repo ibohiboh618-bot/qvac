@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -84,74 +85,9 @@ void fp16ToFp32(const void* src, float* out, size_t count) {
   }
 }
 
-/// Copy a GGUF tensor's bytes into a freshly allocated ggml tensor attached
-/// to `bundleCtx`, reusing the original dtype and shape. Returns the new
-/// tensor pointer.
-struct ggml_tensor* cloneRaw(
-    struct ggml_context* bundleCtx, const gguf_context* ggufCtx,
-    struct ggml_context* ggmlCtx, const char* name) {
-  const int64_t idx = gguf_find_tensor(ggufCtx, name);
-  if (idx < 0) {
-    raise(std::string("Missing tensor in GGUF: ") + name);
-  }
-  struct ggml_tensor* src = ggml_get_tensor(ggmlCtx, name);
-  if (src == nullptr) {
-    raise(std::string("Cannot resolve tensor from ggml ctx: ") + name);
-  }
-  struct ggml_tensor* dst = ggml_new_tensor(
-      bundleCtx,
-      src->type,
-      ggml_n_dims(src),
-      src->ne); // NOLINT(hicpp-no-array-decay) - ggml struct member is C array
-  ggml_set_name(dst, name);
-  return dst;
-}
-
-/// Same as cloneRaw but forces the destination dtype to F32 (used for the
-/// per-channel broadcast bias tensors and classifier weights promoted at
-/// load time).
-struct ggml_tensor* cloneAsFp32(
-    struct ggml_context* bundleCtx, const char* name, int n_dims,
-    const int64_t* ne) {
-  struct ggml_tensor* dst =
-      ggml_new_tensor(bundleCtx, GGML_TYPE_F32, n_dims, ne);
-  ggml_set_name(dst, name);
-  return dst;
-}
-
-struct ggml_tensor* cloneAsFp16(
-    struct ggml_context* bundleCtx, const char* name, int n_dims,
-    const int64_t* ne) {
-  struct ggml_tensor* dst =
-      ggml_new_tensor(bundleCtx, GGML_TYPE_F16, n_dims, ne);
-  ggml_set_name(dst, name);
-  return dst;
-}
-
 /// Same kernel-parity padding as torchvision: p = (k - 1) / 2 keeps same-size
 /// output when stride=1 and reduces by floor(H/s) when stride=2.
 constexpr int samePadding(int kernel) { return (kernel - 1) / 2; }
-
-/// Load a 1D FP32 vector from a GGUF tensor (which can be FP16 or FP32).
-std::vector<float> loadVector1d(
-    const gguf_context* gguf, struct ggml_context* ggufCtx,
-    const std::string& name) {
-  (void)gguf;
-  struct ggml_tensor* t = ggml_get_tensor(ggufCtx, name.c_str());
-  if (t == nullptr) {
-    raise("Missing tensor: " + name);
-  }
-  const size_t count = ggml_nelements(t);
-  std::vector<float> out(count);
-  if (t->type == GGML_TYPE_F32) {
-    std::memcpy(out.data(), t->data, count * sizeof(float));
-  } else if (t->type == GGML_TYPE_F16) {
-    fp16ToFp32(t->data, out.data(), count);
-  } else {
-    raise("Unsupported tensor dtype for: " + name);
-  }
-  return out;
-}
 
 struct GraphBuilder {
   struct ggml_context* ctx;
@@ -271,6 +207,7 @@ struct GraphBuilder {
         convTransposeBnAct(output, "dbnet.prob_head.3");
     output = ggml_conv_transpose_2d_p0(
         ctx, t("dbnet.prob_head.6.weight"), output, 2);
+    auto a =t("dbnet.prob_head.6.bias_br"); 
     return ggml_add(ctx, output, t("dbnet.prob_head.6.bias_br"));
   }
 
@@ -400,18 +337,24 @@ struct GraphBuilder {
 WeightsBundle::~WeightsBundle() { reset(); }
 
 WeightsBundle::WeightsBundle(WeightsBundle&& other) noexcept
-    : ctx(std::move(other.ctx)), tensors(std::move(other.tensors)),
-      backendBuffer(other.backendBuffer) {
+    : ctx(std::move(other.ctx)), extraCtx(std::move(other.extraCtx)),
+      tensors(std::move(other.tensors)),
+      backendBuffer(other.backendBuffer),
+      extraBackendBuffer(other.extraBackendBuffer) {
   other.backendBuffer = nullptr;
+  other.extraBackendBuffer = nullptr;
 }
 
 WeightsBundle& WeightsBundle::operator=(WeightsBundle&& other) noexcept {
   if (this != &other) {
     reset();
     ctx = std::move(other.ctx);
+    extraCtx = std::move(other.extraCtx);
     tensors = std::move(other.tensors);
     backendBuffer = other.backendBuffer;
+    extraBackendBuffer = other.extraBackendBuffer;
     other.backendBuffer = nullptr;
+    other.extraBackendBuffer = nullptr;
   }
   return *this;
 }
@@ -419,9 +362,14 @@ WeightsBundle& WeightsBundle::operator=(WeightsBundle&& other) noexcept {
 void WeightsBundle::reset() {
   tensors.clear();
   ctx.reset();
+  extraCtx.reset();
   if (backendBuffer != nullptr) {
     ggml_backend_buffer_free(backendBuffer);
     backendBuffer = nullptr;
+  }
+  if (extraBackendBuffer != nullptr) {
+    ggml_backend_buffer_free(extraBackendBuffer);
+    extraBackendBuffer = nullptr;
   }
 }
 
@@ -489,43 +437,88 @@ WeightsBundle loadWeights(
     const std::string& ggufPath, std::vector<ggml_backend_t>& backends,
     std::vector<std::string>& outLabels) {
   outLabels.clear();
-  // Load the GGUF into a private ggml ctx so the inspected tensors stay
-  // accessible long enough to copy their bytes into our backend buffer.
-  struct ggml_context* ggmlCtx = nullptr;
-  gguf_init_params params{.no_alloc = false, .ctx = &ggmlCtx};
+
+  // -------------------------------------------------------------------------
+  // Pattern B loader (single ggml context, canonical ggml usage).
+  //
+  // 1. Parse the GGUF header with no_alloc=true so we get only tensor
+  //    metadata in a single ggml_context — no temporary data buffers.
+  // 2. Mutate any tensor types we want to override (none today, but the
+  //    seam is here if a future change needs F16->F32 promotion: just
+  //    flip `t->type = GGML_TYPE_F32` and recompute `nb[]` BEFORE the
+  //    backend alloc).
+  // 3. Synthesise the .bias_br broadcast bias tensors as new tensors in
+  //    the same context — these don't exist in the GGUF.
+  // 4. ONE backend allocation covers every tensor in the ctx.
+  // 5. Upload pass reads raw bytes from the GGUF file at each tensor's
+  //    offset, converting on the fly where in-memory dtype differs from
+  //    on-disk dtype.
+  //
+  // No parallel ggml_context, no cloneRaw, no double-declare-then-copy.
+  // -------------------------------------------------------------------------
+
+  WeightsBundle bundle;
+
+  // (1) GGUF header parse -> single ctx with tensor metadata only.
+  struct ggml_context* ctx = nullptr;
+  gguf_init_params params{.no_alloc = true, .ctx = &ctx};
   gguf_context* gguf = gguf_init_from_file(ggufPath.c_str(), params);
   if (gguf == nullptr) {
     raiseInvalid("Failed to open GGUF file: " + ggufPath);
   }
   std::unique_ptr<gguf_context, decltype(&gguf_free)> ggufGuard(
       gguf, gguf_free);
-  std::unique_ptr<struct ggml_context, decltype(&ggml_free)> ggmlCtxGuard(
-      ggmlCtx, ggml_free);
+  bundle.ctx = std::unique_ptr<struct ggml_context, decltype(&ggml_free)>(
+      ctx, ggml_free);
   printGgufMetadataKeys(gguf);
 
-  // Fresh ggml ctx sized for our folded set of tensors (no alloc; tensors
-  // will be backed by `backend` after ggml_backend_alloc_ctx_tensors).
-  WeightsBundle bundle;
-  const size_t ctxSize = ggml_tensor_overhead() * kCtxTensorOverhead;
-  bundle.ctx = std::unique_ptr<struct ggml_context, decltype(&ggml_free)>(
-      ggml_init({.mem_size = ctxSize, .mem_buffer = nullptr, .no_alloc = true}),
-      ggml_free);
-  if (!bundle.ctx) {
-    raise("Failed to allocate weights ggml context");
+  // Pre-create the synthesised-tensors ctx with headroom for ~256 bias_br
+  // entries. The GGUF ctx is fixed-size, so synthesised tensors must live
+  // in a separate ctx.
+  constexpr size_t kBiasBrHeaderBudget = 256;
+  struct ggml_init_params extraParams{
+      .mem_size = kBiasBrHeaderBudget * ggml_tensor_overhead(),
+      .mem_buffer = nullptr,
+      .no_alloc = true,
+  };
+  bundle.extraCtx =
+      std::unique_ptr<struct ggml_context, decltype(&ggml_free)>(
+          ggml_init(extraParams), ggml_free);
+  if (bundle.extraCtx == nullptr) {
+    raise("Failed to allocate extra ggml context for bias_br tensors");
   }
+  struct ggml_context* extraCtx = bundle.extraCtx.get();
 
-  auto& tensors = bundle.tensors;
   // TODO Load all of these values from the GGUF metadata
   constexpr int fpnInBranchCount = 4;
   constexpr int fpnInBranchOutChannels = 256;
   constexpr int fpnOutBranchInputChannels = 256;
   constexpr int fpnOutBranchOutChannels = 64;
-  constexpr int dbnetHeadChannels = 64;
-  constexpr int dbnetProbMapChannels = 1;
   constexpr std::array<int, fpnInBranchCount> fpnInBranchInputChannels = {
       24, 40, 112, 960};
 
-  // Lazy helpers.
+  // (2) Per-tensor dtype overrides go here. ggml_tensor is a POD with public
+  //     fields; mutating type + recomputing strides is safe BEFORE backend
+  //     alloc because no data pointer has been assigned yet. Example:
+  //
+  //     for (const std::string& n : { "dbnet.prob_head.0.weight" }) {
+  //         struct ggml_tensor* t = ggml_get_tensor(ctx, n.c_str());
+  //         if (t && t->type == GGML_TYPE_F16) {
+  //             t->type = GGML_TYPE_F32;
+  //             t->nb[0] = ggml_type_size(GGML_TYPE_F32);
+  //             for (int d = 1; d < GGML_MAX_DIMS; ++d) {
+  //                 t->nb[d] = t->nb[d - 1] * t->ne[d - 1];
+  //             }
+  //         }
+  //     }
+  //
+  // None today.
+
+  // (3) Register the conv weights the graph builder will reference, and
+  //     add the synthesised broadcast-bias tensors to the SAME ctx so the
+  //     single backend allocation covers them.
+  auto& tensors = bundle.tensors;
+
   auto logTensorLoad = [&](const std::string& tensorName,
                            const struct ggml_tensor* tensor) {
     std::ostringstream os;
@@ -542,103 +535,58 @@ WeightsBundle loadWeights(
     QLOG(qvac_lib_inference_addon_cpp::logger::Priority::DEBUG, os.str());
   };
 
-  auto registerTensor = [&](struct ggml_tensor* dst) {
-    const std::string tensorName = ggml_get_name(dst);
-    logTensorLoad(tensorName, dst);
-    tensors.emplace(tensorName, dst);
-  };
-
-  // Raw bias tensors stay FP16, but the broadcast copies are FP32 because
-  // CPU ggml_add does not support f32 activations plus f16 bias tensors.
-  // The [1,1,C,1] shape broadcasts against 4D feature maps.
-  // When the conv has no bias in the GGUF (bias=False, followed by BN), a
-  // zero-filled broadcast tensor is created so the graph stays structurally
-  // identical; the BN shift absorbs the offset.
-  auto addBiasBroadcast = [&](const std::string& name) {
-    const std::string brName = name + "_br";
-    if (tensors.contains(brName)) {
-      return;
+  auto registerConvWeight = [&](const std::string& weightName) {
+    struct ggml_tensor* t = ggml_get_tensor(ctx, weightName.c_str());
+    if (t == nullptr) {
+      raise("Missing tensor in GGUF: " + weightName);
     }
-
-    const bool biasExistsInGguf = gguf_find_tensor(gguf, name.c_str()) >= 0;
-
-    int64_t channels = 0;
-    if (biasExistsInGguf) {
-      // Raw bias (1D, F16) — used in unit tests.
-      struct ggml_tensor* raw = nullptr;
-      auto rawIt = tensors.find(name);
-      if (rawIt == tensors.end()) {
-        raw = cloneRaw(bundle.ctx.get(), gguf, ggmlCtx, name.c_str());
-        registerTensor(raw);
-      } else {
-        raw = rawIt->second;
-      }
-      channels = ggml_nelements(raw);
-    } else {
-      // No bias tensor in GGUF (conv followed by BN with bias=False).
-      // Infer output channels from the corresponding conv weight tensor.
-      const std::string weightName =
-          name.substr(0, name.size() - std::string(".bias").size()) + ".weight";
-      auto wIt = tensors.find(weightName);
-      if (wIt == tensors.end()) {
-        raise("Cannot infer output channels for missing bias: " + name);
-      }
-      channels = wIt->second->ne[3];
-    }
-
-    const std::array<int64_t, 4> shape4d = {1, 1, channels, 1};
-    struct ggml_tensor* broadcastBias =
-        cloneAsFp32(bundle.ctx.get(), brName.c_str(), 4, shape4d.data());
-    logTensorLoad(brName, broadcastBias);
-    tensors.emplace(brName, broadcastBias);
+    logTensorLoad(weightName, t);
+    tensors.emplace(weightName, t);
+    return t;
   };
 
-  auto addConvWeight = [&](const std::string& name) {
-    if (!name.ends_with(".weight")) {
-      raise(
-          "Expected convolution weight tensor name to end with .weight: " +
-          name);
-    }
-    struct ggml_tensor* weightTensor =
-        cloneRaw(bundle.ctx.get(), gguf, ggmlCtx, name.c_str());
-    registerTensor(weightTensor);
-    addBiasBroadcast(
-        name.substr(0, name.size() - std::string(".weight").size()) + ".bias");
-    return weightTensor;
+  // Adds a [1, 1, channels, 1] F32 broadcast-bias tensor to the SAME ctx
+  // as the GGUF weights. The corresponding raw bias from the GGUF (if
+  // present) is read and converted in the upload pass below; otherwise the
+  // tensor is zero-filled. The F32 dtype is what ggml_add expects to pair
+  // with F32 activations (and is consistent with the f16+f32->f16 binary_op
+  // combo for the F16 activation path).
+  auto addBiasBroadcast =
+      [&](const std::string& biasName, int64_t channels) {
+        const std::string brName = biasName + "_br";
+        if (tensors.contains(brName)) {
+          return;
+        }
+        const std::array<int64_t, 4> shape4d = {1, 1, channels, 1};
+        struct ggml_tensor* t = ggml_new_tensor(
+            extraCtx, GGML_TYPE_F32, 4, shape4d.data());
+        ggml_set_name(t, brName.c_str());
+        logTensorLoad(brName, t);
+        tensors.emplace(brName, t);
+      };
+
+  // Convenience: register a conv weight by its prefix and add its bias_br.
+  // OC = ne[3] for both regular and depthwise conv weights (depthwise stores
+  // [KW, KH, 1, C] with C = OC = IC).
+  auto registerConvWithBias = [&](const std::string& convPrefix) {
+    struct ggml_tensor* w = registerConvWeight(convPrefix + ".weight");
+    addBiasBroadcast(convPrefix + ".bias", w->ne[3]);
+    return w;
   };
 
-  // Classifier linear weights kept as F16 for numerical stability of the tiny
-  // 3-element logits tail.
-  auto addFcWeightFp16 = [&](const std::string& name, int in, int out) {
-    const std::array<int64_t, 2> shape = {in, out};
-    struct ggml_tensor* t =
-        cloneAsFp16(bundle.ctx.get(), name.c_str(), 2, shape.data());
-    logTensorLoad(name, t);
-    tensors.emplace(name, t);
-  };
+  // Stem.
+  registerConvWithBias("features.0.0");
 
-  auto addFcBiasFp16 = [&](const std::string& name, int out) {
-    const std::array<int64_t, 1> shape = {out};
-    struct ggml_tensor* t =
-        cloneAsFp16(bundle.ctx.get(), name.c_str(), 1, shape.data());
-    logTensorLoad(name, t);
-    tensors.emplace(name, t);
-  };
-
-  // Stem: features.0.0 = conv, features.0.1 = BN
-  addConvWeight("features.0.0.weight");
-
-  // Inverted residual blocks.
+  // 15 inverted residual blocks.
   int featureIndex = 1;
   for (const BlockConfig& cfg : kBlocks) {
     const std::string base = "features." + std::to_string(featureIndex);
-    const bool hasExpand =
-        cfg.expansionSize != cfg.inputChannels; // true for first layer.
+    const bool hasExpand = cfg.expansionSize != cfg.inputChannels;
     int dwIdx = 0;
     int seIdx = -1;
     int projIdx = 0;
     if (hasExpand) {
-      addConvWeight(base + ".block.0.0.weight");
+      registerConvWithBias(base + ".block.0.0");
       dwIdx = 1;
       if (cfg.useSe) {
         seIdx = 2;
@@ -655,28 +603,27 @@ WeightsBundle loadWeights(
       }
     }
     const std::string dwBase = base + ".block." + std::to_string(dwIdx);
-    addConvWeight(dwBase + ".0.weight");
+    registerConvWithBias(dwBase + ".0");
 
     if (cfg.useSe) {
       const std::string seBase = base + ".block." + std::to_string(seIdx);
-      addConvWeight(seBase + ".fc1.weight");
-      addConvWeight(seBase + ".fc2.weight");
+      registerConvWithBias(seBase + ".fc1");
+      registerConvWithBias(seBase + ".fc2");
     }
 
     const std::string projBase = base + ".block." + std::to_string(projIdx);
-    addConvWeight(projBase + ".0.weight");
+    registerConvWithBias(projBase + ".0");
 
     ++featureIndex;
   }
 
-  // Tail: features.16.0 = conv (BN folded offline into conv weights/bias).
-  addConvWeight("features.16.0.weight");
+  // Tail.
+  registerConvWithBias("features.16.0");
 
-  // FPN input branches: each backbone feature is projected to 256 channels
-  // with Conv1x1 + ReLU (BN folded offline) before top-down pyramid fusion.
+  // FPN input branches.
   for (int branch = 0; branch < fpnInBranchCount; ++branch) {
     const std::string base = "dbnet.fpn.in_branches." + std::to_string(branch);
-    struct ggml_tensor* conv = addConvWeight(base + ".0.weight");
+    struct ggml_tensor* conv = registerConvWithBias(base + ".0");
     if (conv->ne[0] != 1 || conv->ne[1] != 1 ||
         conv->ne[2] !=
             fpnInBranchInputChannels.at(static_cast<size_t>(branch)) ||
@@ -685,11 +632,10 @@ WeightsBundle loadWeights(
     }
   }
 
-  // FPN output branches: each top-down feature is refined by a 3x3 conv that
-  // reduces the 256-channel pyramid feature to the 64-channel concat slice.
+  // FPN output branches.
   for (int branch = 0; branch < fpnInBranchCount; ++branch) {
     const std::string base = "dbnet.fpn.out_branches." + std::to_string(branch);
-    struct ggml_tensor* conv = addConvWeight(base + ".0.weight");
+    struct ggml_tensor* conv = registerConvWithBias(base + ".0");
     if (conv->ne[0] != 3 || conv->ne[1] != 3 ||
         conv->ne[2] != fpnOutBranchInputChannels ||
         conv->ne[3] != fpnOutBranchOutChannels) {
@@ -697,116 +643,129 @@ WeightsBundle loadWeights(
     }
   }
 
-  // DBNet probability head: Conv2d + ReLU, ConvTranspose2d + ReLU, then the
-  // final ConvTranspose2d projection to a single probability map. BN folded
-  // offline into the conv/transpose weights+biases.
-  addConvWeight("dbnet.prob_head.0.weight");
-  addConvWeight("dbnet.prob_head.3.weight");
-  addConvWeight("dbnet.prob_head.6.weight");
+  // DBNet probability head.
+  // prob_head.0 is a regular Conv2d: output channels = ne[3]. The default
+  // registerConvWithBias is correct.
+  registerConvWithBias("dbnet.prob_head.0");
+  // prob_head.3 and prob_head.6 are ConvTranspose2d. In GGUF their weight is
+  // stored as [KW, KH, OC, IC], so the output-channel count is ne[2], NOT
+  // ne[3]. Register the weight and synthesise the bias_br with the correct
+  // channel count explicitly.
+  {
+    struct ggml_tensor* w = registerConvWeight("dbnet.prob_head.3.weight");
+    addBiasBroadcast("dbnet.prob_head.3.bias", w->ne[2]);
+  }
+  {
+    struct ggml_tensor* w = registerConvWeight("dbnet.prob_head.6.weight");
+    addBiasBroadcast("dbnet.prob_head.6.bias", w->ne[2]);
+  }
 
-  // Classifier head.
-  addFcWeightFp16("classifier.0.weight", kTailOutChannels, kClassifierHidden);
-  addFcBiasFp16("classifier.0.bias", kClassifierHidden);
-  addFcWeightFp16("classifier.3.weight", kClassifierHidden, kNumClasses);
-  addFcBiasFp16("classifier.3.bias", kNumClasses);
-
-  // Back the newly declared tensors with backend storage so we can write to
-  // them via ggml_backend_tensor_set below.
+  // (4) Two backend allocations on the same backend buffer-type: one for the
+  //     GGUF ctx (every GGUF tensor), one for the extra ctx (synthesised
+  //     bias_br tensors). The GGUF ctx is fixed-size so a single allocation
+  //     covering both isn't possible without copying tensors between ctxs.
   ggml_backend_buffer_type_t weightsBuft =
       ggml_backend_get_default_buffer_type(backends[0]);
   bundle.backendBuffer =
       ggml_backend_alloc_ctx_tensors_from_buft(bundle.ctx.get(), weightsBuft);
   if (bundle.backendBuffer == nullptr) {
-    raise("Failed to allocate backend buffer for weights");
+    raise("Failed to allocate backend buffer for GGUF weights");
+  }
+  bundle.extraBackendBuffer = ggml_backend_alloc_ctx_tensors_from_buft(
+      bundle.extraCtx.get(), weightsBuft);
+  if (bundle.extraBackendBuffer == nullptr) {
+    raise("Failed to allocate backend buffer for synthesised tensors");
   }
 
-  // Copy raw tensor bytes (for cloneRaw) into the backend buffer.
-  for (auto& [name, dst] : tensors) {
-    if (name.ends_with(".bias_br") || name == "classifier.0.weight" ||
-        name == "classifier.0.bias" || name == "classifier.3.weight" ||
-        name == "classifier.3.bias") {
-      continue; // handled in the second pass
-    }
-    struct ggml_tensor* src = ggml_get_tensor(ggmlCtx, name.c_str());
-    if (src == nullptr) {
-      raise("Source tensor missing from GGUF: " + name);
-    }
-    if (src->type != dst->type) {
-      raise("Dtype mismatch while copying tensor: " + name);
-    }
-    ggml_backend_tensor_set(dst, src->data, 0, ggml_nbytes(src));
+  // (5) Upload pass. Read raw bytes from the GGUF file at each tensor's
+  //     offset, converting on the fly where in-memory dtype differs from
+  //     on-disk dtype, and push via ggml_backend_tensor_set.
+  std::ifstream file(ggufPath, std::ios::binary);
+  if (!file) {
+    raise("Failed to open GGUF file for raw read: " + ggufPath);
   }
+  const size_t dataBaseOffset = gguf_get_data_offset(gguf);
 
-  // Kept for the future classifier-bytes upload path (see commented-out
-  // uploadClassifierTensor block at the bottom of this function).
-  // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
-  auto uploadTensorBytes = [&](struct ggml_tensor* dst,
-                               const std::string& srcName) {
-    struct ggml_tensor* src = ggml_get_tensor(ggmlCtx, srcName.c_str());
-    if (src == nullptr) {
-      raise("Source tensor missing from GGUF: " + srcName);
+  // Read `count` F16 elements from `fileOffset` and return them as F32.
+  auto readF16AsF32 = [&](size_t fileOffset, size_t count) {
+    std::vector<ggml_fp16_t> raw(count);
+    file.seekg(static_cast<std::streamoff>(fileOffset));
+    file.read(
+        reinterpret_cast<char*>(raw.data()),
+        static_cast<std::streamsize>(count * sizeof(ggml_fp16_t)));
+    if (!file) {
+      raise("File read failed while loading F16 tensor data");
     }
-    if (src->type != dst->type) {
-      raise(
-          "Dtype mismatch while copying tensor bytes from " + srcName + " to " +
-          ggml_get_name(dst) + ": source type " + ggml_type_name(src->type) +
-          ", destination type " + ggml_type_name(dst->type));
-    }
-    if (ggml_nelements(src) != ggml_nelements(dst)) {
-      raise(
-          "Element count mismatch while copying tensor bytes from " + srcName +
-          " to " + ggml_get_name(dst) + ": expected " +
-          std::to_string(ggml_nelements(dst)) + ", got " +
-          std::to_string(ggml_nelements(src)));
-    }
-    if (ggml_nbytes(src) != ggml_nbytes(dst)) {
-      raise(
-          "Byte count mismatch while copying tensor bytes from " + srcName +
-          " to " + ggml_get_name(dst) + ": expected " +
-          std::to_string(ggml_nbytes(dst)) + ", got " +
-          std::to_string(ggml_nbytes(src)));
-    }
-    ggml_backend_tensor_set(dst, src->data, 0, ggml_nbytes(src));
+    std::vector<float> out(count);
+    fp16ToFp32(raw.data(), out.data(), count);
+    return out;
   };
 
-  auto uploadF32 = [&](struct ggml_tensor* dst, const std::vector<float>& buf) {
-    if (static_cast<size_t>(ggml_nelements(dst)) != buf.size()) {
-      raise(
-          std::string("Element count mismatch for ") + ggml_get_name(dst) +
-          ": expected " + std::to_string(ggml_nelements(dst)) + ", got " +
-          std::to_string(buf.size()));
+  // Read `bytes` raw bytes from `fileOffset`.
+  auto readBytes = [&](size_t fileOffset, size_t bytes) {
+    std::vector<uint8_t> buf(bytes);
+    file.seekg(static_cast<std::streamoff>(fileOffset));
+    file.read(
+        reinterpret_cast<char*>(buf.data()),
+        static_cast<std::streamsize>(bytes));
+    if (!file) {
+      raise("File read failed while loading tensor data");
     }
-    if (dst->type != GGML_TYPE_F32) {
-      raise(
-          std::string("Expected FP32 destination for ") + ggml_get_name(dst) +
-          ", got " + ggml_type_name(dst->type));
-    }
-    ggml_backend_tensor_set(dst, buf.data(), 0, buf.size() * sizeof(float));
+    return buf;
   };
 
   for (auto& [name, dst] : tensors) {
-    if (!name.ends_with(".bias_br")) {
+    if (name.ends_with(".bias_br")) {
+      // Synthesised broadcast bias: pull values from the corresponding raw
+      // bias key in the GGUF (F16 or F32) and convert to F32, or fill with
+      // zeros if the key is absent.
+      const std::string biasName =
+          name.substr(0, name.size() - std::string("_br").size());
+      const int64_t biasIdx = gguf_find_tensor(gguf, biasName.c_str());
+      const size_t nElements = static_cast<size_t>(ggml_nelements(dst));
+      std::vector<float> values(nElements, 0.0F);
+      if (biasIdx >= 0) {
+        const struct ggml_tensor* biasMeta =
+            ggml_get_tensor(ctx, biasName.c_str());
+        if (biasMeta != nullptr &&
+            static_cast<size_t>(ggml_nelements(biasMeta)) == nElements) {
+          const size_t off =
+              dataBaseOffset + gguf_get_tensor_offset(gguf, biasIdx);
+          if (biasMeta->type == GGML_TYPE_F16) {
+            values = readF16AsF32(off, nElements);
+          } else if (biasMeta->type == GGML_TYPE_F32) {
+            std::vector<uint8_t> raw =
+                readBytes(off, nElements * sizeof(float));
+            std::memcpy(values.data(), raw.data(), nElements * sizeof(float));
+          } else {
+            raise(
+                "Unsupported bias dtype " +
+                std::string(ggml_type_name(biasMeta->type)) + " for " +
+                biasName);
+          }
+        }
+      }
+      ggml_backend_tensor_set(
+          dst, values.data(), 0, values.size() * sizeof(float));
       continue;
     }
-    const std::string biasName =
-        name.substr(0, name.size() - std::string("_br").size());
-    if (gguf_find_tensor(gguf, biasName.c_str()) >= 0) {
-      std::vector<float> biasValues = loadVector1d(gguf, ggmlCtx, biasName);
-      uploadF32(dst, biasValues);
-    } else {
-      std::vector<float> zeros(static_cast<size_t>(ggml_nelements(dst)), 0.0F);
-      uploadF32(dst, zeros);
-    }
-  }
 
-  // Classifier FC tensors stay FP16 and are copied directly from GGUF bytes.
-  // auto uploadClassifierTensor = [&](const std::string& name) {
-  //   uploadTensorBytes(tensors.at(name), name);
-  // };
-  // uploadClassifierTensor("classifier.0.weight");
-  // uploadClassifierTensor("classifier.0.bias");
-  // uploadClassifierTensor("classifier.3.weight");
-  // uploadClassifierTensor("classifier.3.bias");
+    // Conv weight: same name in the GGUF.
+    const int64_t idx = gguf_find_tensor(gguf, name.c_str());
+    if (idx < 0) {
+      raise("Tensor missing from GGUF: " + name);
+    }
+    const size_t off = dataBaseOffset + gguf_get_tensor_offset(gguf, idx);
+
+    // Source dtype from the parsed GGUF metadata (unchanged by us) vs the
+    // destination dtype in the ctx (which we may have mutated in step 2).
+    // For now they match — fast same-dtype byte copy. If a future change
+    // promotes a weight to F32, add an F16->F32 branch here mirroring the
+    // bias_br case above.
+    const size_t bytes = ggml_nbytes(dst);
+    std::vector<uint8_t> raw = readBytes(off, bytes);
+    ggml_backend_tensor_set(dst, raw.data(), 0, bytes);
+  }
 
   return bundle;
 }

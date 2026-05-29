@@ -195,10 +195,18 @@ inline constexpr int kInputHw = 1024;
 /// GGUF tensor name to the live tensor handle. Created once at model load and
 /// kept alive for the entire lifetime of the model.
 struct WeightsBundle {
+  // GGUF-owned ctx: holds tensor metadata parsed from the GGUF file with
+  // no_alloc=true. Its mem_size is fixed by the GGUF tensor count and cannot
+  // accommodate additional tensors — that's what `extraCtx` is for.
   std::unique_ptr<struct ggml_context, decltype(&ggml_free)> ctx{
+      nullptr, ggml_free};
+  // Our own ctx for synthesised tensors (e.g. .bias_br broadcast biases that
+  // don't exist in the GGUF). Sized generously at init time.
+  std::unique_ptr<struct ggml_context, decltype(&ggml_free)> extraCtx{
       nullptr, ggml_free};
   std::unordered_map<std::string, struct ggml_tensor*> tensors;
   ggml_backend_buffer_t backendBuffer = nullptr;
+  ggml_backend_buffer_t extraBackendBuffer = nullptr;
 
   WeightsBundle() = default;
   WeightsBundle(const WeightsBundle&) = delete;
