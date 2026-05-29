@@ -232,31 +232,50 @@ jobs:
           repository: ${{ needs.context.outputs.repository }}
           ref: ${{ needs.context.outputs.ref }}
 
+      # The addon-from-source path needs the full native toolchain
+      # (LLVM, vcpkg, bare-make) and is only relevant for the addon
+      # legs — fabric/upstream legs always build the CLI separately
+      # below. Gate on both flags so cmake/vcpkg aren't dragged in
+      # when we're only running CLI sources, or when we're using the
+      # npm prebuild.
       - name: Setup Node.js and Bare tooling
-        if: inputs.addon_from_source
+        if: inputs.addon_from_source && matrix.source == 'addon'
         uses: ./.github/actions/setup-bare-tooling
 
       - name: Setup Node.js
-        if: ${{ !inputs.addon_from_source }}
+        if: ${{ !(inputs.addon_from_source && matrix.source == 'addon') }}
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
         with:
           node-version: 22
 
       - name: Setup LLVM
-        if: inputs.addon_from_source
+        if: inputs.addon_from_source && matrix.source == 'addon'
         uses: ./.github/actions/setup-llvm
 
-      - name: Setup vcpkg
-        if: inputs.addon_from_source
-        uses: ./.github/actions/setup-vcpkg
-        with:
-          platform: ${{ runner.os == 'Linux' && 'linux' || 'win32' }}
-          arch: x64
+      # Inline vcpkg bootstrap. We can't use the repo's setup-vcpkg
+      # composite action because it hard-requires MODEL_S3_BUCKET for
+      # the prebuilds-shared S3 binary cache — a secret we don't
+      # plumb into the bench workflow. Set VCPKG_ROOT to the runner's
+      # pre-installed vcpkg and leave VCPKG_BINARY_SOURCES at the
+      # default (per-runner disk cache), which is fine for a one-off
+      # bench build.
+      - name: Configure vcpkg (addon from source)
+        if: inputs.addon_from_source && matrix.source == 'addon' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          echo "VCPKG_BUILD_TYPE=release" >> "$GITHUB_ENV"
+          echo "VCPKG_CMAKE_CONFIGURE_OPTIONS=--no-parallel-configure" >> "$GITHUB_ENV"
 
       - name: Build addon from source
-        if: inputs.addon_from_source
+        if: inputs.addon_from_source && matrix.source == 'addon'
         shell: bash
         working-directory: packages/llm-llamacpp
+        env:
+          # vcpkg needs to clone the private qvac-registry-vcpkg repo
+          # at configure time. Workflow-level token is enough for read.
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: |
           npm install --no-audit --no-fund
           bare-make generate
@@ -264,13 +283,13 @@ jobs:
           bare-make install
 
       - name: Install benchmark deps (addon from source)
-        if: inputs.addon_from_source
+        if: inputs.addon_from_source && matrix.source == 'addon'
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund --install-links ../../
 
       - name: Install benchmark deps (addon from npm)
-        if: ${{ !inputs.addon_from_source }}
+        if: ${{ !(inputs.addon_from_source && matrix.source == 'addon') }}
         shell: bash
         working-directory: ${{ env.WORKDIR }}
         run: npm install --no-audit --no-fund
