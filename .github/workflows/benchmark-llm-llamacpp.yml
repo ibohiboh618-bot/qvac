@@ -277,7 +277,11 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxi-dev libxtst-dev libxrandr-dev xz-utils
+          # libvulkan-dev pulls libvulkan.so + libvulkan1 from the
+          # distro — the LunarG SDK 1.4.x no longer bundles the loader
+          # (Bring-Your-Own-Loader), so cmake's FindVulkan can't see
+          # Vulkan_LIBRARY without it.
+          sudo apt-get install -y libxi-dev libxtst-dev libxrandr-dev xz-utils libvulkan-dev
           wget -q -O /tmp/vulkansdk.tar.xz https://sdk.lunarg.com/sdk/download/latest/linux/vulkan_sdk.tar.xz
           mkdir -p "$HOME/vulkan"
           tar -xf /tmp/vulkansdk.tar.xz -C "$HOME/vulkan" --strip-components=1
