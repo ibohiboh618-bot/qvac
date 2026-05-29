@@ -74,7 +74,7 @@ jobs:
 
 
       - name: Setup vcpkg
-        uses: tetherto/qvac/.github/actions/setup-vcpkg@6e8d3c306a462a58589396cda428d65e015f0d8b
+        uses: tetherto/qvac/.github/actions/setup-vcpkg@48cef88c20686d19997999db016bfdd134864640
         env:
           MODEL_S3_BUCKET: ${{ secrets.MODEL_S3_BUCKET }}
         with:
