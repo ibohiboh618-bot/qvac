@@ -9,3 +9,12 @@ _ggml_*
 _gguf_*
 *common_*
 *json_schema_to_grammar*
+*llama_*
+*llava_*
+*mtmd_*
+*gguf_*
+*ggml_*
+*string_*
+*set_process_priority*
+*postprocess_cpu_params*
+*metadata_handle_deleter*
