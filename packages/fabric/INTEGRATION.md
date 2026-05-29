@@ -21,8 +21,10 @@ runtime:
   - `qvac-fabric::qvac-fabric-static` — static llama/ggml linking (mobile builds
     only, when `prebuilds/share/llama/` exists)
 - **Prebuilt `.bare` shared library** (`prebuilds/<platform>/qvac__fabric.bare`)
-  — exports the `llama_* / LLAMA_* / ggml_* / gguf_* / mtmd_*` C API and the
-  `common_*` / `json_schema_to_grammar` C++ symbols; desktop consumers
+  — exports the `llama_* / LLAMA_* / ggml_* / gguf_* / mtmd_*` C API plus their
+  C++-linkage variants (the qvac-fabric fork adds C++ extensions such as
+  `llama_model_meta_from_file`), and the `common_*` / `string_*` /
+  `json_schema_to_grammar` / cpu-params libcommon helpers; desktop consumers
   dynamically link against this
 - **ggml compute backends** — shipped where ggml builds them as shared libraries
   (e.g. Android), under `prebuilds/<platform>/qvac__fabric/`

@@ -20,13 +20,33 @@
     ggml_*;
     gguf_*;
 
-    # libcommon helpers used by consumers (e.g. common_tokenize,
-    # common_sampler_*, common_chat_*, json_schema_to_grammar). These have C++
-    # linkage, so match against demangled names. Patterns must stay unquoted:
-    # quoting would turn them into literal (non-wildcard) symbol names.
+    # C++-linkage symbols consumed by the addons. Matched against *demangled*
+    # names, so the patterns are the source-level names (no _Z mangling).
+    # Patterns must stay unquoted: quoting would turn them into literal
+    # (non-wildcard) symbol names.
+    #
+    #  - common_* / json_schema_to_grammar: libcommon helpers (common_tokenize,
+    #    common_sampler_*, common_chat_*, ...).
+    #  - llama_* / llava_* / mtmd_*: the qvac-fabric fork adds C++-linkage
+    #    extensions alongside the stock C API (e.g. llama_model_meta_from_file,
+    #    which takes a std::unique_ptr). The C patterns above only cover the
+    #    extern "C" entry points, so these must be listed here as well.
+    #  - gguf_*: same rationale for the gguf helpers.
     extern "C++" {
       common_*;
       json_schema_to_grammar*;
+      llama_*;
+      llava_*;
+      mtmd_*;
+      gguf_*;
+      ggml_*;
+      # Free helpers declared in common.h / qvac-fabric extensions that do not
+      # share the common_ prefix (e.g. string_format, the cpu_params helpers and
+      # the llama_metadata_handle deleter).
+      string_*;
+      set_process_priority*;
+      postprocess_cpu_params*;
+      metadata_handle_deleter*;
     };
 
   local:
