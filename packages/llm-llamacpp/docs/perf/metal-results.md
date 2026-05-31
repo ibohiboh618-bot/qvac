@@ -461,26 +461,60 @@ overhead** (±0.3% TPS).
 
 ### 2.5 Files Changed
 
+Core A2 implementation:
+
 - `packages/llm-llamacpp/CMakeLists.txt` — add VisionPrefixCache.cpp to build
-- `packages/llm-llamacpp/addon/src/model-interface/LlamaModel.cpp` — config
-  parsing (`vision_cache`, `vision_cache_budget_mb`), telemetry in runtimeStats
-- `packages/llm-llamacpp/addon/src/model-interface/LlmContext.hpp` — virtual
-  `visionCacheStats()` and `onMemoryWarning()` base class methods
+- `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.cpp` — LRU cache
+  with byte-based budget eviction, self-contained SHA-256
+- `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.hpp` — cache API,
+  `VisionCacheStats` struct, `makeVisionCacheKeyPrefix()`
 - `packages/llm-llamacpp/addon/src/model-interface/MtmdLlmContext.cpp` — cache
   lookup/store in image chunk eval, context overflow guard (A3), SHA-256
   tagging of bitmaps in `loadMedia()`
 - `packages/llm-llamacpp/addon/src/model-interface/MtmdLlmContext.hpp` — cache
   member, `visionCacheStats()` override, `onMemoryWarning()` override
-- `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.cpp` — LRU cache
-  with byte-based budget eviction, self-contained SHA-256
-- `packages/llm-llamacpp/addon/src/utils/VisionPrefixCache.hpp` — cache API,
-  `VisionCacheStats` struct, `makeVisionCacheKeyPrefix()`
-- `packages/llm-llamacpp/addon/src/js-interface/binding.cpp` — `onMemoryWarning`
-  JS binding, `distinctImages` telemetry field
+- `packages/llm-llamacpp/addon/src/model-interface/LlamaModel.cpp` — config
+  parsing (`vision_cache`, `vision_cache_budget_mb`), telemetry in `runtimeStats()`
+- `packages/llm-llamacpp/addon/src/model-interface/LlamaModel.hpp` —
+  `onMemoryWarning()` forwarder + `visionCacheBudgetBytes` plumbing
+- `packages/llm-llamacpp/addon/src/model-interface/LlmContext.hpp` — virtual
+  `visionCacheStats()` and `onMemoryWarning()` base class methods
+
+JS API + binding:
+
+- `packages/llm-llamacpp/addon/src/addon/AddonJs.hpp` — `onMemoryWarning` JS
+  binding function (invokes `LlamaModel::onMemoryWarning()`)
+- `packages/llm-llamacpp/addon/src/js-interface/binding.cpp` — registers the
+  `onMemoryWarning` binding and the `distinctImages` telemetry field
+- `packages/llm-llamacpp/index.d.ts` — `vision_cache` / `vision_cache_budget_mb`
+  config + the five `visionCache*` runtime-stats fields + `onMemoryWarning()` types
+- `packages/llm-llamacpp/index.js` — `onMemoryWarning()` method forwarding to the
+  addon binding
+
+Tests:
+
+- `packages/llm-llamacpp/test/unit/CMakeLists.txt` — build the cache unit test
+- `packages/llm-llamacpp/test/unit/test_vision_prefix_cache.cpp` — GoogleTest
+  suite for the LRU cache + SHA-256
+
+> The same PR also carries the cross-platform perf-reporting and integration /
+> mobile test harness used for the §2.3.4 numbers (e.g. `scripts/perf-report/utils.js`,
+> `packages/llm-llamacpp/test/integration/_vision-cache-common.js` + the
+> `vision-cache-*` tests, `test/mobile` group wiring, the README options table, and
+> the CI workflow) — outside the core A2 implementation listed above.
 
 ---
 
-## 3. Production Summary — Fiber vs U1
+## 3. Production Summary
+
+Two optimizations are covered in this document; their production-relevant impact:
+
+- **U1 — deepstack preallocation** (§3.1): an algorithmic-correctness fix with **no
+  measurable performance effect** at the current deepstack layer count.
+- **A2 — vision prefix cache** (§3.2): the headline win — **zero miss-path overhead**
+  plus **22–99% TTFT reduction** on a repeated image, largest on CPU / mobile.
+
+### 3.1 U1 — Deepstack Preallocation (Fiber vs U1)
 
 Interleaved A/B comparison of the fiber fork baseline vs the U1 deepstack
 preallocation optimization. Qwen3.5 models only (U1 does not modify Gemma4).
@@ -515,6 +549,28 @@ on either platform.
 effect on either Mac M4 or iPhone 16e. The O(N^2) reallocation overhead is
 negligible at the current deepstack layer count on both platforms. The
 optimization is still the correct implementation for algorithmic correctness.
+
+### 3.2 A2 — Vision Prefix Cache (base vs feat)
+
+The post-projection vision prefix cache (§2) is the production-relevant win: on a
+repeated image it skips the entire CLIP vision encode + projection MLP.
+
+- **Miss path (no repeat) — zero overhead.** Local Mac M4 A/B (§2.3.1): all TPS
+  within ±0.3%, TTFT within ±1.7% vs base. CI shows no systematic regression on any
+  platform (§2.3.4).
+- **Hit path — 22–99% TTFT reduction**, scaling with how much the CLIP encode
+  dominates TTFT:
+  - Local Mac M4 (§2.3.2): 22–50% (E2B models ~48–50%; larger models less, because
+    LLM prefill dilutes the relative saving).
+  - CI cross-platform (§2.3.4): 25–44% on a dedicated GPU (Linux x64 / Windows
+    Vulkan); 46–99% on CPU / mobile where the encoder is slowest — e.g. Gemma 4 on
+    Android ~45 s → ~1.5 s, on Linux arm64 ~55.8 s → 0.74 s.
+- **Decode (TPS) unchanged** — the cache only skips the vision encode + projection.
+- **KV / prompt cache gives no benefit on the multimodal path** (the image is still
+  re-encoded); the vision cache is the only cache that helps here.
+
+Unlike U1, A2 has a large, measurable production impact for the multi-turn / agent
+workloads that re-send the same image.
 
 ---
 
