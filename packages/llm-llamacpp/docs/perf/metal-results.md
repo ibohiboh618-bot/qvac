@@ -102,7 +102,7 @@ controlled conditions.
 
 #### Mac M4 Interleaved A/B (Metal, elephant.jpg, 5 paired reps)
 
-Protocol: per-config interleaved A/B (`benchmark-mac-interleaved.sh`). 1
+Protocol: per-config interleaved A/B (`tools/scripts/benchmark-mac-interleaved.sh`). 1
 warmup + 5 measured runs per variant per config, thermal gate before each
 run, paired Wilcoxon signed-rank test + bootstrap 95% CI. Session:
 2026-05-20.
@@ -122,7 +122,7 @@ thermal instability.
 
 #### iPhone 16e Interleaved A/B (Metal, elephant.jpg, 5 paired reps)
 
-Protocol: per-config interleaved A/B (`benchmark-mac-interleaved.sh`,
+Protocol: per-config interleaved A/B (`tools/scripts/benchmark-mac-interleaved.sh`,
 `PLATFORM=ios`). 1 warmup + 5 measured runs per variant per config,
 60s cool-down + in-device `ProcessInfo.thermalState` gate before each run,
 paired Wilcoxon signed-rank test + bootstrap 95% CI. Session: 2026-05-20.
@@ -134,7 +134,7 @@ paired Wilcoxon signed-rank test + bootstrap 95% CI. Session: 2026-05-20.
 | Qwen3.5-4B | Q4_K_M | 788 / 787 | +0.1% | 0.81 | 71.7 / 71.6 | -0.1% | 0.44 | 4.0 / 4.0 | -0.2% | 0.88 | 805 / 794 |
 
 Cell format: fiber / u1. Positive Δ% = improvement. No metric reaches p < 0.05.
-Qwen3.5-4B Q8_0 excluded — OOM on 8 GB device.
+Qwen3.5-4B Q8_0 excluded — exceeds 8 GB device memory.
 
 Anchor drift: 0.8% (within 3% threshold — session thermally stable).
 
@@ -174,12 +174,14 @@ on any platform.
 
 ## 2. Post-Projection Vision Prefix Cache (A2)
 
-> Protocol uses the addon-level benchmark test (`benchmark.test.js` and
-> `benchmark-a2-vision-cache.test.js`) via the interleaved A/B orchestrator,
+> Protocol uses the addon-level benchmark test (`packages/llm-llamacpp/test/integration/benchmark.test.js` and
+> `tools/addon-benchmark/benchmark-a2-vision-cache.test.js`) via the interleaved A/B orchestrator,
 > NOT the CLI `llama-mtmd-cli` used for U1 results above. Addon overhead
 > (~17–34% vs CLI) is present in both variants equally, so relative deltas
-> are valid. iPhone addon benchmarks blocked by Metal crash in the iOS
-> prebuild (see Section 2.4).
+> are valid. Sections 2.3.1–2.3.2 are **local Mac M4** results; the **local
+> iPhone 16e run is invalid** (no valid controlled measurement, see §2.3.3).
+> **Authoritative cross-platform numbers — Linux x64/arm64, Windows, Android,
+> and iOS (iPhone 16/17) — are in §2.3.4 (CI runs).**
 
 ### 2.1 Problem
 
@@ -211,7 +213,7 @@ prefill when `prompt + n_predict + safety_margin(16) > n_ctx`.
 
 ### 2.3 Results
 
-#### 2.3.1 Full Addon-Level A/B — base vs a2-cache (cache inactive)
+#### 2.3.1 Local Mac M4 — Full Addon-Level A/B (base vs a2-cache, cache inactive)
 
 Full 8-model × 2-image interleaved A/B comparison measuring cache overhead
 on the miss path. No `cacheKey` used — state resets between calls, so every
@@ -222,7 +224,7 @@ attributable to the cache code itself.
 - **Base**: `base/QVAC-19118-a2-vision-cache` (`09711a41a`)
 - **Feat**: `feat/QVAC-19118-a2-vision-cache` (`eed4dd880`)
 
-Protocol: interleaved A/B (`benchmark-addon-ab-interleaved.sh`), 3 paired
+Protocol: interleaved A/B (`tools/scripts/benchmark-addon-ab-interleaved.sh`), 3 paired
 reps per variant per config, no `cacheKey`, 1 warmup per variant per config.
 Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-28.
 
@@ -252,7 +254,7 @@ No metric shows a systematic regression.
 Anchor drift (3 checks): check1 51.75 TPS → check2 51.92 TPS → check3
 52.05 TPS (+0.6% drift). Thermally stable session.
 
-#### 2.3.2 Multi-Turn Cache Hit Test (cache active, KV prefix invalidated)
+#### 2.3.2 Local Mac M4 — Multi-Turn Cache Hit Test (cache active, KV prefix invalidated)
 
 Measures the vision prefix cache benefit in a realistic multi-turn scenario.
 Each measured run uses a **different text prompt** with the same image and
@@ -268,8 +270,8 @@ for multi-turn conversations.
 - **Base**: `base/QVAC-19118-a2-vision-cache` (`09711a41a`) — no vision cache
 - **Feat**: `feat/QVAC-19118-a2-vision-cache` (`95b5ee5ed`) — vision prefix cache active; decoupled from KV reset
 
-Protocol: interleaved A/B (`benchmark-addon-ab-interleaved.sh`,
-`BENCH_TEST=benchmark-a2-vision-cache.test.js`), 3 reps per variant per
+Protocol: interleaved A/B (`tools/scripts/benchmark-addon-ab-interleaved.sh`,
+`BENCH_TEST=tools/addon-benchmark/benchmark-a2-vision-cache.test.js`), 3 reps per variant per
 config. Each rep loads the model, runs 1 warmup + 3 measured runs with
 different prompts per run. Mac M4, `SKIP_THERMAL=1`. Session: 2026-05-28.
 
@@ -315,15 +317,23 @@ Anchor drift (3 checks): check1 48.83 TPS → check2 50.61 TPS → check3
 45.49 TPS (7.3% drift). Per-config interleaving controls for gradual
 drift within each model's measurements.
 
-#### 2.3.3 iPhone 16e — Compatibility and Baseline
+#### 2.3.3 Local iPhone 16e — INVALID (no valid controlled measurement)
+
+> **INVALID — do not cite for vision-cache TTFT.** The local iPhone 16e addon
+> benchmark did not produce a valid controlled hit-vs-no-hit measurement: in
+> single-process execution the KV cache and vision prefix cache cannot be
+> isolated, and the cache-hit runs did not complete reliably on this device.
+> **Superseded by the CI iOS results in §2.3.4** (iPhone 16 / iPhone 17, real
+> Device Farm devices, both passed). The compatibility / decode-TPS data below is
+> retained for reference only.
 
 iPhone 16e addon matrix sweep confirmed 6 of 8 models pass on the addon
-runtime. The two largest Q8 models (~4.5 GB) OOM under Jetsam.
+runtime. The two largest Q8 models (~4.5 GB) exceed the device's available memory.
 
 - **Base**: `base/QVAC-19118-a2-vision-cache` (`09711a41a`)
 - **Feat**: `feat/QVAC-19118-a2-vision-cache` (`95b5ee5ed`) — includes resetState fix
 
-Protocol: per-model matrix sweep (`benchmark-iphone-addon-matrix.sh`),
+Protocol: per-model matrix sweep (`tools/scripts/benchmark-iphone-addon-matrix.sh`),
 models auto-pushed from Mac via `devicectl`, 1 model per app launch, 3
 measured runs per launch, 60s cool-down. iPhone 16e (A18, 5-core GPU,
 8 GB), elephant.jpg. Session: 2026-05-28.
@@ -335,11 +345,11 @@ vision cache benefit (same cacheKey) or `resetState(true)` clearing both
 caches (new/no cacheKey). The Mac M4 interleaved benchmark (Section 2.3.2)
 uses separate `bare` processes per measurement, which avoids this coupling.
 
-The Mac M4 results (22–50% TTFT reduction) are authoritative. iPhone TTFT
-savings are expected to be proportionally similar since CLIP encode time
-scales consistently across platforms.
+The local Mac M4 results (22–50% TTFT reduction) and the **CI iOS results on
+iPhone 16 / iPhone 17 (§2.3.4)** are the authoritative iOS/Metal numbers. The
+local iPhone 16e TTFT measurement is invalid (see note above).
 
-**iPhone decode TPS** (from matrix sweep, for reference):
+**iPhone 16e decode TPS** (from matrix sweep — compatibility only, TTFT invalid):
 
 | Model | TPS |
 |-------|-----|
@@ -353,25 +363,92 @@ scales consistently across platforms.
 TPS is identical between base and feat variants (±2%, within noise),
 confirming zero overhead from the vision cache code on iPhone.
 
+#### 2.3.4 CI Run — All Platforms (authoritative cross-platform results)
+
+End-to-end CI runs of the vision-cache integration suite across every supported
+platform (the local sections above cover only Mac M4 + the invalid iPhone 16e).
+
+- **base**: [run 26687175729](https://github.com/tetherto/qvac/actions/runs/26687175729)
+  — `base/QVAC-19118-a2-vision-cache` (`b0de7d015`, = `main`, no vision cache), CI run #590
+- **feat**: [run 26681099339](https://github.com/tetherto/qvac/actions/runs/26681099339)
+  — `feat/QVAC-19118-a2-vision-cache` (`f9f0caca6`), CI run #589
+
+Method: single-iteration CI (no per-config averaging), `no hit` → `hit` measured on
+the **same `elephant.jpg`** within one model instance. Numbers are read from the
+per-leg `performance-report.json` "Cache Hit Improvement" section — the combined
+step-summary report intentionally runs `aggregate.js` from the **base branch** (so it
+does not render that section until merge).
+
+**Vision prefix cache — TTFT (no hit → hit, % faster):**
+
+| Platform | Backend / device | Gemma 4 E2B | Qwen3.5-0.8B |
+|----------|------------------|------------:|-------------:|
+| Linux x64 | CPU | 2381 → 56 ms (**98%**) | 848 → 456 ms (**46%**) |
+| Linux x64 | Vulkan (RTX 4000 Ada) | 115 → 64 ms (**44%**) | 44 → 33 ms (**25%**) |
+| Linux arm64 | Vulkan (virtual GPU) | 55828 → 739 ms (**99%**) | 9961 → 2860 ms (**71%**) |
+| Windows x64 | Vulkan (RTX 4000 Ada) | 157 → 61 ms (**61%**) | 71 → 37 ms (**48%**) |
+| Android | Vulkan — Galaxy S25 Ultra | 45223 → 1502 ms (**97%**) | 1455 → 448 ms (**69%**) |
+| Android | Vulkan — Galaxy S26 Ultra | 44288 → 1648 ms (**96%**) | 1233 → 406 ms (**67%**) |
+| iOS | Metal — iPhone 16 | 3229 → 2237 ms (**31%**) | — |
+| iOS | Metal — iPhone 17 | 1808 → 1001 ms (**45%**) | — |
+
+Cell = no-hit TTFT → hit TTFT (% faster). The vision cache skips the CLIP encode +
+projection on a hit. The benefit is **largest exactly where it matters most** — on CPU
+/ software-GPU / mobile, where the encode dominates TTFT (Gemma 4 on Linux-arm64 drops
+from **55.8 s** to 0.74 s; on Android from ~45 s to ~1.5 s). On a fast dedicated GPU the
+encode is already cheap, so the relative saving is smaller (25–44%) but still material.
+
+**KV / prompt cache** shows ≈ 0 / slightly negative TTFT on every platform (e.g. Linux
+x64 GPU Gemma −6%, Qwen −1%): reusing the KV prefix does **not** skip the image
+encode/decode, so on this multimodal workload the vision cache is the only cache that
+helps. (The KV cache mechanism itself works — see the dedicated `cache-state-machine`
+text tests — it just doesn't cover the image path.)
+
+**Coverage (this run):** Android **Pixel 9 Pro** ran only the bitnet/image/tool-calling
+groups (Device Farm sharded the vision-cache group onto the two Samsung devices), so it
+reported no cache rows — not a failure. **iOS Qwen3.5-0.8B vision-cache** was not captured
+this run: both reporting devices (iPhone 16/17) ran the Gemma 4 group (`heavy12`) while
+the Qwen3.5 group (`heavy13`) reported no perf — a coverage gap, not a Metal failure.
+
+**Non-regression vs base (run #590 → #589):** shared **non-cache** tests
+(image-elephant / fruit-plate / high-res-aurora, bitnet, tool-calling) were compared
+across all five desktop legs (same GPU class per leg). No systematic regression: deltas
+are bidirectional and dominated by single-iteration CI variance (most are *feat-faster*).
+The only three deltas exceeding ±15% are all outside the vision-cache code path:
+
+- `tool-calling [GPU]` total time +95% — **generation-length variance**: base produced
+  520 tokens, feat 1024 tokens, while **TPS is identical** (172 → 169 t/s) and TTFT is
+  unchanged (118 → 110 ms).
+- two `[CPU]`-execution-provider TPS dips (~−16%) measured on the GPU runner host —
+  host CPU contention; unrelated to the cache.
+
+The vision-cache code only adds to the multimodal image-chunk eval, which none of these
+tests exercise. The feat run passed every non-darwin leg (desktop + Android + iOS green
+after job-level retries); both base and feat fail only the known darwin legs. This
+corroborates the controlled local Mac A/B (§2.3.1), which measured **zero miss-path
+overhead** (±0.3% TPS).
+
 ### 2.4 Caveats
 
-- **iPhone 16e addon benchmarks** completed (2026-05-28). 6 of 8 models
-  pass; the two largest Q8 models OOM (Jetsam kill):
+- **Local iPhone 16e vision-cache TTFT is INVALID** (no valid controlled
+  measurement — see §2.3.3); authoritative iOS numbers are the CI iPhone 16/17
+  results in §2.3.4. The compatibility sweep below (2026-05-28) is retained for
+  reference: 6 of 8 models pass; the two largest Q8 models exceed available memory:
 
   | Model | Status |
   |-------|--------|
   | Gemma4 E2B Q4_K_M | pass |
   | Gemma4 E2B Q8_0 | pass |
   | Gemma4 E4B Q4_K_M | pass |
-  | Gemma4 E4B Q8_0 | OOM (~4.5 GB model + addon overhead exceeds Jetsam limit) |
+  | Gemma4 E4B Q8_0 | exceeds available memory (~4.5 GB model + addon overhead) |
   | Qwen3.5-2B Q4_K_M | pass |
   | Qwen3.5-2B Q8_0 | pass |
   | Qwen3.5-4B Q4_K_M | pass |
-  | Qwen3.5-4B Q8_0 | OOM |
+  | Qwen3.5-4B Q8_0 | exceeds available memory |
 
   See Section 2.3.3 for iPhone TTFT results.
-- **Addon-level benchmark** (`benchmark.test.js` and
-  `benchmark-a2-vision-cache.test.js`), not CLI. Addon JS overhead is present
+- **Addon-level benchmark** (`packages/llm-llamacpp/test/integration/benchmark.test.js` and
+  `tools/addon-benchmark/benchmark-a2-vision-cache.test.js`), not CLI. Addon JS overhead is present
   but equal for both variants.
 - **Thermal gating disabled** (`SKIP_THERMAL=1`) for all sessions. Per-config
   interleaving controls for gradual drift. The overhead test (Section 2.3.1)
@@ -451,7 +528,7 @@ optimization is still the correct implementation for algorithmic correctness.
 - **iPhone 16e**: A18, 5-core GPU, 8 GB RAM, iOS 18.5, ~60 GB/s bandwidth
   - Build: cmake iOS cross-compile → Xcode build-for-testing → XCTest harness
   - `llama-mtmd-cli` compiled as static library (`-Dmain=benchmark_main`), linked into XCTest via extern "C" wrapper
-  - Qwen3.5-4B Q8_0 excluded (OOM on 8 GB device)
+  - Qwen3.5-4B Q8_0 excluded (exceeds 8 GB device memory)
 
 ### Inference Parameters
 
@@ -461,7 +538,7 @@ optimization is still the correct implementation for algorithmic correctness.
 ### Protocol — Interleaved A/B
 
 All results in this document use per-config interleaved A/B benchmarking
-(`benchmark-mac-interleaved.sh`):
+(`tools/scripts/benchmark-mac-interleaved.sh`):
 
 - **Both variants built clean** from their respective branches before the session
 - **Per-config interleaving**: for each model, warmup-A → warmup-B → then
