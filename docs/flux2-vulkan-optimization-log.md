@@ -192,6 +192,146 @@ Logs: `flux2_strix_sampling_<name>.log`, sysfs: `flux2_strix_sampling_<name>_sys
 
 ---
 
+## Strix Vulkan perf logger diagnostic
+
+Recorded on `qvac-dev-strix-1`, commit `7d2c1ed2`. Harness: `bare logs/generate-image-verbosity2.js` with `GGML_VK_PERF_LOGGER=1`. Artifacts: `packages/diffusion-cpp/logs/flux2_strix_perf_logger.log`, `flux2_strix_perf_logger_sysfs.csv`, `flux2_strix_perf_logger_summary.txt` (gitignored).
+
+### Perf logger env (from pinned `ggml-vulkan.cpp`)
+
+| Variable | Behavior |
+|----------|----------|
+| `GGML_VK_PERF_LOGGER` | If set, enables `vk_perf_logger`; prints `Vulkan Timings:` to **stderr** per graph batch with op name, count, avg µs, total µs (optional GFLOPS for matmul). Clears after each print. |
+| `GGML_VK_PERF_LOGGER_FREQUENCY` | Optional unsigned int (default **1**). Skips printing unless `print_count % frequency == 0` **or** `print_timings(true)` at graph end (forced flush). |
+| `GGML_VK_PERF_LOGGER_CONCURRENT` | If set, uses alternate per-node fusion tracking (default off). |
+
+**Used:** `GGML_VK_PERF_LOGGER=1` and `GGML_VK_PERF_LOGGER_FREQUENCY=20` to reduce mid-run stderr spam while still forcing a full dump at graph completion (`print_timings(true)` at `ggml_vulkan.cpp` ~12857).
+
+### Benchmark timings (exit 0)
+
+| Metric | Value |
+|--------|-------|
+| Loaded in | 2.1 s |
+| Text encoder | 563 ms |
+| Sampling | 38.11 s |
+| VAE decode | 0.64 s |
+| `generate_image` | 39.31 s |
+| Generated in | 39.4 s |
+| GPU busy max / avg | 100% / 90.5% |
+| Max VRAM / GTT | 2037 MiB / 8150 MiB |
+| Perf logger batch `Total time` sum | 38.739 s (matches sampling wall time) |
+
+Three timing dumps: two during diffusion (~17.4 s + ~18.9 s op totals) and one small VAE decode batch (~2.5 s).
+
+### Top hot ops (two diffusion timing dumps combined, ~36.3 s op time)
+
+| Rank | Total | Op |
+|------|-------|-----|
+| 1 | 14.08 s | `MUL_MAT q8_0 m=27648 n=1536 k=3072` (FLUX joint-attn projection) |
+| 2 | 5.72 s | `MUL_MAT q8_0 m=3072 n=1536 k=12288` |
+| 3 | 3.07 s | `CONT` |
+| 4 | 2.17 s | `FLASH_ATTN_EXT dst(128,24,1536,1) q/k/v(128,1536,24,1)` (24-head joint FA) |
+| 5 | 1.90 s | `MUL` (elementwise) |
+| 6 | 1.70 s | `MUL_MAT q8_0 m=18432 n=1024 k=3072` |
+| 7 | 0.84 s | `ADD` |
+
+Tensor shapes match FLUX.2 klein: **24 heads**, **1536** context/latent tokens, **3072** hidden, Q8_0 diffusion weights.
+
+### Grouped op families (diffusion batches only)
+
+| Family | Time | Share |
+|--------|------|-------|
+| **matmul** (`MUL_MAT*`) | 25.60 s | **70.6%** |
+| copy / layout (`CONT`, `CONCAT`, `REPEAT`) | 4.40 s | 12.1% |
+| elementwise (`MUL`, `ADD`, `SILU`, …) | 3.96 s | 10.9% |
+| **flash attention** | 2.17 s | **6.0%** |
+| norm (`RMS_NORM_MUL`, …) | 0.14 s | 0.4% |
+
+### Conclusion
+
+- Hot path is **Q8_0 Vulkan matmul**, not flash-attention kernel time alone (~6% of logged GPU op time vs ~71% matmul).
+- Largest single kernels are **`MUL_MAT q8_0 m=27648 n=1536 k=3072`** and **`m=18432 n=1024 k=3072`** — consistent with FLUX MLP + joint-attention linear layers on GFX1151 + KHR_coopmat.
+- `FLASH_ATTN_EXT` is active and identifiable (joint 24-head, 1536 seq); tuning FA alone is unlikely to reach the ~2× goal without matmul wins.
+- High `CONT`/`CONCAT`/`REPEAT` share suggests memory layout / graph overhead is a secondary target after matmul.
+
+### Recommended first code-level candidate
+
+**Primary:** Q8_0 cooperative-matrix matmul paths in pinned `ggml-vulkan.cpp` (`ggml_vk_mul_mat_*`, AMD warptile block ~3029–3034) for shapes **`m=27648,n=1536,k=3072`** and **`m=18432,n=1024,k=3072`**. **Risk: medium-high** (global matmul impact; must validate on RADV + other vendors).
+
+**Secondary:** `ggml_vk_flash_attn()` (~8408–8664) for `dst(128,24,1536,1)` coopmat vs scalar path. **Risk: medium** (~6% of current op time; coopmat disable previously caused ~2.3× regression).
+
+**Risks:** Perf logger uses GPU timestamps per submit batch; overlapping work and periodic printing with `FREQUENCY=20` mean per-op sums approximate batch totals but omit non-instrumented phases.
+
+---
+
+## RTX5090 Vulkan baseline
+
+Recorded on `qvac-dev-linux-x64`, commit `7d2c1ed2`. Reference baseline only — **no optimization patch applied** (stock ggml from vcpkg pin `2026-01-30#8`). Artifacts: `packages/diffusion-cpp/logs/flux2_rtx5090_baseline_1.{log,nvidia_dmon.log,summary.txt}` (gitignored).
+
+### Environment
+
+| Field | Value |
+|-------|-------|
+| Machine | qvac-dev-linux-x64 |
+| GPU | NVIDIA GeForce RTX 5090 (×2 present) |
+| Backend | Vulkan (`NV_coopmat2`, `uma: 0`) |
+| Device used | **GPU0 / Vulkan0 only** — GPU1 listed but not used |
+| Git commit | `7d2c1ed2` |
+| `VCPKG_ROOT` | `/home/dev/vcpkg` |
+| ggml pin | `2026-01-30#8` (stock; no AMD UMA MMQ patch) |
+
+### Model / run config
+
+Same as Strix verbosity profiling:
+
+| Field | Value |
+|-------|-------|
+| Diffusion | `flux-2-klein-4b-Q8_0.gguf` |
+| Text encoder | `Qwen3-4B-Q4_K_M.gguf` |
+| VAE | `flux2-vae.safetensors` |
+| Config | `threads=4`, `diffusion_fa=true`, `verbosity=2` |
+| Prompt | a majestic red fox standing in a snowy forest at dusk, soft golden light through the pine trees, photorealistic, 8k, detailed fur |
+| Seed | 42 |
+| Resolution | 512×512 |
+| Steps | 20 |
+| Guidance | 3.5 |
+
+### Timings (exit 0)
+
+| Stage | Upstream log | Time |
+|-------|----------------|------|
+| Model load (JS) | `Loaded in` | 2.2 s |
+| Text encoder | `get_learned_condition completed, taking 3947 ms` | 3.95 s |
+| Diffusion sampling | `sampling completed, taking 5.16s` | **5.16 s** |
+| VAE decode | `decode_first_stage completed, taking 0.34s` | 0.34 s |
+| Upstream total | `generate_image completed in 9.45s` | 9.45 s |
+| JS generation | `Generated in` | 9.5 s |
+| Max VRAM | nvidia-smi dmon | 8317 MiB |
+| GPU SM max / avg | nvidia-smi dmon (active samples) | 97% / 17.6% |
+
+Vulkan device: `ggml_vulkan: 0 = NVIDIA GeForce RTX 5090 (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 | matrix cores: NV_coopmat2`.
+
+### Comparison vs Strix
+
+| Stage | Strix stock | Strix patched (AMD UMA MMQ) | RTX5090 stock |
+|-------|-------------|-----------------------------|---------------|
+| Sampling | 38.23 s | 25.47 s (−33%) | **5.16 s** |
+| `generate_image` | 39.42 s | — | 9.45 s |
+| Generated in (JS) | 39.5 s | — | 9.5 s |
+| Text encoder | 0.56 s | — | 3.95 s |
+| VAE decode | 0.62 s | — | 0.34 s |
+
+- RTX5090 stock sampling is **~7.4× faster** than Strix stock (5.16 s vs 38.23 s).
+- RTX5090 stock sampling is **~4.9× faster** than Strix patched (5.16 s vs 25.47 s).
+- Strix remains the optimization target (UMA / bandwidth-bound); RTX5090 confirms fast dGPU Vulkan is not the bottleneck class.
+
+### Conclusion
+
+- Reference baseline for cross-hardware context — **not** a proposed optimization.
+- Only GPU0 was used despite two RTX 5090 devices being visible; multi-GPU scaling was not tested.
+- Text encoding is slower on RTX5090 in this run (~3.95 s vs ~0.56 s on Strix); diffusion sampling dominates total time on both platforms but is far shorter on dGPU.
+
+---
+
 ## Reference (from repo inspection)
 
 ### Primary package
