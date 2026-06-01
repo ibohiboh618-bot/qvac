@@ -1,0 +1,50 @@
+name: Link local @qvac/fabric
+description: >-
+  Install @qvac/fabric from packages/fabric when the consumer depends on it
+  but the package is not yet published to npm. No-op when the dependency is
+  absent or packages/fabric is not present in the checkout.
+
+inputs:
+  workdir:
+    description: Package directory that may depend on @qvac/fabric
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Link local @qvac/fabric when available
+      shell: bash
+      working-directory: ${{ inputs.workdir }}
+      run: |
+        set -euo pipefail
+
+        fabric_dep="$(
+          jq -r '(.dependencies["@qvac/fabric"] // .devDependencies["@qvac/fabric"] // empty)' package.json
+        )"
+        if [ -z "${fabric_dep}" ] || [ "${fabric_dep}" = "null" ]; then
+          echo "No @qvac/fabric dependency in package.json; skipping"
+          exit 0
+        fi
+
+        repo_root="${GITHUB_WORKSPACE:-}"
+        if [ -z "${repo_root}" ]; then
+          repo_root="$(git rev-parse --show-toplevel)"
+        fi
+
+        fabric_dir=""
+        for candidate in \
+          "${repo_root}/packages/fabric" \
+          "${repo_root}/addon/packages/fabric"; do
+          if [ -f "${candidate}/package.json" ]; then
+            fabric_dir="${candidate}"
+            break
+          fi
+        done
+
+        if [ -z "${fabric_dir}" ]; then
+          echo "Local packages/fabric not found; @qvac/fabric must come from npm registry"
+          exit 0
+        fi
+
+        echo "Installing @qvac/fabric from local monorepo package at ${fabric_dir}"
+        npm install --no-save --install-links "@qvac/fabric@file:${fabric_dir}"

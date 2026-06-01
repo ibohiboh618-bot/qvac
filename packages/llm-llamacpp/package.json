@@ -73,7 +73,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@qvac/fabric": "^0.1.0",
+    "@qvac/fabric": "file:../fabric",
     "@qvac/infer-base": "^0.4.0",
     "@qvac/logging": "^0.1.0",
     "bare-fs": "^4.5.1",
@@ -82,7 +82,6 @@
   "engines": {
     "bare": ">=1.24.0"
   },
-  "peerDependencies": {},
   "exports": {
     "./package": "./package.json",
     ".": {

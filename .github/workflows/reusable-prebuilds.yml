@@ -249,6 +249,11 @@ jobs:
         run: |
           brew install --quiet $BREW_PACKAGES
 
+      - name: Link local @qvac/fabric
+        uses: ./.github/actions/link-local-qvac-fabric
+        with:
+          workdir: ${{ env.WORKDIR }}
+
       - name: Install npm dependencies
         working-directory: ${{ env.WORKDIR }}
         shell: bash

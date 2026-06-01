@@ -90,6 +90,11 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           token: ${{ secrets.PAT_TOKEN }}
 
+      - name: Link local @qvac/fabric
+        uses: ./.github/actions/link-local-qvac-fabric
+        with:
+          workdir: ${{ env.WORKDIR }}
+
       - name: Install NPM dependencies
         working-directory: ${{ env.WORKDIR }}
         shell: bash

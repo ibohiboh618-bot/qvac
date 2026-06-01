@@ -88,6 +88,11 @@ jobs:
         with:
           package: embed-llamacpp
 
+      - name: Link local @qvac/fabric
+        uses: ./.github/actions/link-local-qvac-fabric
+        with:
+          workdir: ${{ env.WORKDIR }}
+
       - name: Install NPM dependencies
         working-directory: ${{ env.WORKDIR }}
         run: |

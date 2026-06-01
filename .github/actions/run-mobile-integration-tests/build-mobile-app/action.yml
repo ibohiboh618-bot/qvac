@@ -119,6 +119,26 @@ runs:
       working-directory: addon/${{ inputs.addon-workdir }}
       run: |
         echo "Installing addon dependencies..."
+
+        fabric_dep="$(
+          jq -r '(.dependencies["@qvac/fabric"] // .devDependencies["@qvac/fabric"] // empty)' package.json
+        )"
+        if [ -n "${fabric_dep}" ] && [ "${fabric_dep}" != "null" ]; then
+          fabric_dir=""
+          for candidate in \
+            "${GITHUB_WORKSPACE}/packages/fabric" \
+            "${GITHUB_WORKSPACE}/addon/packages/fabric"; do
+            if [ -f "${candidate}/package.json" ]; then
+              fabric_dir="${candidate}"
+              break
+            fi
+          done
+          if [ -n "${fabric_dir}" ]; then
+            echo "Installing @qvac/fabric from local monorepo package at ${fabric_dir}"
+            npm install --no-save --install-links "@qvac/fabric@file:${fabric_dir}"
+          fi
+        fi
+
         npm install
 
     - name: Pack addon
