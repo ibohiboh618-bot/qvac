@@ -53,26 +53,31 @@ runs:
           exit 0
         fi
 
+        cmake_config="${fabric_dir}/prebuilds/share/qvac-fabric/cmake/qvac-fabricConfig.cmake"
+        if [ "${{ inputs.build-if-missing }}" = "true" ]; then
+          if [ -f "${cmake_config}" ]; then
+            echo "Local @qvac/fabric prebuilds already present"
+          else
+            echo "Local @qvac/fabric prebuilds missing; building from source..."
+            export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache,readwrite"
+            mkdir -p "${fabric_dir}/vcpkg/cache"
+            npm install --ignore-scripts --prefix "${fabric_dir}"
+            (
+              cd "${fabric_dir}"
+              bare-make generate
+              bare-make build
+              bare-make install
+            )
+          fi
+        fi
+
         echo "Installing @qvac/fabric from local monorepo package at ${fabric_dir}"
         npm install --no-save --install-links "@qvac/fabric@file:${fabric_dir}"
 
-        if [ "${{ inputs.build-if-missing }}" != "true" ]; then
-          exit 0
+        if [ "${{ inputs.build-if-missing }}" = "true" ]; then
+          installed_config="node_modules/@qvac/fabric/prebuilds/share/qvac-fabric/cmake/qvac-fabricConfig.cmake"
+          if [ ! -f "${installed_config}" ]; then
+            echo "Local @qvac/fabric install did not include ${installed_config}"
+            exit 1
+          fi
         fi
-
-        cmake_config="${fabric_dir}/prebuilds/share/qvac-fabric/cmake/qvac-fabricConfig.cmake"
-        if [ -f "${cmake_config}" ]; then
-          echo "Local @qvac/fabric prebuilds already present"
-          exit 0
-        fi
-
-        echo "Local @qvac/fabric prebuilds missing; building from source..."
-        export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache,readwrite"
-        mkdir -p "${fabric_dir}/vcpkg/cache"
-        npm install --ignore-scripts --prefix "${fabric_dir}"
-        (
-          cd "${fabric_dir}"
-          bare-make generate
-          bare-make build
-          bare-make install
-        )
