@@ -26,7 +26,7 @@ runs:
         set -euo pipefail
 
         fabric_dep="$(
-          jq -r '(.dependencies["@qvac/fabric"] // .devDependencies["@qvac/fabric"] // empty)' package.json
+          node -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); console.log((pkg.dependencies && pkg.dependencies["@qvac/fabric"]) || (pkg.devDependencies && pkg.devDependencies["@qvac/fabric"]) || "")'
         )"
         if [ -z "${fabric_dep}" ] || [ "${fabric_dep}" = "null" ]; then
           echo "No @qvac/fabric dependency in package.json; skipping"
