@@ -1,13 +1,20 @@
 name: Link local @qvac/fabric
 description: >-
   Install @qvac/fabric from packages/fabric when the consumer depends on it
-  but the package is not yet published to npm. No-op when the dependency is
-  absent or packages/fabric is not present in the checkout.
+  but the package is not yet published to npm. Optionally build fabric
+  prebuilds from source when the cmake package is missing. No-op when the
+  dependency is absent or packages/fabric is not present in the checkout.
 
 inputs:
   workdir:
     description: Package directory that may depend on @qvac/fabric
     required: true
+  build-if-missing:
+    description: >-
+      Build packages/fabric from source when prebuilds/share/qvac-fabric/cmake
+      is absent. Requires bare-make and vcpkg to be available on the runner.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -48,3 +55,24 @@ runs:
 
         echo "Installing @qvac/fabric from local monorepo package at ${fabric_dir}"
         npm install --no-save --install-links "@qvac/fabric@file:${fabric_dir}"
+
+        if [ "${{ inputs.build-if-missing }}" != "true" ]; then
+          exit 0
+        fi
+
+        cmake_config="${fabric_dir}/prebuilds/share/qvac-fabric/cmake/qvac-fabricConfig.cmake"
+        if [ -f "${cmake_config}" ]; then
+          echo "Local @qvac/fabric prebuilds already present"
+          exit 0
+        fi
+
+        echo "Local @qvac/fabric prebuilds missing; building from source..."
+        export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache,readwrite"
+        mkdir -p "${fabric_dir}/vcpkg/cache"
+        npm install --ignore-scripts --prefix "${fabric_dir}"
+        (
+          cd "${fabric_dir}"
+          bare-make generate
+          bare-make build
+          bare-make install
+        )
