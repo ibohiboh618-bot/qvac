@@ -101,6 +101,21 @@ if(UNIX AND NOT APPLE)
 elseif(APPLE)
   target_link_options(${qvac-fabric}_module PRIVATE
     -Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt)
+elseif(WIN32)
+  # Consumers link against the import library for qvac__fabric.bare, so the
+  # Windows module must export the llama/ggml/common symbols pulled in from the
+  # whole-archive static libs above. This mirrors the wildcard export behavior
+  # provided by symbols.map / exports.txt on ELF and Mach-O.
+  #
+  # cmake-bare already enables WINDOWS_EXPORT_ALL_SYMBOLS, but CMake's generated
+  # export list only covers symbols visible from this target's own objects. The
+  # llama/common/ggml runtime surface comes from whole-archive static libraries,
+  # so ask lld-link to export every live COFF symbol as well.
+  set_target_properties(${qvac-fabric}_module PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  target_link_options(${qvac-fabric}_module PRIVATE
+    -lldmingw
+    -export-all-symbols)
 endif()
 
 # Strip the .bare module (keep dynamic symbols required for export).
