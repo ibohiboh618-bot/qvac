@@ -261,6 +261,7 @@ jobs:
         uses: ./.github/actions/link-local-qvac-fabric
         with:
           workdir: ${{ env.WORKDIR }}
+          build-if-missing: "true"
 
       - name: Build addon from source (monorepo workdir)
         if: inputs.addon_version == ''
