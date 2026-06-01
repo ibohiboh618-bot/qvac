@@ -1,131 +1,141 @@
 name: Integration Tests (OCR)
 
 on:
-  workflow_dispatch:
-    inputs:
-      prebuild_package:
-        description: "NPM package containing prebuilds (e.g. @qvac/ocr-onnx@1.0.0)"
-        required: false
-        type: string
-  workflow_call:
-    inputs:
-      ref:
-        description: "ref"
-        type: string
-        required: false
-      repository:
-        type: string
-        required: false
-        default: "tetherto/qvac"
-      model:
-        type: string
-        required: false
-      workdir:
-        description: "Working directory inside the repo (monorepo package path)"
-        type: string
-        required: false
-        default: "packages/ocr-onnx"
+    workflow_dispatch:
+        inputs:
+            prebuild_package:
+                description: "NPM package containing prebuilds (e.g. @qvac/ocr-onnx@1.0.0)"
+                required: false
+                type: string
+    workflow_call:
+        inputs:
+            ref:
+                description: "ref"
+                type: string
+                required: false
+            repository:
+                type: string
+                required: false
+                default: "tetherto/qvac"
+            model:
+                type: string
+                required: false
+            workdir:
+                description: "Working directory inside the repo (monorepo package path)"
+                type: string
+                required: false
+                default: "packages/ocr-onnx"
 
 env:
-  PKG_DIR: packages/ocr-onnx
+    PKG_DIR: packages/ocr-onnx
 
 jobs:
-  run-integration-tests:
-    continue-on-error: true
-    runs-on: ${{ matrix.runner || matrix.os }}
-    timeout-minutes: 30
-    environment: release
-    name: test-${{ matrix.platform }}-${{ matrix.arch }}
+    run-integration-tests:
+        continue-on-error: true
+        runs-on: ${{ matrix.runner || matrix.os }}
+        timeout-minutes: 30
+        environment: release
+        name: test-${{ matrix.platform }}-${{ matrix.arch }}
 
-    permissions:
-      contents: read
-      packages: read
-      id-token: write
+        permissions:
+            contents: read
+            packages: read
+            id-token: write
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux
-            arch: x64
-            runner: qvac-ubuntu2204-x64
-          - os: ubuntu-24.04
-            platform: linux
-            arch: x64
-            runner: qvac-ubuntu2404-x64
-          - os: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-          - os: ubuntu-22.04-arm
-            platform: linux
-            arch: arm64
-          - os: macos-15-xlarge
-            platform: darwin
-            arch: arm64
-          - os: windows-2025
-            platform: win32
-            arch: x64
-            runner: qvac-win25-x64
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-22.04
+                      platform: linux
+                      arch: x64
+                      runner: qvac-ubuntu2204-x64
+                    - os: ubuntu-24.04
+                      platform: linux
+                      arch: x64
+                      runner: qvac-ubuntu2404-x64
+                    - os: ubuntu-24.04-arm
+                      platform: linux
+                      arch: arm64
+                    - os: ubuntu-22.04-arm
+                      platform: linux
+                      arch: arm64
+                    - os: macos-15-xlarge
+                      platform: darwin
+                      arch: arm64
+                    - os: windows-2025
+                      platform: win32
+                      arch: x64
+                      runner: qvac-win25-x64
 
-    steps:
-      - name: Bootstrap
-        uses: ./.github/actions/run-desktop-integration-tests/bootstrap
-        with:
-          runner: ${{ matrix.runner }}
-          repository: ${{ inputs.repository }}
-          ref: ${{ inputs.ref }}
-          pat-token: ${{ secrets.PAT_TOKEN }}
+        steps:
+            # Cleanup + checkout MUST be direct steps before any local composite
+            # is referenced (a local composite cannot perform the checkout that
+            # makes local composites available).
+            - name: Manual Workspace Cleanup
+              if: runner.environment != 'github-hosted'
+              shell: bash
+              run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
 
-      - name: Install NPM dependencies
-        working-directory: ${{ inputs.workdir || env.PKG_DIR }}
-        shell: bash
-        run: npm install
+            - name: Checkout code
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+              with:
+                  repository: ${{ inputs.repository || github.repository }}
+                  ref: ${{ inputs.ref || github.ref }}
+                  token: ${{ secrets.PAT_TOKEN }}
 
-      - name: Resolve prebuilds
-        uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
-        with:
-          platform: ${{ matrix.platform }}
-          workdir: ${{ inputs.workdir || env.PKG_DIR }}
-          prebuild-package: ${{ inputs.prebuild_package }}
+            - name: Bootstrap
+              uses: ./.github/actions/run-desktop-integration-tests/bootstrap
 
-      - name: Install system dependencies
-        uses: ./.github/actions/run-desktop-integration-tests/install-system-deps
-        with:
-          platform: ${{ matrix.platform }}
-          arch: ${{ matrix.arch }}
-          os: ${{ matrix.os }}
-          install-gpp-13: "true"
+            - name: Install NPM dependencies
+              working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+              shell: bash
+              run: npm install
 
-      # Required for all OCR integration tests (param-validation, lifecycle,
-      # image-formats, full-ocr-suite, etc.). Provides detector + all
-      # recognizers under rec_dyn.
-      - name: Fetch models
-        uses: ./.github/actions/run-desktop-integration-tests/fetch-models
-        with:
-          runner: ${{ matrix.runner }}
-          aws-role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          cache-package: ocr-onnx
-          cache-paths: packages/ocr-onnx/models/ocr/rec_dyn
-          cache-hash-files-glob: .github/workflows/integration-test-ocr-onnx.yml
-          download-working-directory: ${{ inputs.workdir || env.PKG_DIR }}
-          download-command: |
-            mkdir -p models/ocr/rec_dyn
-            aws s3 cp s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/rec_dyn/ models/ocr/rec_dyn/ --recursive
+            - name: Resolve prebuilds
+              uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
+              with:
+                  platform: ${{ matrix.platform }}
+                  workdir: ${{ inputs.workdir || env.PKG_DIR }}
+                  prebuild-package: ${{ inputs.prebuild_package }}
 
-      - name: Run integration test
-        working-directory: ${{ inputs.workdir || env.PKG_DIR }}
-        shell: bash
-        run: npm run test:integration
-        env:
-          QASE_API_TOKEN: ${{ secrets.QASE_API_TOKEN }}
+            - name: Install system dependencies
+              uses: ./.github/actions/run-desktop-integration-tests/install-system-deps
+              with:
+                  platform: ${{ matrix.platform }}
+                  arch: ${{ matrix.arch }}
+                  os: ${{ matrix.os }}
+                  install-gpp-13: "true"
 
-      - name: Collect performance report
-        if: always() && !cancelled()
-        uses: ./.github/actions/run-desktop-integration-tests/collect-perf-report
-        with:
-          addon-name: ocr
-          os: ${{ matrix.os }}
-          arch: ${{ matrix.arch }}
-          workdir: ${{ inputs.workdir || env.PKG_DIR }}
-          retention-days: "90"
+            # Required for all OCR integration tests (param-validation, lifecycle,
+            # image-formats, full-ocr-suite, etc.). Provides detector + all
+            # recognizers under rec_dyn.
+            - name: Fetch models
+              uses: ./.github/actions/run-desktop-integration-tests/fetch-models
+              with:
+                  runner: ${{ matrix.runner }}
+                  aws-role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+                  cache-package: ocr-onnx
+                  cache-paths: packages/ocr-onnx/models/ocr/rec_dyn
+                  cache-hash-files-glob: .github/workflows/integration-test-ocr-onnx.yml
+                  download-working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+                  download-command: |
+                      mkdir -p models/ocr/rec_dyn
+                      aws s3 cp s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/rec_dyn/ models/ocr/rec_dyn/ --recursive
+
+            - name: Run integration test
+              working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+              shell: bash
+              run: npm run test:integration
+              env:
+                  QASE_API_TOKEN: ${{ secrets.QASE_API_TOKEN }}
+
+            - name: Collect performance report
+              if: always() && !cancelled()
+              uses: ./.github/actions/run-desktop-integration-tests/collect-perf-report
+              with:
+                  addon-name: ocr
+                  os: ${{ matrix.os }}
+                  arch: ${{ matrix.arch }}
+                  workdir: ${{ inputs.workdir || env.PKG_DIR }}
+                  retention-days: "90"

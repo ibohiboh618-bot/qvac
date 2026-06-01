@@ -1,36 +1,24 @@
 name: Desktop Test — Bootstrap
 description: |
-  Phase 0 of the desktop integration test pipeline.
+  Node.js + global Bare tooling setup for the desktop integration test
+  pipeline.
 
-  Runner bootstrap only: Node.js, self-hosted workspace cleanup, repository
-  checkout, and global Bare tooling. Deliberately does NOT run `npm install`
-  for the addon package — that is left to the consumer because its timing
-  varies per addon (some write a dual-registry .npmrc first, some restore a
-  model cache first). Keeping bootstrap free of `npm install` lets every
-  desktop workflow share it without ordering carve-outs.
+  PRECONDITION: the consumer workflow MUST run its own workspace cleanup and
+  actions/checkout as direct workflow steps BEFORE calling this composite. A
+  local composite (uses: ./.github/actions/...) cannot perform the checkout
+  that makes local composites available — that is a chicken-and-egg the runner
+  rejects with "Can't find action.yml ... Did you forget to run
+  actions/checkout". So checkout stays in the consumer; this composite only
+  owns the post-checkout, addon-agnostic bits.
 
-  Pair with the resolve-prebuilds composite for prebuild handling.
+  Deliberately does NOT run `npm install` for the addon package — its timing
+  varies per addon (dual-registry .npmrc first, or model cache first).
 
 inputs:
-  runner:
-    description: "matrix.runner value (kept for parity / future use)"
-    required: false
-    default: ""
-  repository:
-    description: "Repository to check out"
-    required: false
-    default: ""
-  ref:
-    description: "Git ref to check out"
-    required: false
-    default: ""
-  pat-token:
-    description: "GitHub PAT used for checkout"
-    required: true
   bare-packages:
     description: |
       Whitespace-separated global bare tooling packages. Defaults to the
-      fleet-standard `bare bare-make`. LLM extends with
+      fleet-standard `bare bare-make`. LLM/diffusion/vla extend with
       `bare-runtime bare-https brittle`; classification uses `bare-runtime`.
     required: false
     default: "bare bare-make"
@@ -42,20 +30,6 @@ runs:
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
       with:
         node-version: lts/*
-
-    # Clean any self-hosted runner's workspace (qvac-* and mac-mini-* alike).
-    # github-hosted runners start clean, so this is a no-op there.
-    - name: Manual Workspace Cleanup
-      if: runner.environment != 'github-hosted'
-      shell: bash
-      run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
-
-    - name: Checkout code
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-      with:
-        repository: ${{ inputs.repository || github.repository }}
-        ref: ${{ inputs.ref || github.ref }}
-        token: ${{ inputs.pat-token }}
 
     - name: Install bare tooling
       shell: bash
