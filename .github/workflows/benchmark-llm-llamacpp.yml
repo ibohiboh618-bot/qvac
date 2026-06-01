@@ -312,6 +312,7 @@ jobs:
         uses: ./.github/actions/link-local-qvac-fabric
         with:
           workdir: ${{ inputs.workdir }}
+          build-if-missing: "true"
 
       - name: Build addon from source
         if: inputs.addon_version == ''
