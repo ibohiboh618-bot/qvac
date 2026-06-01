@@ -57,6 +57,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
       NO_GPU: ${{ matrix.no_gpu || 'false' }}
+      WORKDIR: packages/tts-ggml
     permissions:
       contents: read
       packages: read
@@ -96,106 +97,44 @@ jobs:
             runner: qvac-win25-x64-gpu
 
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+      - name: Bootstrap
+        uses: ./.github/actions/run-desktop-integration-tests/bootstrap
         with:
-          node-version: lts/*
-      - name: Manual Workspace Cleanup
-        run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
-        shell: bash
-        if: startsWith(matrix.runner, 'qvac-')
-
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-        with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref || github.ref }}
-          token: ${{ secrets.PAT_TOKEN }}
+          runner: ${{ matrix.runner }}
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          pat-token: ${{ secrets.PAT_TOKEN }}
 
       - name: Install NPM dependencies
-        working-directory: ${{ github.workspace }}/packages/tts-ggml
-        run: |
-          npm install
-  
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make
-
-
-      - run: mkdir -p "${{ runner.temp }}/tts-ggml"
+        working-directory: ${{ env.WORKDIR }}
         shell: bash
-      - run: mkdir -p "${{ github.workspace }}/packages/tts-ggml/prebuilds"
-        shell: bash
+        run: npm install
 
-      - name: Download prebuilds from artifact
-        if: ${{ !inputs.prebuild_package }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+      - name: Resolve prebuilds
+        uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
         with:
-          path: ${{ runner.temp }}/tts-ggml
-          merge-multiple: true
+          platform: ${{ matrix.platform }}
+          workdir: ${{ env.WORKDIR }}
+          prebuild-package: ${{ inputs.prebuild_package }}
+          rename: single-underscore
 
-      - if: ${{ !inputs.prebuild_package }}
-        shell: bash
-        run: cp -r "${{ runner.temp }}/tts-ggml"/* "${{ github.workspace }}/packages/tts-ggml/prebuilds"
-
-      - name: Download prebuilds from package
-        if: ${{ inputs.prebuild_package }}
-        working-directory: ${{ runner.temp }}/tts-ggml
-        shell: bash
-        run: |
-          npm pack ${{ inputs.prebuild_package }}
-          tar -xzf *.tgz
-          cp -r ./package/prebuilds/* "${{ github.workspace }}/packages/tts-ggml/prebuilds"
-
-      - name: Rename prebuilds from tetherto_ to qvac_ prefix
-        if: ${{ inputs.prebuild_package }}
-        working-directory: ${{ github.workspace }}/packages/tts-ggml
-        shell: bash
-        run: |
-          find prebuilds -depth -name 'tetherto_*' | while read -r file; do
-            dir=$(dirname "$file")
-            base=$(basename "$file")
-            newbase=$(echo "$base" | sed 's/^tetherto_/qvac_/')
-            mv "$file" "$dir/$newbase"
-          done
-
-      - name: Linux - install dependencies
-        if: matrix.arch == 'arm64' && (matrix.platform == 'linux' || matrix.platform == 'android')
-        shell: bash
-        run: |
-          sudo apt-get update
-          # libgomp1   - GNU OpenMP runtime, used when ggml-cpu's libgomp
-          #              path is selected.
-          # libomp5    - LLVM OpenMP runtime (libomp.so.5).  tts-cpp is
-          #              built with clang under our linux-clang toolchain
-          #              and links against libomp at -fopenmp time, so
-          #              load fails with `libomp.so.5: cannot open shared
-          #              object file` without this package.
-          # libblas3   - runtime BLAS soname (libblas.so.3) required by
-          #              the Linux prebuilds on x64.
-          # mesa-vulkan-drivers - software / Mesa Vulkan ICD so the
-          #              Vulkan-enabled prebuild's runtime backend probe
-          #              has at least one Vulkan device to enumerate
-          #              (works for the no_gpu matrix entries too,
-          #              because the test runners explicitly force
-          #              useGPU=false when NO_GPU=true).
-          sudo apt-get install -y libgomp1 libomp5 libblas3 mesa-vulkan-drivers
-
-      - if: ${{ matrix.os == 'windows-2025' }}
-        name: Set Vulkan SDK Path on Windows Server 2025
-        run: echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
-
-      # Pin to 3.11 (not 3.12) because numba 0.65+ stopped shipping
-      # darwin-x86_64 wheels for Python 3.12.  librosa pulls in numba
-      # transitively; on 3.12 + macos-15-large pip falls back to building
-      # llvmlite from source which fails because the runner doesn't have
-      # an LLVM 15 development install.  3.11 has prebuilt darwin-x64
-      # wheels for the entire numba/llvmlite/librosa stack and is fine
-      # for every other converter dependency we use.
-      - name: Setup Python (HF -> .gguf conversion)
-        if: matrix.arch == 'arm64' || matrix.platform == 'darwin'
-        uses: actions/setup-python@v5
+      - name: Install system dependencies
+        uses: ./.github/actions/run-desktop-integration-tests/install-system-deps
         with:
-          python-version: '3.11'
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          os: ${{ matrix.os }}
+          set-windows-vulkan-sdk: "true"
+          # libgomp1 - GNU OpenMP runtime (ggml-cpu libgomp path)
+          # libomp5  - LLVM OpenMP runtime (tts-cpp built with clang links libomp.so.5)
+          # libblas3 - runtime BLAS soname (libblas.so.3) for the linux x64 prebuilds
+          # (mesa-vulkan-drivers always installed by the composite on linux arm64)
+          linux-arm64-extra-packages: libgomp1 libomp5 libblas3
+          # Pin to 3.11 (not 3.12): numba 0.65+ dropped darwin-x86_64 wheels for
+          # 3.12, so librosa's llvmlite would build from source and fail on
+          # macos-15-large. 3.11 has prebuilt darwin-x64 wheels for the whole
+          # numba/llvmlite/librosa stack.
+          python-version: ${{ (matrix.arch == 'arm64' || matrix.platform == 'darwin') && '3.11' || '' }}
 
       # Cache the Python venv + every Chatterbox + Supertonic GGUF the
       # integration suite can exercise.  Mirrors the mobile workflow's
@@ -229,13 +168,13 @@ jobs:
       - name: Stage GGUF models (npm run setup-models)
         if: steps.cache-tts-ggml-models.outputs.cache-hit != 'true'
         shell: bash
-        working-directory: ${{ github.workspace }}/packages/tts-ggml
+        working-directory: ${{ env.WORKDIR }}
         run: npm run setup-models
 
       - name: Run integration test
         if: ${{ inputs.run_integration_tests != false }}
         shell: bash
-        working-directory: ${{ github.workspace }}/packages/tts-ggml
+        working-directory: ${{ env.WORKDIR }}
         run: npm run test:integration
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}

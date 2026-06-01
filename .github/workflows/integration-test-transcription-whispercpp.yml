@@ -107,90 +107,26 @@ jobs:
               [{"modelFile":"ggml-tiny.bin","useGPU":false,"backendHint":"cpu"},{"modelFile":"ggml-tiny.bin","useGPU":true,"backendHint":"directml"}]
 
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+      - name: Bootstrap
+        uses: ./.github/actions/run-desktop-integration-tests/bootstrap
         with:
-          node-version: lts/*
-      - name: Manual Workspace Cleanup
-        run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
-        shell: bash
-        if: startsWith(matrix.runner, 'qvac-')
-
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-        with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref || github.ref }}
-          token: ${{ secrets.PAT_TOKEN }}
+          runner: ${{ matrix.runner }}
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          pat-token: ${{ secrets.PAT_TOKEN }}
 
       - name: Install NPM dependencies
         working-directory: ${{ inputs.workdir }}
-        run: |
-          npm install
-      
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make
+        shell: bash
+        run: npm install
 
-      - name: Download prebuilds from artifact
-        if: ${{ !inputs.prebuild_package }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+      - name: Resolve prebuilds
+        uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
         with:
-          path: ${{ runner.temp }}/prebuilds-staging
-          merge-multiple: true
-
-      - name: Move prebuilds from staging to workspace (Unix)
-        if: ${{ !inputs.prebuild_package && matrix.platform != 'win32' }}
-        shell: bash
-        run: |
-          mkdir -p ${{ inputs.workdir }}/prebuilds
-          cp -r ${{ runner.temp }}/prebuilds-staging/* ${{ inputs.workdir }}/prebuilds/
-          echo "Prebuilds moved from staging area"
-          ls -la ${{ inputs.workdir }}/prebuilds/
-
-      # Windows path: bash cp -r mangles `${{ runner.temp }}` (= "C:\a\_temp")
-      # because Git Bash interprets `\a`/`\_` as escape sequences, so the
-      # source path becomes invalid and the copy silently no-ops. Use
-      # PowerShell Copy-Item with native Windows paths.
-      - name: Move prebuilds from staging to workspace (Windows)
-        if: ${{ !inputs.prebuild_package && matrix.platform == 'win32' }}
-        shell: powershell
-        run: |
-          $dst = "${{ inputs.workdir }}/prebuilds"
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          Copy-Item -Recurse -Force "${{ runner.temp }}\prebuilds-staging\*" $dst
-          Write-Host "Prebuilds moved from staging area"
-          Get-ChildItem -Recurse $dst | Select-Object FullName | Format-Table -AutoSize
-
-      - name: Download prebuilds from package (Unix)
-        if: ${{ inputs.prebuild_package && matrix.platform != 'win32' }}
-        working-directory: ${{ inputs.workdir }}
-        shell: bash
-        run: |
-          mkdir -p prebuilds "${{ runner.temp }}/tmp"
-          rm -f "${{ runner.temp }}/tmp"/*.tgz
-          rm -rf "${{ runner.temp }}/tmp/package"
-          npm pack ${{ inputs.prebuild_package }} --pack-destination "${{ runner.temp }}/tmp"
-          tar -xzf "${{ runner.temp }}/tmp"/*.tgz -C "${{ runner.temp }}/tmp"
-          cp -r "${{ runner.temp }}/tmp"/package/prebuilds/* prebuilds/
-          find prebuilds -type f -name 'tetherto__*' | while read f; do
-            mv "$f" "${f/tetherto__/qvac__}"
-          done
-
-      - name: Download prebuilds from package (Windows)
-        if: ${{ inputs.prebuild_package && matrix.platform == 'win32' }}
-        working-directory: ${{ inputs.workdir }}
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path prebuilds | Out-Null
-          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\tmp" | Out-Null
-          npm pack ${{ inputs.prebuild_package }} --pack-destination "${{ runner.temp }}\tmp"
-          $tgz = Get-ChildItem "${{ runner.temp }}\tmp\*.tgz" | Select-Object -First 1
-          tar -xzf $tgz.FullName -C "${{ runner.temp }}\tmp"
-          Copy-Item -Path "${{ runner.temp }}\tmp\package\prebuilds\*" -Destination prebuilds -Recurse -Force
-          Get-ChildItem -Path prebuilds -Recurse -File -Filter 'tetherto__*' | ForEach-Object {
-            $newName = $_.Name -replace 'tetherto__', 'qvac__'
-            Rename-Item -Path $_.FullName -NewName $newName
-          }
+          platform: ${{ matrix.platform }}
+          workdir: ${{ inputs.workdir }}
+          prebuild-package: ${{ inputs.prebuild_package }}
+          rename: double-underscore
 
       - name: Install gh cli for ubuntu-24.04-arm
         if: matrix.os == 'ubuntu-24.04-arm'
@@ -207,23 +143,16 @@ jobs:
           gh --version
         continue-on-error: true
 
-      - name: Linux arm64 - install dependencies
-        if: (matrix.platform == 'linux' || matrix.platform == 'android') && matrix.arch == 'arm64'
-        shell: bash
-        run: |
-          sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
-          # Add whisper.cpp dependencies for integration tests
-          sudo apt-get install -y libopenblas-dev liblapack-dev libfftw3-dev
-
-      - name: macOS - install whisper dependencies
-        if: matrix.platform == 'darwin'
-        shell: bash
-        run: |
-          brew install --quiet openblas lapack fftw
-
-      - if: ${{ matrix.os == 'windows-2025' }}
-        name: Set Vulkan SDK Path on Windows Server 2025
-        run: echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
+      - name: Install system dependencies
+        uses: ./.github/actions/run-desktop-integration-tests/install-system-deps
+        with:
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          os: ${{ matrix.os }}
+          # whisper.cpp runtime deps for the integration tests
+          linux-arm64-extra-packages: libopenblas-dev liblapack-dev libfftw3-dev
+          macos-brew-packages: openblas lapack fftw
+          set-windows-vulkan-sdk: "true"
 
       - name: Cache integration test models
         id: model-cache
@@ -257,7 +186,7 @@ jobs:
         run: npm run test:stand-alone:gpu
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-          
+
       - name: Run RTF benchmark (Unix)
         if: ${{ always() && !cancelled() && matrix.platform != 'win32' && inputs.run_rtf_benchmarks != false }}
         continue-on-error: true
@@ -330,21 +259,3 @@ jobs:
             }
             console.log(lines.join('\n'))
           " >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Print run state (Unix)
-        if: ${{ matrix.platform != 'win32' }}
-        working-directory: ${{ inputs.workdir }}
-        shell: bash
-        run: |
-          ls -la prebuilds || true
-          tree prebuilds || true
-        continue-on-error: true
-
-      - name: Print run state (Windows)
-        if: ${{ matrix.platform == 'win32' }}
-        working-directory: ${{ inputs.workdir }}
-        shell: powershell
-        run: |
-          Get-ChildItem prebuilds -ErrorAction SilentlyContinue
-          tree prebuilds /F 2>$null
-        continue-on-error: true

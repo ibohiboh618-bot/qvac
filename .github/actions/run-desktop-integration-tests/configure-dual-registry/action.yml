@@ -1,0 +1,83 @@
+name: Desktop Test — Configure Dual Registry
+description: |
+  Writes a dual-registry .npmrc (@qvac from npmjs, @tetherto from GitHub
+  Packages) into the addon workdir and configures git to use a PAT for
+  github.com clones. Used by addons that depend on @tetherto GPR packages
+  (diffusion-cpp, vla). Must run after checkout and before `npm install`.
+
+inputs:
+  platform:
+    description: "linux | darwin | win32"
+    required: true
+  workdir:
+    description: "Working directory inside the repo (monorepo package path)"
+    required: true
+  npm-token:
+    description: "npmjs auth token (@qvac scope)"
+    required: true
+  gpr-token:
+    description: "GitHub Packages auth token (@tetherto scope)"
+    required: true
+  git-pat:
+    description: "PAT for github.com git clones (falls back to github.token)"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Configure scoped registry for @tetherto and @qvac packages (Linux/macOS)
+      if: ${{ inputs.platform != 'win32' }}
+      working-directory: ${{ inputs.workdir }}
+      shell: bash
+      env:
+        GPR_TOKEN: ${{ inputs.gpr-token }}
+        NPM_TOKEN: ${{ inputs.npm-token }}
+        GIT_PAT: ${{ inputs.git-pat }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "Writing .npmrc for dual registry install…"
+        set -eu
+        cat > .npmrc <<NPMRC
+        registry=https://registry.npmjs.org/
+        @qvac:registry=https://registry.npmjs.org/
+        @tetherto:registry=https://npm.pkg.github.com/
+        //registry.npmjs.org/:_authToken=${NPM_TOKEN}
+        //npm.pkg.github.com/:_authToken=${GPR_TOKEN}
+        NPMRC
+
+        if [ -n "${GIT_PAT:-}" ]; then
+          git config --global url."https://${GIT_PAT}:@github.com/".insteadOf "https://github.com/"
+        else
+          git config --global url."https://${GH_TOKEN}:@github.com/".insteadOf "https://github.com/"
+        fi
+
+    - name: Configure scoped registry for @tetherto and @qvac packages (Windows)
+      if: ${{ inputs.platform == 'win32' }}
+      working-directory: ${{ inputs.workdir }}
+      shell: powershell
+      env:
+        GPR_TOKEN: ${{ inputs.gpr-token }}
+        NPM_TOKEN: ${{ inputs.npm-token }}
+        GIT_PAT: ${{ inputs.git-pat }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        Write-Host "Writing .npmrc for dual registry install…"
+        @"
+        registry=https://registry.npmjs.org/
+        @qvac:registry=https://registry.npmjs.org/
+        @tetherto:registry=https://npm.pkg.github.com/
+        //registry.npmjs.org/:_authToken=$env:NPM_TOKEN
+        //npm.pkg.github.com/:_authToken=$env:GPR_TOKEN
+        "@ | Out-File -FilePath .npmrc -Encoding utf8
+
+        Write-Host "=== Verifying .npmrc creation ==="
+        Get-Content .npmrc
+
+        if ($env:GIT_PAT) {
+          git config --global url."https://$($env:GIT_PAT):@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://$($env:GIT_PAT):@github.com/".insteadOf "git@github.com:"
+        } else {
+          git config --global url."https://$($env:GH_TOKEN):@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://$($env:GH_TOKEN):@github.com/".insteadOf "git@github.com:"
+        }

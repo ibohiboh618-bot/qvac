@@ -49,29 +49,20 @@ jobs:
             runner: qvac-win25-x64-gpu
 
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+      # decoder-audio relies on bare-ffmpeg's prebuilds, not its own, so no
+      # resolve-prebuilds step is needed.
+      - name: Bootstrap
+        uses: ./.github/actions/run-desktop-integration-tests/bootstrap
         with:
-          node-version: lts/*
-      - name: Manual Workspace Cleanup
-        run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
-        shell: bash
-        if: startsWith(matrix.runner, 'qvac-')
-
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-        with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref || github.ref }}
-          token: ${{ secrets.PAT_TOKEN }}
+          runner: ${{ matrix.runner }}
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          pat-token: ${{ secrets.PAT_TOKEN }}
 
       - name: Install NPM dependencies
         working-directory: ${{ inputs.workdir }}
-        run: |
-          npm install
-
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make
+        shell: bash
+        run: npm install
 
       - name: Run integration test
         working-directory: ${{ inputs.workdir }}

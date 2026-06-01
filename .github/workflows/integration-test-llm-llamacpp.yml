@@ -120,11 +120,6 @@ jobs:
             label: win32-x64
 
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
-        with:
-          node-version: lts/*
-
       - name: Windows - configure git
         if: ${{ matrix.platform == 'win32' }}
         run: |
@@ -132,17 +127,15 @@ jobs:
           git config --global url."https://${{ secrets.PAT_TOKEN }}:@github.com/".insteadOf "https://github.com/"
           git config --global url."https://${{ secrets.PAT_TOKEN }}:@github.com/".insteadOf "git@github.com:"
         shell: powershell
-      - name: Manual Workspace Cleanup
-        run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
-        shell: bash
-        if: startsWith(matrix.runner, 'qvac-')
 
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+      - name: Bootstrap
+        uses: ./.github/actions/run-desktop-integration-tests/bootstrap
         with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref || github.ref }}
-          token: ${{ secrets.PAT_TOKEN }}
+          runner: ${{ matrix.runner }}
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          pat-token: ${{ secrets.PAT_TOKEN }}
+          bare-packages: bare bare-make bare-runtime bare-https brittle
 
       - name: Cache integration test models
         id: model-cache
@@ -159,113 +152,22 @@ jobs:
 
       - name: Install NPM dependencies
         working-directory: ${{ env.WORKDIR }}
-        run: |
-          npm install
+        shell: bash
+        run: npm install
 
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make bare-runtime bare-https brittle
-
-      - name: Download prebuilds (from artifacts)
-        if: ${{ !inputs.prebuild_package }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+      - name: Resolve prebuilds
+        uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
         with:
-          path: ${{ runner.temp }}/prebuilds-staging
-          merge-multiple: true
+          platform: ${{ matrix.platform }}
+          workdir: ${{ env.WORKDIR }}
+          prebuild-package: ${{ inputs.prebuild_package }}
 
-      - name: Move prebuilds from staging to workspace (Unix)
-        if: ${{ !inputs.prebuild_package && matrix.platform != 'win32' }}
-        shell: bash
-        run: |
-          mkdir -p ${{ env.WORKDIR }}/prebuilds
-          cp -r ${{ runner.temp }}/prebuilds-staging/* ${{ env.WORKDIR }}/prebuilds/
-          echo "Prebuilds moved from staging area"
-          ls -la ${{ env.WORKDIR }}/prebuilds/
-
-      # Windows path: bash cp -r mangles `${{ runner.temp }}` (= "C:\a\_temp")
-      # because Git Bash interprets `\a`/`\_` as escape sequences, so the
-      # source path becomes invalid and the copy silently no-ops. Use
-      # PowerShell Copy-Item with native Windows paths.
-      - name: Move prebuilds from staging to workspace (Windows)
-        if: ${{ !inputs.prebuild_package && matrix.platform == 'win32' }}
-        shell: powershell
-        run: |
-          $dst = "${{ env.WORKDIR }}/prebuilds"
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          Copy-Item -Recurse -Force "${{ runner.temp }}\prebuilds-staging\*" $dst
-          Write-Host "Prebuilds moved from staging area"
-          Get-ChildItem -Recurse $dst | Select-Object FullName | Format-Table -AutoSize
-
-      - name: Download prebuilds from package (Linux/macOS)
-        if: ${{ inputs.prebuild_package && matrix.platform != 'win32' }}
-        working-directory: ${{ env.WORKDIR }}
-        shell: bash
-        run: |
-          PACKAGE="${{ inputs.prebuild_package }}"
-          echo "Downloading $PACKAGE from npm..."
-
-          if ! npm pack $PACKAGE; then
-            echo "ERROR: Failed to download $PACKAGE from npm"
-            echo "Please check that the package exists"
-            exit 1
-          fi
-
-          tar -xzf *.tgz
-
-          if [ ! -d "package/prebuilds" ]; then
-            echo "ERROR: No prebuilds directory found in package"
-            echo "The downloaded package may not contain prebuilt binaries"
-            exit 1
-          fi
-
-          mv package/prebuilds ./prebuilds
-          rm -rf package *.tgz
-
-          echo "Prebuilds downloaded from npm successfully"
-          ls -la prebuilds/
-
-      - name: Download prebuilds from package (Windows)
-        if: ${{ inputs.prebuild_package && matrix.platform == 'win32' }}
-        working-directory: ${{ env.WORKDIR }}
-        shell: powershell
-        run: |
-          $PACKAGE = "${{ inputs.prebuild_package }}"
-
-          echo "Downloading $PACKAGE from npm..."
-
-          npm pack $PACKAGE
-          if ($LASTEXITCODE -ne 0) {
-            echo "ERROR: Failed to download $PACKAGE from npm"
-            echo "Please check that the package exists"
-            exit 1
-          }
-
-          $TARBALL = Get-ChildItem -Filter "*.tgz" | Select-Object -First 1 -ExpandProperty Name
-          if (-not $TARBALL) {
-            echo "ERROR: Could not find downloaded tarball"
-            exit 1
-          }
-
-          echo "Extracting $TARBALL..."
-          tar -xzf $TARBALL
-
-          if (-not (Test-Path "package/prebuilds")) {
-            echo "ERROR: No prebuilds directory found in package"
-            echo "The downloaded package may not contain prebuilt binaries"
-            exit 1
-          }
-
-          Move-Item package/prebuilds ./prebuilds
-
-          Remove-Item -Recurse -Force package
-          Remove-Item $TARBALL
-
-          echo "Prebuilds downloaded from npm successfully"
-          Get-ChildItem prebuilds/
-
-      - name: Linux - install dependencies
-        if: matrix.os == 'ubuntu-22.04-arm' || matrix.os == 'ubuntu-24.04-arm'
-        shell: bash
-        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      - name: Install system dependencies
+        uses: ./.github/actions/run-desktop-integration-tests/install-system-deps
+        with:
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          os: ${{ matrix.os }}
 
       - name: Run integration test (Linux/macOS)
         if: ${{ matrix.platform != 'win32' }}
@@ -312,31 +214,13 @@ jobs:
           QVAC_PERF_RUNS: ${{ inputs.qvac_perf_runs }}
           QVAC_PERF_WARMUP_RUNS: ${{ inputs.qvac_perf_warmup_runs }}
 
-      - name: Generate HTML performance report
+      # Label-based artifact name (two matrix entries share the same
+      # platform-arch tuple — see the matrix `label` comment above), supplied
+      # via the composite's artifact-name override.
+      - name: Collect performance report
         if: ${{ always() && !cancelled() }}
-        working-directory: ${{ env.WORKDIR }}
-        shell: bash
-        run: |
-          if [ -f test/results/performance-report.json ]; then
-            echo "Found performance-report.json, generating HTML/MD/summary..."
-            node ../../scripts/perf-report/aggregate.js \
-              --dir test/results \
-              --output-html test/results/performance-report.html \
-              --output-json test/results/performance-summary.json \
-              --output test/results/performance-report.md
-          else
-            echo "performance-report.json not found - skipping HTML generation"
-          fi
-
-      - name: Upload performance report
-        if: ${{ always() && !cancelled() }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
+        uses: ./.github/actions/run-desktop-integration-tests/collect-perf-report
         with:
-          name: perf-report-llamacpp-llm-${{ matrix.label }}-${{ github.run_number }}
-          path: |
-            ${{ env.WORKDIR }}/test/results/performance-report.json
-            ${{ env.WORKDIR }}/test/results/performance-report.html
-            ${{ env.WORKDIR }}/test/results/performance-summary.json
-            ${{ env.WORKDIR }}/test/results/performance-report.md
-          retention-days: 90
-          if-no-files-found: ignore
+          workdir: ${{ env.WORKDIR }}
+          artifact-name: perf-report-llamacpp-llm-${{ matrix.label }}-${{ github.run_number }}
+          retention-days: "90"

@@ -1,0 +1,63 @@
+name: Desktop Test — Resolve Prebuilds
+description: |
+  Resolves an addon's desktop prebuilds into <workdir>/prebuilds, either by
+  downloading the per-PR build artifact or (on workflow_dispatch) by
+  `npm pack`-ing a published package, with an optional filename rename.
+
+  The move / npm-pack / rename logic lives in a single cross-platform Node
+  script (resolve-prebuilds.js) rather than duplicated bash + PowerShell
+  blocks, so there is one implementation to maintain across linux/darwin/win32.
+
+  Run after bootstrap (which checks out the repo) and after the consumer's
+  own `npm install` if relevant. Skipped entirely for addons whose native
+  code is provided transitively (e.g. decoder-audio via bare-ffmpeg).
+
+inputs:
+  platform:
+    description: "linux | darwin | win32 (retained for parity / future use)"
+    required: false
+    default: ""
+  workdir:
+    description: "Working directory inside the repo (monorepo package path)"
+    required: true
+  prebuild-package:
+    description: |
+      When set (workflow_dispatch), resolve prebuilds via `npm pack` of this
+      spec instead of downloading the PR build artifact.
+    required: false
+    default: ""
+  prebuild-artifact-pattern:
+    description: |
+      Optional glob restricting which build artifacts are downloaded (e.g.
+      "classification-ggml-linux-x64*"). Empty downloads all artifacts.
+    required: false
+    default: ""
+  rename:
+    description: |
+      Prebuild filename rename to apply after resolution:
+        none              -> no rename (default; most workflows)
+        single-underscore -> tetherto_ -> qvac_  (parakeet, tts-ggml)
+        double-underscore -> tetherto__ -> qvac__ (bci-whispercpp, whispercpp)
+    required: false
+    default: "none"
+
+runs:
+  using: composite
+  steps:
+    - name: Download prebuilds from artifact
+      if: ${{ !inputs.prebuild-package }}
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+      with:
+        pattern: ${{ inputs.prebuild-artifact-pattern || '*' }}
+        path: ${{ runner.temp }}/prebuilds-staging
+        merge-multiple: true
+
+    - name: Resolve prebuilds
+      shell: bash
+      env:
+        PREBUILD_MODE: ${{ inputs.prebuild-package && 'package' || 'artifact' }}
+        PREBUILD_WORKDIR: ${{ inputs.workdir }}
+        PREBUILD_PACKAGE: ${{ inputs.prebuild-package }}
+        PREBUILD_RENAME: ${{ inputs.rename }}
+        PREBUILD_STAGING_DIR: ${{ runner.temp }}/prebuilds-staging
+      run: node "$GITHUB_ACTION_PATH/resolve-prebuilds.js"

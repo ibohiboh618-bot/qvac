@@ -1,0 +1,90 @@
+name: Desktop Test — Collect Perf Report
+description: |
+  Phase 3 of the desktop integration test pipeline.
+
+  Performance report generation + artifact upload, used by ~7 desktop
+  workflows. Optionally runs scripts/perf-report/aggregate.js to produce
+  HTML/summary/MD alongside the raw performance-report.json, then uploads the
+  results as an artifact. Safe to call with `if: always() && !cancelled()`.
+
+inputs:
+  addon-name:
+    description: "Short addon name used in the artifact name (e.g. ocr). Ignored when artifact-name is set."
+    required: false
+    default: ""
+  os:
+    description: "matrix.os value (artifact name component). Ignored when artifact-name is set."
+    required: false
+    default: ""
+  arch:
+    description: "matrix.arch value (artifact name component). Ignored when artifact-name is set."
+    required: false
+    default: ""
+  workdir:
+    description: "Working directory inside the repo (monorepo package path)"
+    required: true
+  results-dir:
+    description: "Directory (relative to workdir) holding performance-report.json"
+    required: false
+    default: "test/results"
+  aggregate:
+    description: |
+      'true'  -> run aggregate.js to also emit HTML/summary/MD
+      'false' -> upload the raw performance-report.json only
+    required: false
+    default: "true"
+  label:
+    description: "Optional extra artifact-name component (e.g. matrix label)"
+    required: false
+    default: ""
+  artifact-name:
+    description: |
+      Full override for the artifact name. When set, addon-name/os/arch/label
+      are ignored. Used by addons whose artifact name follows a different
+      scheme (e.g. llm's label-based perf-report-llamacpp-llm-<label>).
+    required: false
+    default: ""
+  extra-upload-paths:
+    description: "Optional newline-separated extra files/globs to include in the artifact"
+    required: false
+    default: ""
+  retention-days:
+    description: "Artifact retention in days"
+    required: false
+    default: "90"
+
+runs:
+  using: composite
+  steps:
+    - name: Generate HTML performance report
+      if: ${{ inputs.aggregate == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.workdir }}
+      env:
+        RESULTS_DIR: ${{ inputs.results-dir }}
+      run: |
+        echo "Checking for performance report..."
+        ls -la "$RESULTS_DIR/" 2>/dev/null || echo "$RESULTS_DIR/ directory not found"
+        if [ -f "$RESULTS_DIR/performance-report.json" ]; then
+          echo "Found performance-report.json, generating HTML..."
+          node ../../scripts/perf-report/aggregate.js \
+            --dir "$RESULTS_DIR" \
+            --output-html "$RESULTS_DIR/performance-report.html" \
+            --output-json "$RESULTS_DIR/performance-summary.json" \
+            --output "$RESULTS_DIR/performance-report.md"
+        else
+          echo "performance-report.json not found — skipping HTML generation"
+        fi
+
+    - name: Upload performance report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
+      with:
+        name: ${{ inputs.artifact-name != '' && inputs.artifact-name || format('perf-report-{0}-{1}-{2}{3}-{4}', inputs.addon-name, inputs.os, inputs.arch, inputs.label != '' && format('-{0}', inputs.label) || '', github.run_number) }}
+        path: |
+          ${{ inputs.workdir }}/${{ inputs.results-dir }}/performance-report.json
+          ${{ inputs.aggregate == 'true' && format('{0}/{1}/performance-report.html', inputs.workdir, inputs.results-dir) || '' }}
+          ${{ inputs.aggregate == 'true' && format('{0}/{1}/performance-summary.json', inputs.workdir, inputs.results-dir) || '' }}
+          ${{ inputs.aggregate == 'true' && format('{0}/{1}/performance-report.md', inputs.workdir, inputs.results-dir) || '' }}
+          ${{ inputs.extra-upload-paths }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore

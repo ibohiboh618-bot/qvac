@@ -1,0 +1,87 @@
+name: Desktop Test — Install System Deps
+description: |
+  Phase 2 of the desktop integration test pipeline.
+
+  Parameterized system dependency installation, covering the per-platform
+  package installs duplicated across the desktop fleet:
+    - Linux arm64 apt packages (mesa-vulkan-drivers always, plus optional
+      BLAS/LAPACK/FFTW/OpenMP libs for whisper/bci/tts)
+    - g++-13 on ubuntu-24.04-arm (GLIBC++ uplift for ocr)
+    - macOS brew packages (openblas/lapack/fftw/ffmpeg/pkg-config)
+    - Windows Vulkan SDK path export (self-hosted runners ship the SDK at
+      C:\VulkanSDK; this only exports the env var, it does NOT install)
+    - Optional Python toolchain (3.11/3.12/3.14) for model conversion steps
+
+  All steps are individually gated so a consumer only pays for what it needs.
+
+inputs:
+  platform:
+    description: "linux | darwin | win32"
+    required: true
+  arch:
+    description: "x64 | arm64"
+    required: true
+  os:
+    description: "matrix.os value (used to gate g++-13 on ubuntu-24.04-arm)"
+    required: false
+    default: ""
+  linux-arm64-extra-packages:
+    description: |
+      Whitespace-separated apt packages installed on Linux arm64 in addition
+      to the always-installed mesa-vulkan-drivers (e.g.
+      "libopenblas-dev liblapack-dev libfftw3-dev").
+    required: false
+    default: ""
+  install-gpp-13:
+    description: "Install g++-13 on ubuntu-24.04-arm when 'true'."
+    required: false
+    default: "false"
+  macos-brew-packages:
+    description: |
+      Whitespace-separated Homebrew formulae to install on darwin (e.g.
+      "openblas lapack fftw").
+    required: false
+    default: ""
+  set-windows-vulkan-sdk:
+    description: "Export VULKAN_SDK=C:\\VulkanSDK on win32 when 'true'."
+    required: false
+    default: "false"
+  python-version:
+    description: "When set, install this Python version (e.g. 3.11, 3.12, 3.14)."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Linux arm64 - install apt dependencies
+      if: ${{ inputs.platform == 'linux' && inputs.arch == 'arm64' }}
+      shell: bash
+      env:
+        EXTRA_PACKAGES: ${{ inputs.linux-arm64-extra-packages }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mesa-vulkan-drivers $EXTRA_PACKAGES
+
+    - name: Linux arm64 - update C++ tools to install GLIBC++
+      if: ${{ inputs.install-gpp-13 == 'true' && inputs.os == 'ubuntu-24.04-arm' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y g++-13
+
+    - name: macOS - install brew dependencies
+      if: ${{ inputs.platform == 'darwin' && inputs.macos-brew-packages != '' }}
+      shell: bash
+      run: brew install --quiet ${{ inputs.macos-brew-packages }}
+
+    - name: Windows - set Vulkan SDK path
+      if: ${{ inputs.platform == 'win32' && inputs.set-windows-vulkan-sdk == 'true' }}
+      shell: pwsh
+      run: echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
+
+    - name: Setup Python
+      if: ${{ inputs.python-version != '' }}
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # 6.2.0
+      with:
+        python-version: ${{ inputs.python-version }}
