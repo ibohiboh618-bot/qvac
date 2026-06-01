@@ -64,6 +64,11 @@ runs:
         git config --global url."https://${{  inputs.pat-token }}:@github.com/".insteadOf "https://github.com/"
       shell: bash
 
+    - name: Link local @qvac/fabric
+      uses: ./.github/actions/link-local-qvac-fabric
+      with:
+        workdir: ${{ inputs.workdir }}
+
     - name: Install dependencies
       shell: bash
       continue-on-error: true
