@@ -15,6 +15,22 @@ inputs:
       is absent. Requires bare-make and vcpkg to be available on the runner.
     required: false
     default: "false"
+  platform:
+    description: Optional bare-make platform for target-specific fabric prebuilds
+    required: false
+    default: ""
+  arch:
+    description: Optional bare-make arch for target-specific fabric prebuilds
+    required: false
+    default: ""
+  tags:
+    description: Optional suffix for target-specific prebuild directories, e.g. -simulator
+    required: false
+    default: ""
+  flags:
+    description: Optional extra bare-make generate flags, e.g. --simulator
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -53,18 +69,34 @@ runs:
           exit 0
         fi
 
+        target_platform="${{ inputs.platform }}"
+        target_arch="${{ inputs.arch }}"
+        target_tags="${{ inputs.tags }}"
+        target_flags="${{ inputs.flags }}"
         cmake_config="${fabric_dir}/prebuilds/share/qvac-fabric/cmake/qvac-fabricConfig.cmake"
+        target_runtime=""
+        if [ -n "${target_platform}" ] && [ -n "${target_arch}" ]; then
+          target_runtime="${fabric_dir}/prebuilds/${target_platform}-${target_arch}${target_tags}/qvac__fabric.bare"
+        fi
+
         if [ "${{ inputs.build-if-missing }}" = "true" ]; then
-          if [ -f "${cmake_config}" ]; then
+          if [ -f "${cmake_config}" ] && { [ -z "${target_runtime}" ] || [ -f "${target_runtime}" ]; }; then
             echo "Local @qvac/fabric prebuilds already present"
           else
             echo "Local @qvac/fabric prebuilds missing; building from source..."
             export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache,readwrite"
             mkdir -p "${fabric_dir}/vcpkg/cache"
+            if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ -n "${VCPKG_ROOT:-}" ]; then
+              rm -f "${VCPKG_ROOT}/downloads/git-tmp/.git/"*.lock
+            fi
             npm install --ignore-scripts --prefix "${fabric_dir}"
             (
               cd "${fabric_dir}"
-              bare-make generate
+              if [ -n "${target_platform}" ] && [ -n "${target_arch}" ]; then
+                bare-make generate --platform "${target_platform}" --arch "${target_arch}" ${target_flags}
+              else
+                bare-make generate
+              fi
               bare-make build
               bare-make install
             )
@@ -79,5 +111,12 @@ runs:
           if [ ! -f "${installed_config}" ]; then
             echo "Local @qvac/fabric install did not include ${installed_config}"
             exit 1
+          fi
+          if [ -n "${target_runtime}" ]; then
+            installed_runtime="node_modules/@qvac/fabric/prebuilds/${target_platform}-${target_arch}${target_tags}/qvac__fabric.bare"
+            if [ ! -f "${installed_runtime}" ]; then
+              echo "Local @qvac/fabric install did not include ${installed_runtime}"
+              exit 1
+            fi
           fi
         fi
