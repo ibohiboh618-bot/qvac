@@ -98,7 +98,7 @@ endif()
 add_custom_command(TARGET addon-test POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     $<TARGET_FILE:${qvac_fabric_target}_module>
-    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/qvac__fabric@0.bare
   COMMENT "Copying qvac__fabric@0.bare to test directory"
 )
 

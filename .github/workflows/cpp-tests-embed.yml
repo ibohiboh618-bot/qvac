@@ -90,6 +90,9 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           token: ${{ secrets.PAT_TOKEN }}
 
+      - name: Install bare tooling
+        run: npm install -g --force bare bare-make
+
       - name: Link local @qvac/fabric
         uses: ./.github/actions/link-local-qvac-fabric
         with:
@@ -101,9 +104,6 @@ jobs:
         shell: bash
         run: |
           npm install
-      
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make
 
 
       - if: ${{ matrix.os == 'windows-2025' }}

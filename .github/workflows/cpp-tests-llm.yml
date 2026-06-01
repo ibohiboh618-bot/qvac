@@ -111,6 +111,9 @@ jobs:
         with:
           node-version: lts/*
 
+      - name: Install bare tooling
+        run: npm install -g --force bare bare-make
+
       - name: Link local @qvac/fabric
         uses: ./.github/actions/link-local-qvac-fabric
         with:
@@ -121,9 +124,6 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: |
           npm install
-
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make
 
       - name: Cache C++ test models
         id: model-cache
