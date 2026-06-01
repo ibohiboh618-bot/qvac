@@ -110,7 +110,9 @@ struct GraphBuilder {
   /// Activation selection: HardSwish for later blocks, ReLU for early
   /// layers, matching torchvision's MobileNetV3-Large config.
   struct ggml_tensor* activate(struct ggml_tensor* x, bool useHardswish) const {
-    return useHardswish ? ggml_hardswish(ctx, x) : ggml_relu(ctx, x);
+    return useHardswish
+               ? ggml_unary_inplace(ctx, x, GGML_UNARY_OP_HARDSWISH)
+               : ggml_relu_inplace(ctx, x);
   }
 
   /// Guard against silent dtype drift in the conv chain. KleidiAI's SME
@@ -148,7 +150,7 @@ struct GraphBuilder {
     }
     struct ggml_tensor* conv =
         ggml_conv_2d_direct(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
-    conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
+    conv = ggml_add_inplace(ctx, conv, t(convPrefix + ".bias_br"));
 
     if (!activate) {
       return conv;
@@ -182,7 +184,7 @@ struct GraphBuilder {
         lateral->ne[2],
         lateral->ne[3],
         upsampleMode);
-    return ggml_add(ctx, upsampled, lateral);
+    return ggml_add_inplace(ctx, upsampled, lateral);
   }
 
   struct ggml_tensor*
@@ -219,8 +221,8 @@ struct GraphBuilder {
     requireMatchingConvDtypes(kernelT, input, "ggml_conv_transpose_2d_p0");
     struct ggml_tensor* conv =
         ggml_conv_transpose_2d_p0(ctx, kernelT, input, 2);
-    conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
-    return ggml_relu(ctx, conv);
+    conv = ggml_add_inplace(ctx, conv, t(convPrefix + ".bias_br"));
+    return ggml_relu_inplace(ctx, conv);
   }
 
   struct ggml_tensor* probHead(struct ggml_tensor* input) const {
@@ -237,8 +239,9 @@ struct GraphBuilder {
     requireMatchingConvDtypes(
         probHead6Kernel, output, "ggml_conv_transpose_2d_p0");
     output = ggml_conv_transpose_2d_p0(ctx, probHead6Kernel, output, 2);
-    auto a =t("dbnet.prob_head.6.bias_br");
-    return ggml_add(ctx, output, t("dbnet.prob_head.6.bias_br"));
+    checkNhwcLayout(output, "conv_transpose dbnet.prob_head.6", "out");
+    return ggml_add_inplace(
+        ctx, output, t("dbnet.prob_head.6.bias_br"));
   }
 
   /// Depthwise Conv2d (BN folded offline into weights+bias) + activation.
@@ -251,7 +254,7 @@ struct GraphBuilder {
     requireMatchingConvDtypes(kernelT, x, "ggml_conv_2d_dw_direct");
     struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
         ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
-    conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
+    conv = ggml_add_inplace(ctx, conv, t(convPrefix + ".bias_br"));
     return activate(conv, useHardswish);
   }
 
@@ -275,17 +278,18 @@ struct GraphBuilder {
     requireMatchingConvDtypes(fc1Kernel, pooled, "ggml_conv_2d_direct (SE fc1)");
     struct ggml_tensor* fc1 =
         ggml_conv_2d_direct(ctx, fc1Kernel, pooled, 1, 1, 0, 0, 1, 1);
-    fc1 = ggml_add(ctx, fc1, t(sePrefix + ".fc1.bias_br"));
-    fc1 = ggml_relu(ctx, fc1);
+    checkNhwcLayout(fc1, ("se_fc1 " + sePrefix).c_str(), "out");
+    fc1 = ggml_add_inplace(ctx, fc1, t(sePrefix + ".fc1.bias_br"));
+    fc1 = ggml_relu_inplace(ctx, fc1);
 
     struct ggml_tensor* fc2Kernel = t(sePrefix + ".fc2.weight");
     requireMatchingConvDtypes(fc2Kernel, fc1, "ggml_conv_2d_direct (SE fc2)");
     struct ggml_tensor* fc2 =
         ggml_conv_2d_direct(ctx, fc2Kernel, fc1, 1, 1, 0, 0, 1, 1);
-    fc2 = ggml_add(ctx, fc2, t(sePrefix + ".fc2.bias_br"));
+    fc2 = ggml_add_inplace(ctx, fc2, t(sePrefix + ".fc2.bias_br"));
 
-    // torchvision's SE uses hardsigmoid on the scale branch.
-    struct ggml_tensor* gate = ggml_hardsigmoid(ctx, fc2);
+    struct ggml_tensor* gate =
+        ggml_unary_inplace(ctx, fc2, GGML_UNARY_OP_HARDSIGMOID);
     return ggml_mul(ctx, x, gate);
   }
 
@@ -359,9 +363,8 @@ struct GraphBuilder {
         /*activate=*/false,
         cfg.useHardswish);
 
-    // Residual add when shape preserved.
     if (cfg.stride == 1 && cfg.inputChannels == cfg.outputChannels) {
-      y = ggml_add(ctx, y, x);
+      y = ggml_add_inplace(ctx, y, x);
     }
     return y;
   }
@@ -790,6 +793,19 @@ WeightsBundle loadWeights(
     return true;
   };
 
+  for (auto& [name, dst] : tensors) {
+    if (!name.ends_with(".weight")) {
+      continue;
+    }
+    if (dst->ne[2] != 1) {
+      continue;
+    }
+    if (convTransposeWeightNames.contains(name)) {
+      continue;
+    }
+    dst->nb[2] = ggml_type_size(dst->type);
+  }
+
   if (prepackBuft != nullptr) {
     // Per-tensor allocation for the prepack-eligible conv weights so their
     // bytes flow through the KleidiAI buft's set_tensor hook at upload
@@ -941,11 +957,16 @@ ComputeGraph buildGraph(
   cg.input = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, kInputHw, kInputHw, 3, 1);
   ggml_set_name(cg.input, "input");
 
+  struct ggml_tensor* inputNhwc =
+      ggml_cont(ctx, ggml_permute(ctx, cg.input, 1, 2, 0, 3));
+  inputNhwc = ggml_permute(ctx, inputNhwc, 2, 0, 1, 3);
+  ggml_set_name(inputNhwc, "input_nhwc");
+
   GraphBuilder gb{.ctx = ctx, .w = weights.tensors};
 
   // Stem.
   struct ggml_tensor* x = gb.convBnAct(
-      cg.input,
+      inputNhwc,
       "features.0.0",
       /*stride=*/2,
       /*kernel=*/3,

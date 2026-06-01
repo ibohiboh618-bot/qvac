@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -281,6 +282,7 @@ struct GraphResources {
   ggml_backend_buffer_t weightsBuffer = nullptr;
   ggml_backend_buffer_t extraBuffer = nullptr;
   ggml_backend_buffer_t graphBuffer = nullptr;
+  std::vector<ggml_backend_buffer_t> auxBuffers;
   struct ggml_cgraph* graph = nullptr;
   struct ggml_tensor* input = nullptr;
   struct ggml_tensor* features = nullptr;
@@ -312,6 +314,12 @@ struct GraphResources {
       ggml_backend_buffer_free(weightsBuffer);
       weightsBuffer = nullptr;
     }
+    for (ggml_backend_buffer_t buf : auxBuffers) {
+      if (buf != nullptr) {
+        ggml_backend_buffer_free(buf);
+      }
+    }
+    auxBuffers.clear();
     if (backend != nullptr) {
       ggml_backend_free(backend);
       backend = nullptr;
@@ -517,6 +525,16 @@ struct StepDoctrRecognitionGGML::Impl {
     loadGraphWeights(gguf, pathRecognizer);
     loadRecurrentWeights(gguf, pathRecognizer);
     buildGraph();
+    const size_t inputElems = static_cast<size_t>(RECOG_WIDTH) *
+                              static_cast<size_t>(RECOG_HEIGHT) *
+                              static_cast<size_t>(kInputChannels);
+    const std::vector<float> dummyInput(inputElems, 0.0F);
+    ggml_backend_tensor_set(
+        graph.input,
+        dummyInput.data(),
+        0,
+        dummyInput.size() * sizeof(float));
+    ggml_backend_graph_compute(graph.backend, graph.graph);
   }
 
   [[nodiscard]] std::vector<float>
@@ -721,15 +739,83 @@ private:
     }
     registerConvWithBias("crnn.features.12.0");
 
-    graph.weightsBuffer =
-        ggml_backend_alloc_ctx_tensors(graph.weightsCtx.get(), graph.backend);
+    ggml_backend_buffer_type_t defaultCpuBuft =
+        ggml_backend_get_default_buffer_type(graph.backend);
+    ggml_backend_buffer_type_t prepackBuft = nullptr;
+    {
+      ggml_backend_buffer_type_t* extraBufts = nullptr;
+      ggml_backend_dev_t cpuDev = ggml_backend_get_device(graph.backend);
+      if (cpuDev != nullptr) {
+        ggml_backend_reg_t cpuReg = ggml_backend_dev_backend_reg(cpuDev);
+        if (cpuReg != nullptr) {
+          auto* getExtras =
+              reinterpret_cast<ggml_backend_dev_get_extra_bufts_t>(
+                  ggml_backend_reg_get_proc_address(
+                      cpuReg, "ggml_backend_dev_get_extra_bufts"));
+          if (getExtras != nullptr) {
+            extraBufts = getExtras(cpuDev);
+          }
+        }
+      }
+      if (extraBufts != nullptr) {
+        const struct ggml_tensor* probe =
+            ggml_get_tensor(ctx, "crnn.features.0.0.weight");
+        if (probe != nullptr) {
+          for (ggml_backend_buffer_type_t* p = extraBufts; *p != nullptr;
+               ++p) {
+            if (ggml_backend_buft_get_alloc_size(*p, probe) >
+                ggml_nbytes(probe)) {
+              prepackBuft = *p;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    auto isPrepackable = [&](const std::string& name,
+                             const struct ggml_tensor* t) {
+      if (!name.ends_with(".weight")) {
+        return false;
+      }
+      if (t->ne[2] == 1) {
+        return false;
+      }
+      return true;
+    };
+
+    if (prepackBuft != nullptr) {
+      for (auto& [name, dst] : graph.weights) {
+        if (!isPrepackable(name, dst)) {
+          continue;
+        }
+        const size_t allocSize =
+            ggml_backend_buft_get_alloc_size(prepackBuft, dst);
+        ggml_backend_buffer_t buf =
+            ggml_backend_buft_alloc_buffer(prepackBuft, allocSize);
+        if (buf == nullptr) {
+          raise(
+              "failed to allocate per-tensor prepack buffer for " + name);
+        }
+        ggml_tallocr tallocr = ggml_tallocr_new(buf);
+        if (ggml_tallocr_alloc(&tallocr, dst) != GGML_STATUS_SUCCESS) {
+          ggml_backend_buffer_free(buf);
+          raise("ggml_tallocr_alloc failed for " + name);
+        }
+        ggml_backend_buffer_set_usage(buf, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        graph.auxBuffers.push_back(buf);
+      }
+    }
+
+    graph.weightsBuffer = ggml_backend_alloc_ctx_tensors_from_buft(
+        graph.weightsCtx.get(), defaultCpuBuft);
     if (graph.weightsBuffer == nullptr) {
       raise("failed to allocate GGML weight buffer");
     }
     ggml_backend_buffer_set_usage(
         graph.weightsBuffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-    graph.extraBuffer =
-        ggml_backend_alloc_ctx_tensors(graph.extraCtx.get(), graph.backend);
+    graph.extraBuffer = ggml_backend_alloc_ctx_tensors_from_buft(
+        graph.extraCtx.get(), defaultCpuBuft);
     if (graph.extraBuffer == nullptr) {
       raise("failed to allocate GGML extra-tensor buffer");
     }

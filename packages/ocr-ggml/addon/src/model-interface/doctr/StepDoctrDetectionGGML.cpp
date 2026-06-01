@@ -83,6 +83,17 @@ StepDoctrDetectionGGML::StepDoctrDetectionGGML(
   computeGraph_ = qvac_lib_infer_ggml_classification::graph::buildGraph(
       weights_, backends_);
 
+  const size_t inputElems = static_cast<size_t>(DBNET_INPUT_SIZE) *
+                            static_cast<size_t>(DBNET_INPUT_SIZE) *
+                            static_cast<size_t>(kNumChannels);
+  inputBuffer_.assign(inputElems, 0.0F);
+  ggml_backend_tensor_set(
+      computeGraph_.input,
+      inputBuffer_.data(),
+      0,
+      inputBuffer_.size() * sizeof(float));
+  ggml_backend_graph_compute(backends_[0], computeGraph_.graph);
+
   QLOG(
       qvac_lib_inference_addon_cpp::logger::Priority::INFO,
       "[DoctrDetectionGGML] GGML detection model loaded");
