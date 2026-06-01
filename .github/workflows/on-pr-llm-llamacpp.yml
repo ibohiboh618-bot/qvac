@@ -143,6 +143,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Link local @qvac/fabric
+        uses: ./.github/actions/link-local-qvac-fabric
+        with:
+          workdir: packages/llm-llamacpp
+
       - name: Install dependencies
         working-directory: packages/llm-llamacpp
         run: npm install
