@@ -125,6 +125,8 @@ void MtmdLlmContext::initVisionContext() {
   mparams.backend_device =
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
+  mparams.image_min_tokens = 1024;
+  mparams.image_max_tokens = -1;  
   mparams.n_threads = params_.cpuparams.n_threads;
   ctxVision_.reset(mtmd_init_from_file(clipPath, model_, mparams));
   if (ctxVision_.get() == nullptr) {
