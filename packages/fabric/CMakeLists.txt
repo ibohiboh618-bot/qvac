@@ -13,6 +13,11 @@ find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
+# Use an overlay port for qvac-fabric so we can patch the forked llama.cpp common
+# headers (dllexport/dllimport markers on the cross-DLL data globals; see
+# ports/qvac-fabric/patches) ahead of the change landing in the published port.
+set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports;${VCPKG_OVERLAY_PORTS}")
+
 set(VCPKG_INSTALL_OPTIONS --clean-after-build)
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package.json" _pkg_json)
@@ -129,9 +134,12 @@ elseif(WIN32)
     "$<TARGET_FILE:llama::mtmd>"
     "$<TARGET_FILE:ggml::ggml>"
     "$<TARGET_FILE:ggml::ggml-base>")
-  # build_info carries the LLAMA_* build globals. Skip it when it is an OBJECT
-  # or INTERFACE target (no TARGET_FILE); in that case those objects are merged
-  # into common.lib and the LLAMA_* symbols are picked up from there instead.
+  # build_info carries the LLAMA_BUILD_NUMBER / LLAMA_COMMIT data globals. Scan
+  # it only when it is a real archive; the vcpkg export ships it as an INTERFACE
+  # (or OBJECT) target with no TARGET_FILE. These globals are plain `extern` data
+  # (no dllimport) referenced by header-inlined code in consumers, and MSVC
+  # cannot import data across a DLL boundary, so consumers define module-local
+  # copies instead of importing them from here (see windows_fabric_data.cpp).
   if(TARGET llama::build_info)
     get_target_property(_fabric_build_info_type llama::build_info TYPE)
     if(NOT _fabric_build_info_type STREQUAL "OBJECT_LIBRARY"
@@ -159,8 +167,16 @@ elseif(WIN32)
   # Replace CMake's per-target symbol scan with our archive-wide def.
   set_target_properties(${qvac-fabric}_module PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+  # The main bare module uses symbol-based registration (cmake-bare defines
+  # BARE_MODULE_NAME without BARE_MODULE_REGISTER_CONSTRUCTOR), so the bare
+  # runtime locates the module by resolving these exported entry points by name.
+  # WINDOWS_EXPORT_ALL_SYMBOLS normally exports them; since we disable it in
+  # favour of the generated def, export them explicitly here. The "v0" suffix is
+  # the bare module ABI version (BARE_MODULE_VERSION in bare/module.h).
   target_link_options(${qvac-fabric}_module PRIVATE
-    "/DEF:${_fabric_def}")
+    "/DEF:${_fabric_def}"
+    "/EXPORT:bare_get_module_name_v0"
+    "/EXPORT:bare_register_module_v0")
 endif()
 
 # Strip the .bare module (keep dynamic symbols required for export).
@@ -254,4 +270,8 @@ if(WIN32)
   add_definitions(-DNOMINMAX -DWIN32_LEAN_AND_MEAN -DNOGDI)
   target_compile_options(${qvac-fabric} PRIVATE "/utf-8")
   target_link_libraries(${qvac-fabric} PRIVATE msvcrt.lib)
+  # This addon is part of the fabric runtime, so its own TUs (binding.cpp pulls
+  # in common.h) must see the dllexport side of the QVAC_COMMON_API markers in
+  # the patched qvac-fabric headers, matching the runtime's exported data globals.
+  target_compile_definitions(${qvac-fabric} PRIVATE QVAC_FABRIC_BUILD)
 endif()
