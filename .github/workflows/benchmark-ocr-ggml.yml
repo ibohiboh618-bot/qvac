@@ -31,7 +31,7 @@ on:
 env:
   PKG_DIR: packages/ocr-ggml
   EASYOCR_S3_PREFIX: qvac_models_compiled/ocr/gguf/easyocr/2026-05-14
-  DOCTR_S3_PREFIX: qvac_models_compiled/ocr/gguf/doctrf16/2026-05-15
+  DOCTR_S3_PREFIX: qvac_models_compiled/ocr/gguf/doctrf32/2026-05-29
 
 permissions:
   contents: read

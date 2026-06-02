@@ -156,7 +156,7 @@ jobs:
             models/ \
             --recursive
           aws s3 cp \
-            "s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/gguf/doctrf16/2026-05-28/" \
+            "s3://${{ secrets.MODEL_S3_BUCKET }}/qvac_models_compiled/ocr/gguf/doctrf32/2026-05-29/" \
             models/ \
             --recursive
           ls -lh models/
