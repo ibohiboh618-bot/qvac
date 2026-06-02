@@ -58,6 +58,28 @@ ggml_backend_dev_t pickBestGpuDevice() {
   const size_t n = ggml_backend_dev_count();
   ggml_backend_dev_t fallbackGpu = nullptr;
 
+  // Device-enumeration diagnostics. In GGML_BACKEND_DL mode every backend
+  // (including CPU) is a separately-loaded .so; if discovery fails, this
+  // count is 0 and there is no compute device at all. Printing the full
+  // registered-device list makes "HIP/Vulkan selected" vs "silent CPU
+  // fallback" vs "zero backends -> crash" visible instead of guessable.
+  QLOG_IF(Priority::INFO, "vla_backend_selection: " + std::to_string(n) +
+                              " ggml device(s) registered");
+  for (size_t i = 0; i < n; ++i) {
+    ggml_backend_dev_t d = ggml_backend_dev_get(i);
+    const enum ggml_backend_dev_type dt = ggml_backend_dev_type(d);
+    const char* tstr = dt == GGML_BACKEND_DEVICE_TYPE_GPU    ? "GPU"
+                       : dt == GGML_BACKEND_DEVICE_TYPE_IGPU ? "iGPU"
+                       : dt == GGML_BACKEND_DEVICE_TYPE_CPU  ? "CPU"
+                                                            : "ACCEL";
+    const char* dn = ggml_backend_dev_name(d);
+    const char* dd = ggml_backend_dev_description(d);
+    QLOG_IF(Priority::INFO, "vla_backend_selection:   [" + std::to_string(i) +
+                                "] " + std::string(tstr) +
+                                " name=" + (dn ? dn : "?") +
+                                " desc=" + (dd ? dd : "?"));
+  }
+
   for (size_t i = 0; i < n; ++i) {
     ggml_backend_dev_t dev = ggml_backend_dev_get(i);
     const enum ggml_backend_dev_type t = ggml_backend_dev_type(dev);
@@ -118,6 +140,17 @@ ggml_backend_dev_t pickBestGpuDevice() {
     if (fallbackGpu == nullptr) {
       fallbackGpu = dev;
     }
+  }
+
+  if (fallbackGpu != nullptr) {
+    const char* sn = ggml_backend_dev_name(fallbackGpu);
+    const char* sd = ggml_backend_dev_description(fallbackGpu);
+    QLOG_IF(Priority::INFO,
+            "vla_backend_selection: SELECTED GPU name=" +
+                std::string(sn ? sn : "?") + " desc=" + (sd ? sd : "?"));
+  } else {
+    QLOG_IF(Priority::WARNING,
+            "vla_backend_selection: no GPU selected — using CPU backend");
   }
 
   return fallbackGpu;

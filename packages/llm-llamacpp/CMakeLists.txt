@@ -59,6 +59,21 @@ if((ANDROID OR UNIX) AND NOT APPLE)
   foreach(_backend ${GGML_AVAILABLE_BACKENDS})
     list(APPEND BACKEND_DL_LIBS INSTALL TARGET ggml::${_backend})
   endforeach()
+  # When ggml is built with GGML_BACKEND_DL=ON, the .bare links the core
+  # ggml/llama libraries dynamically instead of embedding them statically, so
+  # they must ship in the backends dir alongside the backend modules (the .bare
+  # resolves them from its $ORIGIN/<module> RUNPATH). Static builds embedded
+  # these, so they were never installed; a DL .bare cannot load its own NEEDED
+  # libs without them.
+  if(GGML_BACKEND_DL)
+    list(APPEND BACKEND_DL_LIBS
+      INSTALL TARGET ggml::ggml
+      INSTALL TARGET ggml::ggml-base
+      INSTALL TARGET llama::llama)
+    if(TARGET llama::mtmd)
+      list(APPEND BACKEND_DL_LIBS INSTALL TARGET llama::mtmd)
+    endif()
+  endif()
 endif()
 
 add_bare_module(inference-addon-llama EXPORTS ${BACKEND_DL_LIBS})
