@@ -1,105 +1,105 @@
 name: Integration Tests (GGML Classification)
 
 on:
-  workflow_dispatch:
-    inputs:
-      prebuild_package:
-        description: "NPM package containing prebuilds (e.g. @qvac/classification-ggml@0.1.0)"
-        required: false
-        type: string
-  workflow_call:
-    inputs:
-      ref:
-        description: "ref"
-        type: string
-        required: false
-      repository:
-        type: string
-        required: false
-        default: "tetherto/qvac"
-      workdir:
-        description: "Working directory inside the repo (monorepo package path)"
-        type: string
-        required: false
-        default: "packages/classification-ggml"
-      prebuild_package:
-        description: "NPM package containing prebuilds (e.g. @qvac/classification-ggml@0.1.0). When set, prebuilds are downloaded from npm instead of from per-PR build artifacts."
-        type: string
-        required: false
+    workflow_dispatch:
+        inputs:
+            prebuild_package:
+                description: "NPM package containing prebuilds (e.g. @qvac/classification-ggml@0.1.0)"
+                required: false
+                type: string
+    workflow_call:
+        inputs:
+            ref:
+                description: "ref"
+                type: string
+                required: false
+            repository:
+                type: string
+                required: false
+                default: "tetherto/qvac"
+            workdir:
+                description: "Working directory inside the repo (monorepo package path)"
+                type: string
+                required: false
+                default: "packages/classification-ggml"
+            prebuild_package:
+                description: "NPM package containing prebuilds (e.g. @qvac/classification-ggml@0.1.0). When set, prebuilds are downloaded from npm instead of from per-PR build artifacts."
+                type: string
+                required: false
 
 env:
-  PKG_DIR: packages/classification-ggml
+    PKG_DIR: packages/classification-ggml
 
 jobs:
-  run-integration-tests:
-    timeout-minutes: 30
-    runs-on: ${{ matrix.os }}
-    environment: release
-    name: ${{ matrix.platform }}-${{ matrix.arch }}-integration-tests
-    permissions:
-      contents: read
-      packages: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux
-            arch: x64
-          - os: ubuntu-24.04
-            platform: linux
-            arch: x64
-          - os: ubuntu-22.04-arm
-            platform: linux
-            arch: arm64
-          - os: macos-14
-            platform: darwin
-            arch: arm64
-          - os: windows-2022
-            platform: win32
-            arch: x64
+    run-integration-tests:
+        timeout-minutes: 30
+        runs-on: ${{ matrix.os }}
+        environment: release
+        name: ${{ matrix.platform }}-${{ matrix.arch }}-integration-tests
+        permissions:
+            contents: read
+            packages: read
+            id-token: write
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-22.04
+                      platform: linux
+                      arch: x64
+                    - os: ubuntu-24.04
+                      platform: linux
+                      arch: x64
+                    - os: ubuntu-22.04-arm
+                      platform: linux
+                      arch: arm64
+                    - os: macos-14
+                      platform: darwin
+                      arch: arm64
+                    - os: windows-2022
+                      platform: win32
+                      arch: x64
 
-    steps:
-      # classification-ggml installs bare-runtime (not bare), uses
-      # --ignore-scripts on npm install, and restricts the prebuild artifact
-      # download to its own platform/arch pattern.
-      - name: Bootstrap
-        uses: ./.github/actions/run-desktop-integration-tests/bootstrap
-        with:
-          repository: ${{ inputs.repository }}
-          ref: ${{ inputs.ref }}
-          pat-token: ${{ secrets.PAT_TOKEN }}
-          bare-packages: bare-runtime bare-make
+        steps:
+            # classification-ggml installs bare-runtime (not bare), uses
+            # --ignore-scripts on npm install, and restricts the prebuild artifact
+            # download to its own platform/arch pattern.
+            - name: Bootstrap
+              uses: ./.github/actions/run-desktop-integration-tests/bootstrap
+              with:
+                  repository: ${{ inputs.repository }}
+                  ref: ${{ inputs.ref }}
+                  pat-token: ${{ secrets.PAT_TOKEN }}
+                  bare-packages: bare-runtime bare-make
 
-      - name: Install NPM dependencies
-        working-directory: ${{ inputs.workdir || env.PKG_DIR }}
-        shell: bash
-        run: npm install --ignore-scripts
+            - name: Install NPM dependencies
+              working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+              shell: bash
+              run: npm install --ignore-scripts
 
-      - name: Resolve prebuilds
-        uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
-        with:
-          platform: ${{ matrix.platform }}
-          workdir: ${{ inputs.workdir || env.PKG_DIR }}
-          prebuild-package: ${{ inputs.prebuild_package }}
-          prebuild-artifact-pattern: classification-ggml-${{ matrix.platform }}-${{ matrix.arch }}*
+            - name: Resolve prebuilds
+              uses: ./.github/actions/run-desktop-integration-tests/resolve-prebuilds
+              with:
+                  platform: ${{ matrix.platform }}
+                  workdir: ${{ inputs.workdir || env.PKG_DIR }}
+                  prebuild-package: ${{ inputs.prebuild_package }}
+                  prebuild-artifact-pattern: classification-ggml-${{ matrix.platform }}-${{ matrix.arch }}*
 
-      - name: Run JS integration tests
-        working-directory: ${{ inputs.workdir || env.PKG_DIR }}
-        env:
-          # Opt in to the C++ per-inference trace so CI logs contain
-          # raw logits / probs / sorted results for every classification.
-          # Invaluable for debugging platform-specific numerical issues
-          # (noise is bounded to a few lines per sample image).
-          QVAC_CLASSIFICATION_TRACE: "1"
-        run: npm run test:integration
+            - name: Run JS integration tests
+              working-directory: ${{ inputs.workdir || env.PKG_DIR }}
+              env:
+                  # Opt in to the C++ per-inference trace so CI logs contain
+                  # raw logits / probs / sorted results for every classification.
+                  # Invaluable for debugging platform-specific numerical issues
+                  # (noise is bounded to a few lines per sample image).
+                  QVAC_CLASSIFICATION_TRACE: "1"
+              run: npm run test:integration
 
-      - name: Upload performance report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # 4.6.2
-        with:
-          name: classification-perf-report-${{ matrix.platform }}-${{ matrix.arch }}
-          path: ${{ inputs.workdir || env.PKG_DIR }}/test/results/performance-report.json
-          if-no-files-found: ignore
-          retention-days: 30
+            - name: Upload performance report
+              if: always()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # 4.6.2
+              with:
+                  name: classification-perf-report-${{ matrix.platform }}-${{ matrix.arch }}
+                  path: ${{ inputs.workdir || env.PKG_DIR }}/test/results/performance-report.json
+                  if-no-files-found: ignore
+                  retention-days: 30

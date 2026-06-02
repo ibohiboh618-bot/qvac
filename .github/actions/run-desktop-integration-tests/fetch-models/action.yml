@@ -1,87 +1,87 @@
 name: Desktop Test — Fetch Models
 description: |
-  Phase 4 (optional) of the desktop integration test pipeline.
+    Phase 4 (optional) of the desktop integration test pipeline.
 
-  AWS OIDC credential configuration + model download, with transparent
-  local-runner caching. Wraps the shipped .github/actions/cache-models action
-  (QVAC-19322) rather than reimplementing caching, so S3-backed desktop
-  workflows share one caching strategy.
+    AWS OIDC credential configuration + model download, with transparent
+    local-runner caching. Wraps the shipped .github/actions/cache-models action
+    (QVAC-19322) rather than reimplementing caching, so S3-backed desktop
+    workflows share one caching strategy.
 
-  Flow per the cache-models contract:
-    1. Configure AWS credentials via OIDC.
-    2. On qvac-* self-hosted runners, restore the model cache.
-    3. On cache miss (or non-qvac runners), run the provided download command(s).
+    Flow per the cache-models contract:
+      1. Configure AWS credentials via OIDC.
+      2. On qvac-* self-hosted runners, restore the model cache.
+      3. On cache miss (or non-qvac runners), run the provided download command(s).
 
-  Consumers that download models from somewhere other than S3 can set
-  configure-aws=false and still benefit from the cache + download gating.
+    Consumers that download models from somewhere other than S3 can set
+    configure-aws=false and still benefit from the cache + download gating.
 
 inputs:
-  configure-aws:
-    description: "Configure AWS credentials via OIDC before downloading."
-    required: false
-    default: "true"
-  aws-role-to-assume:
-    description: "AWS role ARN for OIDC (required when configure-aws=true)."
-    required: false
-    default: ""
-  aws-region:
-    description: "AWS region."
-    required: false
-    default: "eu-central-1"
-  runner:
-    description: "matrix.runner value (cache restore is gated to qvac-* runners)."
-    required: false
-    default: ""
-  cache-package:
-    description: "Package dir name under packages/ for the cache key (e.g. ocr-onnx)."
-    required: true
-  cache-paths:
-    description: |
-      Optional newline-separated override of cached paths. Defaults to
-      packages/<cache-package>/test/model inside cache-models.
-    required: false
-    default: ""
-  cache-hash-files-glob:
-    description: |
-      Glob folded into the cache key. For S3 workflows point this at the
-      workflow YAML itself so a model-path bump invalidates the cache.
-    required: false
-    default: ""
-  cache-version:
-    description: "Bump to invalidate every cached entry for this addon."
-    required: false
-    default: "v1"
-  download-command:
-    description: |
-      Shell command(s) (bash) that download the models. Runs only on cache
-      miss. Has AWS credentials available when configure-aws=true.
-    required: true
-  download-working-directory:
-    description: "Working directory for the download command."
-    required: true
+    configure-aws:
+        description: "Configure AWS credentials via OIDC before downloading."
+        required: false
+        default: "true"
+    aws-role-to-assume:
+        description: "AWS role ARN for OIDC (required when configure-aws=true)."
+        required: false
+        default: ""
+    aws-region:
+        description: "AWS region."
+        required: false
+        default: "eu-central-1"
+    runner:
+        description: "matrix.runner value (cache restore is gated to qvac-* runners)."
+        required: false
+        default: ""
+    cache-package:
+        description: "Package dir name under packages/ for the cache key (e.g. ocr-onnx)."
+        required: true
+    cache-paths:
+        description: |
+            Optional newline-separated override of cached paths. Defaults to
+            packages/<cache-package>/test/model inside cache-models.
+        required: false
+        default: ""
+    cache-hash-files-glob:
+        description: |
+            Glob folded into the cache key. For S3 workflows point this at the
+            workflow YAML itself so a model-path bump invalidates the cache.
+        required: false
+        default: ""
+    cache-version:
+        description: "Bump to invalidate every cached entry for this addon."
+        required: false
+        default: "v1"
+    download-command:
+        description: |
+            Shell command(s) (bash) that download the models. Runs only on cache
+            miss. Has AWS credentials available when configure-aws=true.
+        required: true
+    download-working-directory:
+        description: "Working directory for the download command."
+        required: true
 
 runs:
-  using: composite
-  steps:
-    - name: Configure AWS credentials via OIDC
-      if: ${{ inputs.configure-aws == 'true' }}
-      uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
-      with:
-        role-to-assume: ${{ inputs.aws-role-to-assume }}
-        aws-region: ${{ inputs.aws-region }}
+    using: composite
+    steps:
+        - name: Configure AWS credentials via OIDC
+          if: ${{ inputs.configure-aws == 'true' }}
+          uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
+          with:
+              role-to-assume: ${{ inputs.aws-role-to-assume }}
+              aws-region: ${{ inputs.aws-region }}
 
-    - name: Cache models
-      id: model-cache
-      if: ${{ startsWith(inputs.runner, 'qvac-') }}
-      uses: ./.github/actions/cache-models
-      with:
-        package: ${{ inputs.cache-package }}
-        cache-version: ${{ inputs.cache-version }}
-        paths: ${{ inputs.cache-paths }}
-        hash-files-glob: ${{ inputs.cache-hash-files-glob }}
+        - name: Cache models
+          id: model-cache
+          if: ${{ startsWith(inputs.runner, 'qvac-') }}
+          uses: ./.github/actions/cache-models
+          with:
+              package: ${{ inputs.cache-package }}
+              cache-version: ${{ inputs.cache-version }}
+              paths: ${{ inputs.cache-paths }}
+              hash-files-glob: ${{ inputs.cache-hash-files-glob }}
 
-    - name: Download models
-      if: ${{ steps.model-cache.outputs.cache-hit != 'true' }}
-      shell: bash
-      working-directory: ${{ inputs.download-working-directory }}
-      run: ${{ inputs.download-command }}
+        - name: Download models
+          if: ${{ steps.model-cache.outputs.cache-hit != 'true' }}
+          shell: bash
+          working-directory: ${{ inputs.download-working-directory }}
+          run: ${{ inputs.download-command }}

@@ -87,13 +87,16 @@ function resolveFromPackage () {
   }
   const tmp = fs.mkdtempSync(path.join(RUNNER_TEMP, 'prebuild-'))
   log(`npm pack ${PREBUILD_PACKAGE} -> ${tmp}`)
+  // shell:true so Windows resolves npm.cmd / tar.exe via PATHEXT. The package
+  // spec is validated against a strict allowlist above (no shell metachars),
+  // and tmp is a process-created mkdtemp path, so this is injection-safe.
   const packed = execFileSync(
     'npm',
     ['pack', PREBUILD_PACKAGE, '--pack-destination', tmp, '--json'],
-    { encoding: 'utf8', shell: false }
+    { encoding: 'utf8', shell: true }
   )
   const filename = JSON.parse(packed)[0].filename
-  execFileSync('tar', ['-xzf', path.join(tmp, filename), '-C', tmp], { shell: false })
+  execFileSync('tar', ['-xzf', path.join(tmp, filename), '-C', tmp], { shell: true })
   const packagePrebuilds = path.join(tmp, 'package', 'prebuilds')
   if (!fs.existsSync(packagePrebuilds)) {
     fail('no prebuilds directory found in package')
