@@ -102,20 +102,65 @@ elseif(APPLE)
   target_link_options(${qvac-fabric}_module PRIVATE
     -Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt)
 elseif(WIN32)
-  # Consumers link against the import library for qvac__fabric.bare, so the
-  # Windows module must export the llama/ggml/common symbols pulled in from the
-  # whole-archive static libs above. This mirrors the wildcard export behavior
-  # provided by symbols.map / exports.txt on ELF and Mach-O.
+  # Consumers link against the import library generated for qvac__fabric.bare,
+  # so the Windows module must export the llama/ggml/common runtime surface.
   #
-  # cmake-bare already enables WINDOWS_EXPORT_ALL_SYMBOLS, but CMake's generated
-  # export list only covers symbols visible from this target's own objects. The
-  # llama/common/ggml runtime surface comes from whole-archive static libraries,
-  # so ask lld-link to export every live COFF symbol as well.
+  # cmake-bare enables WINDOWS_EXPORT_ALL_SYMBOLS by default, but CMake only
+  # scans this target's own object files for that, not the llama/common/mtmd
+  # static libraries that carry the runtime API. There is also no MSVC-mode
+  # "export everything" linker switch (-export-all-symbols only works in
+  # lld-link's MinGW mode, which abandons the MSVC CRT/import libraries).
+  #
+  # Instead, generate a module-definition file by scanning the static archives
+  # for the same symbol prefixes the ELF/Mach-O builds export, and feed it via
+  # /DEF. The export entries double as references that pull the matching members
+  # out of the archives, so the listed symbols are always present in the image.
+  find_program(FABRIC_NM NAMES llvm-nm nm)
+  if(NOT FABRIC_NM)
+    set(FABRIC_NM "${CMAKE_NM}")
+  endif()
+  if(NOT FABRIC_NM)
+    message(FATAL_ERROR "llvm-nm not found; required to generate the qvac-fabric Windows export def")
+  endif()
+
+  set(_fabric_export_libs
+    "$<TARGET_FILE:llama::llama>"
+    "$<TARGET_FILE:llama::common>"
+    "$<TARGET_FILE:llama::mtmd>"
+    "$<TARGET_FILE:ggml::ggml>"
+    "$<TARGET_FILE:ggml::ggml-base>")
+  # build_info carries the LLAMA_* build globals. Skip it when it is an OBJECT
+  # or INTERFACE target (no TARGET_FILE); in that case those objects are merged
+  # into common.lib and the LLAMA_* symbols are picked up from there instead.
+  if(TARGET llama::build_info)
+    get_target_property(_fabric_build_info_type llama::build_info TYPE)
+    if(NOT _fabric_build_info_type STREQUAL "OBJECT_LIBRARY"
+       AND NOT _fabric_build_info_type STREQUAL "INTERFACE_LIBRARY")
+      list(APPEND _fabric_export_libs "$<TARGET_FILE:llama::build_info>")
+    endif()
+  endif()
+
+  set(_fabric_def "${CMAKE_CURRENT_BINARY_DIR}/qvac-fabric-exports.def")
+  add_custom_command(
+    OUTPUT "${_fabric_def}"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DNM=${FABRIC_NM}"
+      "-DOUTPUT=${_fabric_def}"
+      "-DINPUTS=$<JOIN:${_fabric_export_libs},|>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate-windows-def.cmake"
+    DEPENDS
+      ${_fabric_export_libs}
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate-windows-def.cmake"
+    VERBATIM
+    COMMENT "Generating qvac-fabric Windows export def")
+  add_custom_target(qvac-fabric-windows-def DEPENDS "${_fabric_def}")
+  add_dependencies(${qvac-fabric}_module qvac-fabric-windows-def)
+
+  # Replace CMake's per-target symbol scan with our archive-wide def.
   set_target_properties(${qvac-fabric}_module PROPERTIES
-    WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    WINDOWS_EXPORT_ALL_SYMBOLS OFF)
   target_link_options(${qvac-fabric}_module PRIVATE
-    -lldmingw
-    -export-all-symbols)
+    "/DEF:${_fabric_def}")
 endif()
 
 # Strip the .bare module (keep dynamic symbols required for export).
