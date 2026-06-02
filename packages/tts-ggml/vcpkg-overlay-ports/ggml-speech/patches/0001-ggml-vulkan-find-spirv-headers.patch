@@ -1,0 +1,23 @@
+diff --git a/src/ggml-vulkan/CMakeLists.txt b/src/ggml-vulkan/CMakeLists.txt
+--- a/src/ggml-vulkan/CMakeLists.txt
++++ b/src/ggml-vulkan/CMakeLists.txt
+@@ -7,6 +7,7 @@ if (POLICY CMP0147)
+ endif()
+ 
+ find_package(Vulkan COMPONENTS glslc REQUIRED)
++find_package(SPIRV-Headers QUIET)
+ 
+ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+     # Parallel build object files
+@@ -87,6 +88,11 @@ if (Vulkan_FOUND)
+     )
+ 
+     target_link_libraries(ggml-vulkan PRIVATE Vulkan::Vulkan)
++
++    if (TARGET SPIRV-Headers::SPIRV-Headers)
++        target_link_libraries(ggml-vulkan PRIVATE SPIRV-Headers::SPIRV-Headers)
++    endif()
++
+     # [qvac-rca] link liblog so __android_log_print resolves in the
+     # instrumented ggml_vk_create_pipeline_func / ggml_vk_dispatch_pipeline.
+     if (ANDROID)
