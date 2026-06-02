@@ -76,6 +76,12 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/addon/src/model-interface/LlamaLazyInitializeBackend.cpp
   ${PROJECT_SOURCE_DIR}/addon/src/model-interface/BertModel.cpp
 )
+
+# Windows: define the llama/common data globals locally; they cannot be imported
+# across the delay-loaded fabric module (see the shim for details).
+if(WIN32)
+  target_sources(${embed-llamacpp} PRIVATE ${PROJECT_SOURCE_DIR}/addon/src/windows_fabric_data.cpp)
+endif()
 target_include_directories(
   ${embed-llamacpp}
   PRIVATE
