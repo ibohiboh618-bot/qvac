@@ -78,7 +78,11 @@ function resolveFromArtifact () {
 }
 
 function resolveFromPackage () {
-  if (!/^@?[A-Za-z0-9._/~^>=<-]+$/.test(PREBUILD_PACKAGE)) {
+  // Allow npm specs like `name`, `@scope/name`, `@scope/name@1.2.3`, dist-tags
+  // and ranges. The `@` may appear both as a scope prefix and as the
+  // name@version separator, so it is permitted throughout (shell metachars
+  // like ; & | $ ` are still rejected).
+  if (!/^[@A-Za-z0-9._/~^>=<-]+$/.test(PREBUILD_PACKAGE)) {
     fail(`invalid prebuild-package spec: ${PREBUILD_PACKAGE}`)
   }
   const tmp = fs.mkdtempSync(path.join(RUNNER_TEMP, 'prebuild-'))
