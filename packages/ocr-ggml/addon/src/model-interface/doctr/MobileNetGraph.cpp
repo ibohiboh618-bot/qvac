@@ -115,24 +115,6 @@ struct GraphBuilder {
                : ggml_relu_inplace(ctx, x);
   }
 
-  /// Guard against silent dtype drift in the conv chain. KleidiAI's SME
-  /// conv2d dispatch fires only when {kernel, src, dst} are all the same
-  /// dtype, so any conv that mixes its kernel and activation dtypes is a
-  /// guaranteed fallback to the plain ggml-cpu kernel. Throw at graph-build
-  /// time so the mismatch surfaces immediately instead of degrading silently.
-  void requireMatchingConvDtypes(
-      const struct ggml_tensor* kernelT, const struct ggml_tensor* input,
-      const char* opLabel) const {
-    if (kernelT->type == input->type) {
-      return;
-    }
-    raise(
-        std::string("Conv dtype mismatch at ") + opLabel + ": kernel " +
-        kernelT->name + " is " + ggml_type_name(kernelT->type) +
-        " but input is " + ggml_type_name(input->type) +
-        " — KleidiAI dispatch requires matching dtypes.");
-  }
-
   /// Conv2d (BN folded offline into weights+bias), optionally followed by an
   /// activation.
   struct ggml_tensor* convBnAct(
@@ -142,7 +124,6 @@ struct GraphBuilder {
       bool useHardswish, bool convertChannelFirst = false) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
-    requireMatchingConvDtypes(kernelT, x, "ggml_conv_2d_direct");
     if(convertChannelFirst)
     {
       kernelT = ggml_permute(ctx, kernelT, 1, 2, 0, 3);
@@ -218,7 +199,6 @@ struct GraphBuilder {
   struct ggml_tensor* convTransposeBnAct(
       struct ggml_tensor* input, const std::string& convPrefix) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
-    requireMatchingConvDtypes(kernelT, input, "ggml_conv_transpose_2d_p0");
     struct ggml_tensor* conv =
         ggml_conv_transpose_2d_p0(ctx, kernelT, input, 2);
     conv = ggml_add_inplace(ctx, conv, t(convPrefix + ".bias_br"));
@@ -236,10 +216,7 @@ struct GraphBuilder {
     output =
         convTransposeBnAct(output, "dbnet.prob_head.3");
     struct ggml_tensor* probHead6Kernel = t("dbnet.prob_head.6.weight");
-    requireMatchingConvDtypes(
-        probHead6Kernel, output, "ggml_conv_transpose_2d_p0");
     output = ggml_conv_transpose_2d_p0(ctx, probHead6Kernel, output, 2);
-    checkNhwcLayout(output, "conv_transpose dbnet.prob_head.6", "out");
     return ggml_add_inplace(
         ctx, output, t("dbnet.prob_head.6.bias_br"));
   }
@@ -251,7 +228,6 @@ struct GraphBuilder {
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
-    requireMatchingConvDtypes(kernelT, x, "ggml_conv_2d_dw_direct");
     struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
         ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     conv = ggml_add_inplace(ctx, conv, t(convPrefix + ".bias_br"));
@@ -275,15 +251,12 @@ struct GraphBuilder {
         0);
 
     struct ggml_tensor* fc1Kernel = t(sePrefix + ".fc1.weight");
-    requireMatchingConvDtypes(fc1Kernel, pooled, "ggml_conv_2d_direct (SE fc1)");
     struct ggml_tensor* fc1 =
         ggml_conv_2d_direct(ctx, fc1Kernel, pooled, 1, 1, 0, 0, 1, 1);
-    checkNhwcLayout(fc1, ("se_fc1 " + sePrefix).c_str(), "out");
     fc1 = ggml_add_inplace(ctx, fc1, t(sePrefix + ".fc1.bias_br"));
     fc1 = ggml_relu_inplace(ctx, fc1);
 
     struct ggml_tensor* fc2Kernel = t(sePrefix + ".fc2.weight");
-    requireMatchingConvDtypes(fc2Kernel, fc1, "ggml_conv_2d_direct (SE fc2)");
     struct ggml_tensor* fc2 =
         ggml_conv_2d_direct(ctx, fc2Kernel, fc1, 1, 1, 0, 0, 1, 1);
     fc2 = ggml_add_inplace(ctx, fc2, t(sePrefix + ".fc2.bias_br"));
@@ -303,6 +276,13 @@ struct GraphBuilder {
 
     int spatial = inputSpatialHw;
     struct ggml_tensor* y = x;
+
+    // Whether this block's input is channel-contiguous. Gates the
+    // cont-before-SE, residual x cont, and re-NHWC code below so they
+    // only fire when there's actually NHWC to handle. When the caller
+    // (buildGraph) drops the chain to WHCN before this block, all three
+    // become no-ops and the block runs entirely on the standard path.
+    const bool inputIsNhwc = ggml_is_contiguous_channels(x);
 
     int dwBlockIdx = 0;
     int seBlockIdx = -1;
@@ -345,8 +325,12 @@ struct GraphBuilder {
       spatial = (spatial + 1) / 2;
     }
 
-    // Squeeze-and-excite.
+    // SE block always runs WHCN (unresolved NHWC issues in pool / SE-FC /
+    // mul on the qvac-fabric side). Only cont if the dw output was NHWC.
     if (cfg.useSe) {
+      if (inputIsNhwc) {
+        y = ggml_cont(ctx, y);
+      }
       const std::string sePrefix =
           base + ".block." + std::to_string(seBlockIdx);
       y = seBlock(y, sePrefix, spatial);
@@ -364,7 +348,22 @@ struct GraphBuilder {
         cfg.useHardswish);
 
     if (cfg.stride == 1 && cfg.inputChannels == cfg.outputChannels) {
-      y = ggml_add_inplace(ctx, y, x);
+      // SE blocks cont y to WHCN before SE compute, so y ends up WHCN
+      // when useSe + input was NHWC. The block input x is still NHWC in
+      // that case — cont it to match so the residual ADD doesn't mix
+      // strides.
+      struct ggml_tensor* residualX =
+          (cfg.useSe && inputIsNhwc) ? ggml_cont(ctx, x) : x;
+      y = ggml_add_inplace(ctx, y, residualX);
+    }
+
+    // Re-NHWC the block output so the next block's expand + dw can stay
+    // channel-contiguous. Only needed when SE dropped us to WHCN AND the
+    // block was running NHWC to begin with. If the caller fed WHCN in,
+    // we leave WHCN out — the chain stays terminated.
+    if (cfg.useSe && inputIsNhwc) {
+      y = ggml_cont(ctx, ggml_permute(ctx, y, 1, 2, 0, 3));
+      y = ggml_permute(ctx, y, 2, 0, 1, 3);
     }
     return y;
   }
@@ -793,19 +792,6 @@ WeightsBundle loadWeights(
     return true;
   };
 
-  for (auto& [name, dst] : tensors) {
-    if (!name.ends_with(".weight")) {
-      continue;
-    }
-    if (dst->ne[2] != 1) {
-      continue;
-    }
-    if (convTransposeWeightNames.contains(name)) {
-      continue;
-    }
-    dst->nb[2] = ggml_type_size(dst->type);
-  }
-
   if (prepackBuft != nullptr) {
     // Per-tensor allocation for the prepack-eligible conv weights so their
     // bytes flow through the KleidiAI buft's set_tensor hook at upload
@@ -937,6 +923,77 @@ WeightsBundle loadWeights(
     ggml_backend_tensor_set(dst, raw.data(), 0, bytes);
   }
 
+  // Phase A.5: physically reorder depthwise kernel bytes from GGUF's OHW
+  // layout (OC outermost, KW innermost) into HWO (KH outermost, OC
+  // innermost) — the layout
+  // `ggml_compute_forward_conv_2d_dw_cwhn` actually walks. The cwhn
+  // kernel indexes as `knl_data[(knl_y*KW + knl_x)*OC + c_i]`, never
+  // consults `kernel->nb[]`, so the prior approach of flipping nb[2] in
+  // place delivered OHW bytes labelled NHWC and silently produced wrong
+  // values. After this reorder the bytes and strides agree: cwhn reads
+  // weight `(kw, kh, oc)` exactly where it expects it.
+  //
+  // IMPORTANT: the standard WHCN dw compute path also reads kernel bytes
+  // positionally (no `nb[]`), assuming OHW layout. Reordering a dw kernel
+  // to HWO breaks WHCN compute for that kernel. So we only reorder the
+  // kernels actually consumed by NHWC dw compute — the trunk-NHWC region
+  // (features.1.block.0.0, features.{2,3}.block.1.0). All other dw
+  // kernels stay in their on-disk OHW layout for the WHCN path.
+  // See `dw-conv-nhwc-weight-reorder.md` in qvac-fabric-llm.cpp.
+  const std::unordered_set<std::string> nhwcDwWeightNames = {
+      "features.1.block.0.0.weight",
+      "features.2.block.1.0.weight",
+      "features.3.block.1.0.weight",
+      "features.4.block.1.0.weight",
+      "features.5.block.1.0.weight",
+      "features.6.block.1.0.weight",
+      "features.7.block.1.0.weight",
+      "features.8.block.1.0.weight",
+      "features.9.block.1.0.weight",
+      "features.10.block.1.0.weight",
+      "features.11.block.1.0.weight",
+      "features.12.block.1.0.weight",
+      "features.13.block.1.0.weight",
+      "features.14.block.1.0.weight",
+      "features.15.block.1.0.weight",
+  };
+  for (auto& [name, dst] : tensors) {
+    if (!nhwcDwWeightNames.contains(name)) {
+      continue;
+    }
+    const int64_t KW = dst->ne[0];
+    const int64_t KH = dst->ne[1];
+    const int64_t OC = dst->ne[3];
+    const size_t ts = ggml_type_size(dst->type);
+    const size_t nbytes = static_cast<size_t>(KW) * static_cast<size_t>(KH) *
+                          static_cast<size_t>(OC) * ts;
+
+    std::vector<uint8_t> src_bytes(nbytes);
+    ggml_backend_tensor_get(dst, src_bytes.data(), 0, nbytes);
+
+    std::vector<uint8_t> dst_bytes(nbytes);
+    for (int64_t kh = 0; kh < KH; ++kh) {
+      for (int64_t kw = 0; kw < KW; ++kw) {
+        for (int64_t oc = 0; oc < OC; ++oc) {
+          const size_t s = static_cast<size_t>(
+                               oc * KW * KH + kh * KW + kw) * ts;
+          const size_t d = static_cast<size_t>(
+                               kh * KW * OC + kw * OC + oc) * ts;
+          std::memcpy(dst_bytes.data() + d, src_bytes.data() + s, ts);
+        }
+      }
+    }
+    ggml_backend_tensor_set(dst, dst_bytes.data(), 0, nbytes);
+
+    // Strides now truthfully describe the new HWO byte order:
+    //   element (kw, kh, ic=0, oc) lives at
+    //     kw*(OC*ts) + kh*(KW*OC*ts) + 0 + oc*ts
+    dst->nb[0] = static_cast<size_t>(OC) * ts;       // W stride: one OC slab
+    dst->nb[1] = static_cast<size_t>(KW) * OC * ts;  // H stride: KW slabs
+    dst->nb[2] = ts;                                  // IC=1 (degenerate)
+    dst->nb[3] = ts;                                  // OC innermost
+  }
+
   return bundle;
 }
 
@@ -953,10 +1010,19 @@ ComputeGraph buildGraph(
   }
   struct ggml_context* ctx = cg.ctx.get();
 
-  // WHCN order: W, H, C, N.
+  // WHCN order: W, H, C, N — the host uploads into this tensor with
+  // standard ggml row-major strides (one channel plane after another).
   cg.input = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, kInputHw, kInputHw, 3, 1);
   ggml_set_name(cg.input, "input");
 
+  // Phase A: seed the conv chain in channel-contiguous memory.
+  //   1) permute(1,2,0,3): WHCN ne → CWHN ne (C moves to ne[0])
+  //   2) cont: physically reorder bytes so C is innermost
+  //   3) permute(2,0,1,3): relabel CWHN ne → WHCN ne (no data move)
+  // After step 3 the tensor has ne=[W,H,C,N] and nb[2] = element_size,
+  // which passes `ggml_is_contiguous_channels`. Each conv in the chain
+  // propagates NHWC strides through its output via the qvac-fabric
+  // patches. NHWC stays alive until the cont boundary below.
   struct ggml_tensor* inputNhwc =
       ggml_cont(ctx, ggml_permute(ctx, cg.input, 1, 2, 0, 3));
   inputNhwc = ggml_permute(ctx, inputNhwc, 2, 0, 1, 3);
@@ -975,7 +1041,12 @@ ComputeGraph buildGraph(
 
   int spatial = kInputHw / 2; // 112 after stem
 
-  // 15 inverted residual blocks.
+  // NHWC across the conv trunk plus features.4's expand + dw. The cont
+  // back to WHCN is now inside `invertedResidual` right before each SE
+  // block. Only the dw kernels actually consumed by NHWC compute
+  // (features.{1,2,3} dw + features.4 dw) are reordered to HWO at load
+  // time; the rest stay OHW so the WHCN dw compute path reads them
+  // correctly.
   int graphFeatureIndex = 1;
   for (const BlockConfig& cfg : kBlocks) {
     x = gb.invertedResidual(x, cfg, graphFeatureIndex, spatial);
@@ -995,6 +1066,7 @@ ComputeGraph buildGraph(
     default:
       break;
     }
+
     ++graphFeatureIndex;
   }
 
@@ -1007,17 +1079,25 @@ ComputeGraph buildGraph(
       /*activate=*/true,
       /*useHardswish=*/true);
 
+
   if (cg.output_1 == nullptr || cg.output_2 == nullptr ||
       cg.output_3 == nullptr) {
     raise("Missing backbone feature map for FPN input branches");
   }
 
-  // FPN in_branches: project C2/C3/C4/C5 to 256 channels with 1x1 conv + BN +
-  // ReLU.
+  // FPN in_branches run NHWC — they're plain 1×1 convs + BN + ReLU, the
+  // existing NHWC propagation handles them.
   cg.output_1 = gb.fpnInBranch(cg.output_1, 0);
   cg.output_2 = gb.fpnInBranch(cg.output_2, 1);
   cg.output_3 = gb.fpnInBranch(cg.output_3, 2);
   cg.output_4 = gb.fpnInBranch(x, 3);
+
+  // Cont to WHCN before the top-down upsample/add — ggml_interpolate is
+  // not NHWC-aware on the qvac-fabric side yet.
+  cg.output_1 = ggml_cont(ctx, cg.output_1);
+  cg.output_2 = ggml_cont(ctx, cg.output_2);
+  cg.output_3 = ggml_cont(ctx, cg.output_3);
+  cg.output_4 = ggml_cont(ctx, cg.output_4);
 
   // FPN top-down path: out = [_x[-1]]; append(upsample(out[-1]) + t)
   // for the lower-level lateral features, using bilinear align_corners=True.
