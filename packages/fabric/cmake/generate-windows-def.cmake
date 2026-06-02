@@ -18,11 +18,13 @@
 # "unresolved export" errors of a hand-written .def and the duplicate-symbol
 # risk of force-including whole archives.
 #
-# Filtering is done on the demangled name: MSVC decorates a member function as
-# "?<method>@<class>@@..." (class *after* method), so matching the mangled name
-# alone would miss members of allow-listed classes such as common_init_result.
-# We therefore run llvm-nm twice over each input in the same order (mangled and
-# demangled), filter on the demangled signature, and export the mangled name.
+# Matching is a substring test on the *linker* (mangled) symbol name, mirroring
+# the Mach-O exports.txt patterns ("*common_*", "*string_*", ...). MSVC embeds
+# the source identifiers literally in its decoration, so a member function such
+# as common_init_result::model() decorates to "?model@common_init_result@@..."
+# and is caught by the "common_" entry without needing to demangle. A single nm
+# pass is therefore enough; the previous mangled/demangled pairing was fragile
+# because the two passes do not emit a matching number of lines.
 #
 # Invoked at build time:
 #   cmake -DNM=<llvm-nm> -DOUTPUT=<def> "-DINPUTS=<lib>|<lib>|..." \
@@ -39,104 +41,66 @@ endif()
 # whereas ';' would be re-split into separate command arguments.
 string(REPLACE "|" ";" _inputs "${INPUTS}")
 
-# Source-level name prefixes to export. Keep in sync with symbols.map.
+# Source-level name fragments to export. Keep in sync with symbols.map /
+# exports.txt. Matched as substrings of the decorated symbol name, so they catch
+# both C entry points (bare "llama_decode") and C++ members/free functions whose
+# decoration embeds the identifier (e.g. "?model@common_init_result@@...").
 set(_allow
-  "llama_" "llava_" "mtmd_" "LLAMA_" "ggml_" "gguf_"
+  "llama_" "llava_" "mtmd_" "ggml_" "gguf_"
   "common_" "json_schema_to_grammar" "string_"
   "set_process_priority" "postprocess_cpu_params" "metadata_handle_deleter")
 string(JOIN "|" _alt ${_allow})
+set(_pattern "(${_alt})")
 
-# A prefix matches when it appears at a word boundary in the qualified name:
-# at the start (C symbols, free functions, data) or after a separator such as
-# the space/'*'/'::'/'~' that precedes the class or function identifier in a
-# demangled signature. The parameter list is stripped first so a prefix in an
-# argument type does not trigger a match.
-set(_pattern "(^|[^A-Za-z0-9_:])(${_alt})")
-
-# Split nm output into lines, tolerating CRLF, and report a length so two runs
-# can be paired by index.
-function(_fabric_nm_lines _input _demangle _out_var)
-  if(_demangle)
-    execute_process(
-      COMMAND "${NM}" --defined-only --extern-only --no-sort --demangle "${_input}"
-      OUTPUT_VARIABLE _raw RESULT_VARIABLE _rc)
-  else()
-    execute_process(
-      COMMAND "${NM}" --defined-only --extern-only --no-sort "${_input}"
-      OUTPUT_VARIABLE _raw RESULT_VARIABLE _rc)
-  endif()
-  if(NOT _rc EQUAL 0)
-    message(FATAL_ERROR "generate-windows-def.cmake: nm failed on ${_input} (${_rc})")
-  endif()
-  string(REPLACE "\r" "" _raw "${_raw}")
-  string(REPLACE "\n" ";" _lines "${_raw}")
-  set(${_out_var} "${_lines}" PARENT_SCOPE)
-endfunction()
-
-set(_body "")
-set(_seen "")
+set(_names "")
 
 foreach(_input IN LISTS _inputs)
   if(NOT EXISTS "${_input}")
     continue()
   endif()
 
-  _fabric_nm_lines("${_input}" FALSE _mlines)
-  _fabric_nm_lines("${_input}" TRUE _dlines)
-
-  list(LENGTH _mlines _mcount)
-  list(LENGTH _dlines _dcount)
-  if(NOT _mcount EQUAL _dcount)
-    message(FATAL_ERROR
-      "generate-windows-def.cmake: mangled/demangled nm output mismatch for ${_input} (${_mcount} vs ${_dcount})")
-  endif()
-  if(_mcount EQUAL 0)
-    continue()
+  execute_process(
+    COMMAND "${NM}" --defined-only --extern-only --no-sort "${_input}"
+    OUTPUT_VARIABLE _out
+    RESULT_VARIABLE _rc)
+  if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "generate-windows-def.cmake: nm failed on ${_input} (${_rc})")
   endif()
 
-  math(EXPR _last "${_mcount} - 1")
-  foreach(_i RANGE 0 ${_last})
-    list(GET _mlines ${_i} _mline)
+  string(REPLACE "\r" "" _out "${_out}")
+  string(REPLACE "\n" ";" _lines "${_out}")
+  foreach(_line IN LISTS _lines)
     # nm lines are "<address> <type> <name>"; skip archive headers / blanks.
-    if(NOT _mline MATCHES "^[0-9A-Fa-f]+ ([A-Za-z]) (.+)$")
+    if(NOT _line MATCHES "^[0-9A-Fa-f]+ ([A-Za-z]) (.+)$")
       continue()
     endif()
     set(_type "${CMAKE_MATCH_1}")
     set(_name "${CMAKE_MATCH_2}")
 
-    list(GET _dlines ${_i} _dline)
-    if(_dline MATCHES "^[0-9A-Fa-f]+ [A-Za-z] (.+)$")
-      set(_dem "${CMAKE_MATCH_1}")
-    else()
-      set(_dem "${_name}")
-    endif()
-
-    # Drop the parameter list so a prefix in an argument type cannot match.
-    string(FIND "${_dem}" "(" _paren)
-    if(_paren GREATER -1)
-      string(SUBSTRING "${_dem}" 0 ${_paren} _probe)
-    else()
-      set(_probe "${_dem}")
-    endif()
-
-    if(NOT _probe MATCHES "${_pattern}")
-      continue()
-    endif()
-    if(_name IN_LIST _seen)
-      continue()
-    endif()
-    list(APPEND _seen "${_name}")
-
     # Export code symbols only (T/t text, W/w weak such as C++ template
     # instances). The cross-DLL `common` data globals (build-info, log verbosity)
     # are exported via dllexport in the patched qvac-fabric headers and imported
-    # with dllimport by consumers. MSVC cannot import data through a plain .def
+    # with dllimport by consumers; MSVC cannot import data through a plain .def
     # DATA export without dllimport anyway, so listing data here would be dead
     # weight and would also collide with those dllexport entries (LNK4197).
-    if(_type MATCHES "[TtWw]")
-      string(APPEND _body "    ${_name}\n")
+    if(NOT _type MATCHES "[TtWw]")
+      continue()
     endif()
+    if(NOT _name MATCHES "${_pattern}")
+      continue()
+    endif()
+    list(APPEND _names "${_name}")
   endforeach()
+endforeach()
+
+# Dedup once at the end: a symbol can be defined in more than one archive, and
+# duplicate EXPORTS entries would trigger linker warnings. REMOVE_DUPLICATES is
+# far cheaper than an IN_LIST guard per symbol across these large archives.
+list(REMOVE_DUPLICATES _names)
+
+set(_body "")
+foreach(_name IN LISTS _names)
+  string(APPEND _body "    ${_name}\n")
 endforeach()
 
 file(WRITE "${OUTPUT}" "EXPORTS\n${_body}")
