@@ -61,15 +61,24 @@ jobs:
                       arch: x64
 
         steps:
+            - name: Manual Workspace Cleanup
+              if: runner.environment != 'github-hosted'
+              shell: bash
+              run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
+
+            - name: Checkout code
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+              with:
+                  repository: ${{ inputs.repository || github.repository }}
+                  ref: ${{ inputs.ref || github.ref }}
+                  token: ${{ secrets.PAT_TOKEN }}
+
             # classification-ggml installs bare-runtime (not bare), uses
             # --ignore-scripts on npm install, and restricts the prebuild artifact
             # download to its own platform/arch pattern.
             - name: Bootstrap
               uses: ./.github/actions/run-desktop-integration-tests/bootstrap
               with:
-                  repository: ${{ inputs.repository }}
-                  ref: ${{ inputs.ref }}
-                  pat-token: ${{ secrets.PAT_TOKEN }}
                   bare-packages: bare-runtime bare-make
 
             - name: Install NPM dependencies

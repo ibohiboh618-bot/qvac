@@ -213,13 +213,20 @@ jobs:
         steps:
             # Only the integration job shares the desktop composite pipeline; the
             # supertonic benchmark + summary jobs below are bespoke and stay inline.
+            - name: Manual Workspace Cleanup
+              if: runner.environment != 'github-hosted'
+              shell: bash
+              run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
+
+            - name: Checkout code
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+              with:
+                  repository: ${{ inputs.repository || github.repository }}
+                  ref: ${{ inputs.ref || github.ref }}
+                  token: ${{ secrets.PAT_TOKEN }}
+
             - name: Bootstrap
               uses: ./.github/actions/run-desktop-integration-tests/bootstrap
-              with:
-                  runner: ${{ matrix.runner }}
-                  repository: ${{ inputs.repository }}
-                  ref: ${{ inputs.ref }}
-                  pat-token: ${{ secrets.PAT_TOKEN }}
 
             - name: Configure AWS credentials via OIDC
               uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
