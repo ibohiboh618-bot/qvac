@@ -13,11 +13,6 @@ find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
-# Use an overlay port for qvac-fabric so we can patch the forked llama.cpp common
-# headers (dllexport/dllimport markers on the cross-DLL data globals; see
-# ports/qvac-fabric/patches) ahead of the change landing in the published port.
-set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports;${VCPKG_OVERLAY_PORTS}")
-
 set(VCPKG_INSTALL_OPTIONS --clean-after-build)
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package.json" _pkg_json)
@@ -136,10 +131,11 @@ elseif(WIN32)
     "$<TARGET_FILE:ggml::ggml-base>")
   # build_info carries the LLAMA_BUILD_NUMBER / LLAMA_COMMIT data globals. Scan
   # it only when it is a real archive; the vcpkg export ships it as an INTERFACE
-  # (or OBJECT) target with no TARGET_FILE. These globals are plain `extern` data
-  # (no dllimport) referenced by header-inlined code in consumers, and MSVC
-  # cannot import data across a DLL boundary, so consumers define module-local
-  # copies instead of importing them from here (see windows_fabric_data.cpp).
+  # (or OBJECT) target with no TARGET_FILE, in which case those objects are
+  # merged into common.lib and the symbols are picked up from there. These data
+  # globals are not exported from the runtime at all: bare delay-loads sibling
+  # .bare modules on Windows and delay-loading cannot resolve data imports, so
+  # consumers define module-local copies instead (see windows_fabric_data.cpp).
   if(TARGET llama::build_info)
     get_target_property(_fabric_build_info_type llama::build_info TYPE)
     if(NOT _fabric_build_info_type STREQUAL "OBJECT_LIBRARY"
@@ -270,8 +266,4 @@ if(WIN32)
   add_definitions(-DNOMINMAX -DWIN32_LEAN_AND_MEAN -DNOGDI)
   target_compile_options(${qvac-fabric} PRIVATE "/utf-8")
   target_link_libraries(${qvac-fabric} PRIVATE msvcrt.lib)
-  # This addon is part of the fabric runtime, so its own TUs (binding.cpp pulls
-  # in common.h) must see the dllexport side of the QVAC_COMMON_API markers in
-  # the patched qvac-fabric headers, matching the runtime's exported data globals.
-  target_compile_definitions(${qvac-fabric} PRIVATE QVAC_FABRIC_BUILD)
 endif()

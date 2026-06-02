@@ -24,6 +24,12 @@ add_executable(
   ${CMAKE_SOURCE_DIR}/addon/src/model-interface/utils.cpp
 )
 
+# Windows: define the llama/common data globals locally; they cannot be imported
+# across the delay-loaded fabric module (see the shim for details).
+if(WIN32)
+  target_sources(addon-test PRIVATE ${CMAKE_SOURCE_DIR}/addon/src/windows_fabric_data.cpp)
+endif()
+
 target_compile_options(
   addon-test
   PRIVATE

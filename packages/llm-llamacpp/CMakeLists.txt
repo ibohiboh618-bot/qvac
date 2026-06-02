@@ -100,6 +100,12 @@ endif()
     ${PROJECT_SOURCE_DIR}/addon/src/utils/QwenTemplate.cpp
   )
 
+  # Windows: define the llama/common data globals locally; they cannot be
+  # imported across the delay-loaded fabric module (see the shim for details).
+  if(WIN32)
+    list(APPEND ADDON_SOURCES ${PROJECT_SOURCE_DIR}/addon/src/windows_fabric_data.cpp)
+  endif()
+
   target_sources(
     ${inference-addon-llama}
     PRIVATE
@@ -186,6 +192,11 @@ if(BUILD_CLI)
     ${PROJECT_SOURCE_DIR}/addon/src/utils/Qwen3ToolsDynamicTemplate.cpp
     ${PROJECT_SOURCE_DIR}/addon/src/utils/QwenTemplate.cpp
   )
+
+  # Windows: define the llama/common data globals locally (see the shim).
+  if(WIN32)
+    target_sources(cli_tool PRIVATE ${PROJECT_SOURCE_DIR}/addon/src/windows_fabric_data.cpp)
+  endif()
 
   target_include_directories(
     cli_tool

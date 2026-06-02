@@ -6,10 +6,11 @@
 # shared runtime on every platform.
 #
 # This handles the *function* surface only. The few cross-DLL `common` data
-# globals (build-info, log verbosity) are exported via __declspec(dllexport) in
-# the patched qvac-fabric headers and imported with __declspec(dllimport) by
-# consumers, because MSVC cannot import data across a DLL boundary through a
-# plain .def DATA export. Data symbols are therefore skipped below.
+# globals (build-info, log verbosity) are NOT exported: bare delay-loads sibling
+# .bare modules on Windows, and delay-loading cannot resolve data imports (only
+# functions get an IAT thunk). Consumers therefore define module-local copies of
+# those globals (see each addon's windows_fabric_data.cpp). Data symbols are
+# skipped below.
 #
 # Listing a symbol under EXPORTS acts as a reference, so the linker pulls the
 # defining member out of the (non-whole-archived) static libraries on demand.
@@ -79,10 +80,8 @@ foreach(_input IN LISTS _inputs)
 
     # Export code symbols only (T/t text, W/w weak such as C++ template
     # instances). The cross-DLL `common` data globals (build-info, log verbosity)
-    # are exported via dllexport in the patched qvac-fabric headers and imported
-    # with dllimport by consumers; MSVC cannot import data through a plain .def
-    # DATA export without dllimport anyway, so listing data here would be dead
-    # weight and would also collide with those dllexport entries (LNK4197).
+    # are provided by module-local definitions in each consumer because bare
+    # delay-loads this module and delay-loading cannot resolve data imports.
     if(NOT _type MATCHES "[TtWw]")
       continue()
     endif()
