@@ -975,10 +975,10 @@ WeightsBundle loadWeights(
     for (int64_t kh = 0; kh < KH; ++kh) {
       for (int64_t kw = 0; kw < KW; ++kw) {
         for (int64_t oc = 0; oc < OC; ++oc) {
-          const size_t s = static_cast<size_t>(
-                               oc * KW * KH + kh * KW + kw) * ts;
-          const size_t d = static_cast<size_t>(
-                               kh * KW * OC + kw * OC + oc) * ts;
+          const size_t s =
+              static_cast<size_t>(oc * KW * KH + kh * KW + kw) * ts;
+          const size_t d =
+              static_cast<size_t>(kh * KW * OC + kw * OC + oc) * ts;
           std::memcpy(dst_bytes.data() + d, src_bytes.data() + s, ts);
         }
       }
@@ -988,10 +988,10 @@ WeightsBundle loadWeights(
     // Strides now truthfully describe the new HWO byte order:
     //   element (kw, kh, ic=0, oc) lives at
     //     kw*(OC*ts) + kh*(KW*OC*ts) + 0 + oc*ts
-    dst->nb[0] = static_cast<size_t>(OC) * ts;       // W stride: one OC slab
-    dst->nb[1] = static_cast<size_t>(KW) * OC * ts;  // H stride: KW slabs
-    dst->nb[2] = ts;                                  // IC=1 (degenerate)
-    dst->nb[3] = ts;                                  // OC innermost
+    dst->nb[0] = static_cast<size_t>(OC) * ts;      // W stride: one OC slab
+    dst->nb[1] = static_cast<size_t>(KW) * OC * ts; // H stride: KW slabs
+    dst->nb[2] = ts;                                // IC=1 (degenerate)
+    dst->nb[3] = ts;                                // OC innermost
   }
 
   return bundle;
@@ -1078,7 +1078,6 @@ ComputeGraph buildGraph(
       /*kernel=*/1,
       /*activate=*/true,
       /*useHardswish=*/true);
-
 
   if (cg.output_1 == nullptr || cg.output_2 == nullptr ||
       cg.output_3 == nullptr) {

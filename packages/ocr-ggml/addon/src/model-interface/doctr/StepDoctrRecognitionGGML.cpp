@@ -345,9 +345,8 @@ struct GraphBuilder {
   }
 
   struct ggml_tensor* activate(struct ggml_tensor* x, bool useHardswish) const {
-    return useHardswish
-               ? ggml_unary_inplace(ctx, x, GGML_UNARY_OP_HARDSWISH)
-               : ggml_relu_inplace(ctx, x);
+    return useHardswish ? ggml_unary_inplace(ctx, x, GGML_UNARY_OP_HARDSWISH)
+                        : ggml_relu_inplace(ctx, x);
   }
 
   struct ggml_tensor* convBnAct(
@@ -945,10 +944,10 @@ private:
       for (int64_t kh = 0; kh < KH; ++kh) {
         for (int64_t kw = 0; kw < KW; ++kw) {
           for (int64_t oc = 0; oc < OC; ++oc) {
-            const size_t s = static_cast<size_t>(
-                                 oc * KW * KH + kh * KW + kw) * ts;
-            const size_t d = static_cast<size_t>(
-                                 kh * KW * OC + kw * OC + oc) * ts;
+            const size_t s =
+                static_cast<size_t>(oc * KW * KH + kh * KW + kw) * ts;
+            const size_t d =
+                static_cast<size_t>(kh * KW * OC + kw * OC + oc) * ts;
             std::memcpy(dst_bytes.data() + d, src_bytes.data() + s, ts);
           }
         }
@@ -1064,14 +1063,8 @@ private:
     ggml_set_name(inputNhwc, "recognition_input_nhwc");
 
     GraphBuilder gb{.ctx = ctx, .w = graph.weights};
-    struct ggml_tensor* x = gb.convBnAct(
-        inputNhwc,
-        "crnn.features.0.0",
-        2,
-        2,
-        3,
-        true,
-        true);
+    struct ggml_tensor* x =
+        gb.convBnAct(inputNhwc, "crnn.features.0.0", 2, 2, 3, true, true);
     for (const BlockConfig& cfg : kBlocks) {
       x = gb.invertedResidual(x, cfg);
     }
