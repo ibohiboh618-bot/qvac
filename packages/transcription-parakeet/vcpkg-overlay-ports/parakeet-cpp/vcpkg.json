@@ -1,0 +1,71 @@
+{
+  "name": "parakeet-cpp",
+  "version-date": "2026-05-26",
+  "port-version": 2,
+  "description": "parakeet-cpp overlay pinned to tetherto/qvac-ext-lib-whisper.cpp PR #38 (QVAC-19213-parakeet-opencl). Mirrors the registry port's per-platform backends (Metal on Apple, Vulkan on desktop, OpenCL on Android); Android is OpenCL-only. Temporary test-PR overlay; drop after the PR merges and the registry ships it.",
+  "homepage": "https://github.com/tetherto/qvac-ext-lib-whisper.cpp/tree/QVAC-19213-parakeet-opencl/parakeet-cpp",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "ggml-speech",
+      "version>=": "2026-05-27"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ],
+  "default-features": [
+    {
+      "name": "metal",
+      "platform": "osx | ios"
+    },
+    {
+      "name": "opencl",
+      "platform": "android"
+    },
+    {
+      "name": "vulkan",
+      "platform": "windows | linux"
+    }
+  ],
+  "features": {
+    "metal": {
+      "description": "Enable Metal GPU acceleration (macOS / iOS)",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "metal"
+          ]
+        }
+      ]
+    },
+    "vulkan": {
+      "description": "Enable Vulkan GPU acceleration",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "vulkan"
+          ]
+        }
+      ]
+    },
+    "opencl": {
+      "description": "Enable OpenCL GPU acceleration (Android / Adreno)",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "opencl"
+          ]
+        }
+      ]
+    }
+  }
+}
