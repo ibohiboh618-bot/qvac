@@ -98,6 +98,11 @@ jobs:
         with:
           workdir: ${{ env.WORKDIR }}
           build-if-missing: "true"
+          # The C++ unit tests run under ASan; instrument the fabric runtime on
+          # Linux so allocations originating inside it are validated rather than
+          # suppressed. macOS links libc++ dynamically (no mismatch) and Windows
+          # does not use ASan, so both keep the regular runtime.
+          asan: ${{ matrix.platform == 'linux' && 'true' || 'false' }}
 
       - name: Install NPM dependencies
         working-directory: ${{ env.WORKDIR }}
@@ -183,12 +188,20 @@ jobs:
         if: ${{ matrix.os == 'ubuntu-24.04' }}
         working-directory: ${{ env.WORKDIR }}
         shell: bash
+        env:
+          # Match the linkage of the ASan-instrumented fabric built above: the
+          # test executable must share fabric's libc++ (no -static-libstdc++) so
+          # there is a single libc++/ASan runtime in the process. Otherwise the
+          # duplicate libc++ throws std::bad_cast at startup.
+          QVAC_FABRIC_ASAN: ${{ matrix.platform == 'linux' && '1' || '' }}
         run: npm run coverage:cpp:build
 
       - name: Build C++ tests
         if: ${{ matrix.os != 'ubuntu-24.04' }}
         working-directory: ${{ env.WORKDIR }}
         shell: bash
+        env:
+          QVAC_FABRIC_ASAN: ${{ matrix.platform == 'linux' && '1' || '' }}
         run: npm run test:cpp:build
 
       - name: Run C++ tests
