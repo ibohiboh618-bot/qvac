@@ -105,6 +105,16 @@ if(NOT FABRIC_STATIC_MOBILE)
   )
 endif()
 
+# The runtime is named qvac__fabric@0.bare (the module SONAME) only in the copy
+# beside the test binary, so point the executable's rpath at its own directory.
+# Unlike the .bare addon module (which cmake-bare gives an $ORIGIN rpath), this
+# plain test executable gets no such rpath by default.
+if(APPLE)
+  set_target_properties(addon-test PROPERTIES BUILD_RPATH "@loader_path")
+elseif(NOT WIN32)
+  set_target_properties(addon-test PROPERTIES BUILD_RPATH "$ORIGIN")
+endif()
+
 add_test(NAME EmbedModelTests COMMAND addon-test)
 set_tests_properties(EmbedModelTests PROPERTIES
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
