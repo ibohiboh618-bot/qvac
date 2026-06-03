@@ -14,6 +14,7 @@
 #include "inference-addon-cpp/Logger.hpp"
 #include "utils/ChatTemplateUtils.hpp"
 #include "utils/LoggingMacros.hpp"
+#include "utils/AndroidDeviceInfo.hpp"
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 
@@ -125,8 +126,13 @@ void MtmdLlmContext::initVisionContext() {
   mparams.backend_device =
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
-  mparams.image_min_tokens = 1024;
-  mparams.image_max_tokens = -1;  
+#ifdef __ANDROID__
+      using namespace qvac_lib_inference_addon_llama::android_device;
+      if (isSamsung() && isUltraDevice()) {
+        mparams.image_min_tokens = 1024;
+        QLOG_IF(Priority::INFO, "[MtmdLlm] image_min_tokens and set to 1024 for android device S25 Ultra or S26 Ultra");
+      } 
+#endif
   mparams.n_threads = params_.cpuparams.n_threads;
   ctxVision_.reset(mtmd_init_from_file(clipPath, model_, mparams));
   if (ctxVision_.get() == nullptr) {
