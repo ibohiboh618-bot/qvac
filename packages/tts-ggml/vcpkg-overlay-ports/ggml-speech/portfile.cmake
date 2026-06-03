@@ -2,19 +2,19 @@
 #
 # Verbatim copy of the qvac-registry-vcpkg ggml-speech port, dropped into
 # this PR so the exact source under test is visible here with no registry
-# indirection. Pinned at qvac-ext-ggml 2bb83370 -- the speech tip (v0.10.2
-# sync) with the Adreno fixes from PR #14 (ggml-vulkan Adreno 740 / Qualcomm)
-# and PR #17 (ggml-opencl elementwise kernels for Chatterbox S3Gen) applied
-# on top. Fetched from GitHub so CI runners build the exact source under test.
+# indirection. Pinned at qvac-ext-ggml 8de98a43 -- the PR #17 branch head: the
+# speech tip (v0.10.2 sync) with PR #17 (ggml-opencl elementwise kernels for
+# Chatterbox S3Gen) plus its review fixes applied on top. Fetched from GitHub
+# so CI runners build the exact source under test.
 #
-# Remove this overlay (back to the registry ggml-speech) once PR #14 + PR #17
-# land on the speech branch and the registry port is bumped.
+# Remove this overlay (back to the registry ggml-speech) once PR #17 lands on
+# the speech branch and the registry port is bumped.
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF 2bb8337068905e1995e6b23c0d0674d7350ca907
-    SHA512 49ca71de739af7454cd8100f50f78c4e780e9c1765f53eca3bec96d90e0ce9fc4e49fc23341598028fabc0f75f831b447efdd1ce91dde397921e84b6e6138b62
+    REF 8de98a43149bce485214ddb0647c7a54f0d07e2b
+    SHA512 ca370b5794f724eab69f67a462a5a7dfb7f4c516eb0dbd0d826c981be9056d8aa7efe9e4e43336d33e0627da243de870522b138c374f7bc524e2435d9854a18c
     HEAD_REF speech
 )
 
