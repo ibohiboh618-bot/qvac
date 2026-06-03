@@ -31,6 +31,15 @@ inputs:
     description: Optional extra bare-make generate flags, e.g. --simulator
     required: false
     default: ""
+  asan:
+    description: >-
+      Build an AddressSanitizer-instrumented fabric runtime (Linux only) for the
+      C++ unit tests. Compiles the qvac-fabric port and the module with
+      -fsanitize=address into a dedicated vcpkg cache so the test executable's
+      ASan can validate allocations originating inside fabric. Never publish the
+      result: an instrumented .bare only loads inside an instrumented binary.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -84,8 +93,18 @@ runs:
             echo "Local @qvac/fabric prebuilds already present"
           else
             echo "Local @qvac/fabric prebuilds missing; building from source..."
-            export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache,readwrite"
-            mkdir -p "${fabric_dir}/vcpkg/cache"
+            # ASan builds use a dedicated cache so their instrumented archives
+            # never collide with (or get restored from) the regular cache: the
+            # overlay triplet adds -fsanitize=address without changing the
+            # triplet file's name/ABI hash, so the two must stay separated.
+            if [ "${{ inputs.asan }}" = "true" ]; then
+              export QVAC_FABRIC_ASAN=1
+              export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache-asan,readwrite"
+              mkdir -p "${fabric_dir}/vcpkg/cache-asan"
+            else
+              export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache,readwrite"
+              mkdir -p "${fabric_dir}/vcpkg/cache"
+            fi
             if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ -n "${VCPKG_ROOT:-}" ]; then
               rm -f "${VCPKG_ROOT}/downloads/git-tmp/.git/"*.lock
             fi

@@ -13,6 +13,14 @@ find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
+# TEMPORARY: a local overlay port (vcpkg/ports/qvac-fabric) can pin the
+# llama.cpp/ggml runtime to a fork commit (e.g. to validate a fix before it
+# lands in qvac-registry-vcpkg). Guarded by EXISTS so it is inert once the
+# overlay directory is removed.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/ports")
+  set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/ports;${VCPKG_OVERLAY_PORTS}")
+endif()
+
 set(VCPKG_INSTALL_OPTIONS --clean-after-build)
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package.json" _pkg_json)
@@ -20,9 +28,28 @@ string(JSON _pkg_version GET "${_pkg_json}" "version")
 
 project(qvac-fabric VERSION ${_pkg_version} LANGUAGES C CXX)
 
+# Test-only AddressSanitizer build, enabled with QVAC_FABRIC_ASAN=1 (the same
+# flag the overlay triplet uses to instrument the qvac-fabric port). Here we
+# instrument the module itself and, crucially, link the *shared* libc++ instead
+# of -static-libstdc++. A module-local static libc++ would provide its own
+# operator new/delete and the symbols.map `local: *` rule would bind them
+# internally, so allocations made inside fabric would bottom out at malloc and
+# clash with the test executable's ASan operator delete. With the shared libc++
+# those operators resolve to the ASan runtime the test exe provides, so
+# cross-module allocations match and ASan sees the whole runtime.
+set(QVAC_FABRIC_ASAN OFF)
+if(DEFINED ENV{QVAC_FABRIC_ASAN} AND NOT "$ENV{QVAC_FABRIC_ASAN}" STREQUAL "0")
+  set(QVAC_FABRIC_ASAN ON)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_compile_options(-stdlib=libc++)
-  add_link_options(-stdlib=libc++ -static-libstdc++)
+  if(QVAC_FABRIC_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-stdlib=libc++ -fsanitize=address)
+  else()
+    add_link_options(-stdlib=libc++ -static-libstdc++)
+  endif()
 endif()
 
 find_path(VCPKG_INSTALLED_PATH share/lint-cpp/.clang-format REQUIRED)
@@ -175,8 +202,9 @@ elseif(WIN32)
     "/EXPORT:bare_register_module_v0")
 endif()
 
-# Strip the .bare module (keep dynamic symbols required for export).
-if(CMAKE_STRIP AND NOT WIN32)
+# Strip the .bare module (keep dynamic symbols required for export). Skip when
+# building the ASan test runtime so fabric frames keep their symbols in reports.
+if(CMAKE_STRIP AND NOT WIN32 AND NOT QVAC_FABRIC_ASAN)
   if(APPLE)
     set(_strip_flags -x)
   else()
