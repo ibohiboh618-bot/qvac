@@ -107,8 +107,51 @@ for quant in "${QUANTIZATIONS[@]}"; do
   dl "$url" "$output_path"
 done
 
+# ---------------------------------------------------------------------------
+# LTX runtime components (required in addition to the diffusion model)
+#
+# A working LTX-2.3 pipeline needs more than the diffusion transformer:
+#   - video VAE + audio VAE         (latent <-> pixel/audio)
+#   - embeddings connectors         (text-encoder -> transformer adapter)
+#   - gemma-3-12b-it text encoder   (the --llm prompt encoder)
+#
+# The QuantStack repo only ships the diffusion GGUFs, so the VAE/connectors
+# come from unsloth/LTX-2.3-GGUF and the text encoder from
+# unsloth/gemma-3-12b-it-GGUF. The Gemma *tokenizer* is compiled into sd-cli,
+# so it is not downloaded here.
+# ---------------------------------------------------------------------------
+
+# Map diffusion variant -> aux variant published by unsloth (only dev / distilled)
+case "$MODEL_VARIANT" in
+  dev) AUX_VARIANT="dev" ;;
+  *)   AUX_VARIANT="distilled" ;;
+esac
+
+UNSLOTH_LTX="unsloth/LTX-2.3-GGUF"
+GEMMA_REPO="unsloth/gemma-3-12b-it-GGUF"
+GEMMA_FILE="${GEMMA_FILE:-gemma-3-12b-it-UD-Q4_K_XL.gguf}"
+
+echo ""
+echo "Downloading LTX runtime components (variant: $AUX_VARIANT)..."
+
+# Video VAE
+dl "$HF/$UNSLOTH_LTX/resolve/main/vae/ltx-2.3-22b-${AUX_VARIANT}_video_vae.safetensors" \
+   "$OUT/ltx-2.3-22b-${AUX_VARIANT}_video_vae.safetensors"
+
+# Audio VAE
+dl "$HF/$UNSLOTH_LTX/resolve/main/vae/ltx-2.3-22b-${AUX_VARIANT}_audio_vae.safetensors" \
+   "$OUT/ltx-2.3-22b-${AUX_VARIANT}_audio_vae.safetensors"
+
+# Embeddings connectors (text encoder -> transformer adapter)
+dl "$HF/$UNSLOTH_LTX/resolve/main/text_encoders/ltx-2.3-22b-${AUX_VARIANT}_embeddings_connectors.safetensors" \
+   "$OUT/ltx-2.3-22b-${AUX_VARIANT}_embeddings_connectors.safetensors"
+
+# Gemma-3-12b-it text encoder (--llm)
+dl "$HF/$GEMMA_REPO/resolve/main/$GEMMA_FILE" \
+   "$OUT/$GEMMA_FILE"
+
 echo ""
 echo "✓ Done → $OUT"
 echo ""
-echo "Models downloaded:"
-ls -lh "$OUT"/*distilled*.gguf "$OUT"/*dev*.gguf 2>/dev/null | tail -10 || echo "No models found"
+echo "LTX files present:"
+ls -lh "$OUT"/*ltx* "$OUT"/*LTX* "$OUT"/gemma-3-12b* 2>/dev/null || echo "No LTX models found"
