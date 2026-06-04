@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.23.3] - 2026-06-04
+
+### Fixed
+
+- **VLM accuracy on Android (Qwen3.5)**: set `image_min_tokens = 1024` for Qwen3.5 architecture on Android to prevent token under-allocation that degraded vision accuracy.
+
+### Changed
+
+- **Enable GPU mmproj on Samsung Ultra devices**: on Samsung Galaxy S25 Ultra (SM-S938*) and S26 Ultra (SM-S948*), `mmproj_use_gpu` is now `true` for non-llama architecture VLMs. All other Android devices retain the existing CPU-only path.
+- Added `AndroidDeviceInfo` utility for querying device manufacturer/model via Android system properties.
+
 ## [0.23.2] - 2026-06-03
 
 ### Fixed
