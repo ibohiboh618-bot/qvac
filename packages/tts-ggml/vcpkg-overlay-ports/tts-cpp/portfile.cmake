@@ -3,9 +3,11 @@
 # Verbatim copy of the qvac-registry-vcpkg tts-cpp port, dropped straight
 # into this PR so the exact source under test is visible here with no
 # registry indirection. Pinned at qvac-ext-lib-whisper.cpp PR #36 HEAD
-# 83a9a389: GPU scheduling for Adreno OpenCL (Supertonic + Chatterbox/S3Gen),
-# capability-gated, plus the Android Adreno-only GPU allowlist and the HiFT
-# direct-path graph cache. Consumes the ggml-speech overlay alongside.
+# 174f47d2: GPU scheduling for Adreno OpenCL (Supertonic + Chatterbox/S3Gen)
+# capability-gated, the Android Adreno GPU allowlist (is_qualcomm_adreno OR
+# form, so Adreno-via-Vulkan is allowlisted), the HiFT direct-path graph cache,
+# and the Supertonic graph caches reused on the direct backend path. Consumes
+# the ggml-speech overlay alongside.
 #
 # Remove this overlay (back to the registry tts-cpp) once PR #36 lands on
 # master and the registry port is bumped.
@@ -16,8 +18,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 83a9a38934767743dc3b34ea5178d032f362c996
-    SHA512 3985cb9d59621088066cefb0d7b2c5a957f990481486c9e964006bb69c89df21a633e2b2a7b50c2938951da6a01e129d26ee2abb99f2769dad1af439a1469362
+    REF 174f47d2f870ca1cad7bd8c7191367a37df75164
+    SHA512 4f45ab3049747d88b7ca9fb7a9b8060060df0f661f8fc99bd7fe79eefc5fd7a92a494781064d702a8fbffd8d2e8905ca1383c773d6a16228a3f2e483fdcb3cda
     HEAD_REF master
 )
 
