@@ -29,6 +29,6 @@ bool isUltraDevice();
 
 } // namespace android_device
 
-#endif  // __ANDROID__
+#endif // __ANDROID__
 
 } // namespace qvac_lib_inference_addon_llama

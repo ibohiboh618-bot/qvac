@@ -127,14 +127,19 @@ void MtmdLlmContext::initVisionContext() {
   mparams.print_timings = true;
 
   char arch[64] = {0};
-  int archLen = llama_model_meta_val_str(model_, "general.architecture", arch, sizeof(arch));
-  bool isQwen35 = (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) && std::string(arch) == "qwen35");
+  int archLen = llama_model_meta_val_str(
+      model_, "general.architecture", arch, sizeof(arch));
+  bool isQwen35 =
+      (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) &&
+       std::string(arch) == "qwen35");
 
 #ifdef __ANDROID__
-      if (isQwen35) {
-        mparams.image_min_tokens = 1024;
-        QLOG_IF(Priority::INFO, "[MtmdLlm] image_min_tokens set to 1024 for qwen35 on android device");
-      }
+  if (isQwen35) {
+    mparams.image_min_tokens = 1024;
+    QLOG_IF(
+        Priority::INFO,
+        "[MtmdLlm] image_min_tokens set to 1024 for qwen35 on android device");
+  }
 #endif
   mparams.n_threads = params_.cpuparams.n_threads;
   ctxVision_.reset(mtmd_init_from_file(clipPath, model_, mparams));

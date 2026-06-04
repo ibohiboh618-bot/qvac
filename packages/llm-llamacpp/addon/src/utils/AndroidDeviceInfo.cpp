@@ -16,7 +16,8 @@ std::string toLower(std::string_view str) {
   std::string result;
   result.reserve(str.size());
   for (char c : str) {
-    result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    result.push_back(
+        static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
   }
   return result;
 }
@@ -30,9 +31,10 @@ std::optional<std::string> getProperty(const char* name) {
 }
 
 bool startsWithIgnoreCase(std::string_view str, std::string_view prefix) {
-  if (str.size() < prefix.size()) return false;
+  if (str.size() < prefix.size())
+    return false;
   for (size_t i = 0; i < prefix.size(); ++i) {
-    if (std::tolower(static_cast<unsigned char>(str[i])) != 
+    if (std::tolower(static_cast<unsigned char>(str[i])) !=
         std::tolower(static_cast<unsigned char>(prefix[i]))) {
       return false;
     }
@@ -63,14 +65,12 @@ bool isS25Ultra() {
 
 bool isS26Ultra() {
   auto model = getModel();
-  return  model && startsWithIgnoreCase(model.value(), "SM-S948");
+  return model && startsWithIgnoreCase(model.value(), "SM-S948");
 }
 
-bool isUltraDevice() {
-  return isS25Ultra() || isS26Ultra();
-}
+bool isUltraDevice() { return isS25Ultra() || isS26Ultra(); }
 
 } // namespace android_device
 } // namespace qvac_lib_inference_addon_llama
 
-#endif  // __ANDROID__
+#endif // __ANDROID__

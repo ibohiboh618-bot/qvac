@@ -939,18 +939,23 @@ void LlamaModel::commonParamsParse(
       auto archOpt = metadata_.tryGetString("general.architecture");
       bool isVlm = !constructionArgs_.projectionPath.empty();
       std::string arch = archOpt.value_or("unknown");
-      
-      QLOG_IF(Priority::INFO, 
 
-        string_format("[LlamaModel] GPU backend selected - arch=%s, VLM=%s\n",
-          arch.c_str(),
-          isVlm ? "true" : "false"));
+      QLOG_IF(
+          Priority::INFO,
+
+          string_format(
+              "[LlamaModel] GPU backend selected - arch=%s, VLM=%s\n",
+              arch.c_str(),
+              isVlm ? "true" : "false"));
 #ifdef __ANDROID__
       using namespace qvac_lib_inference_addon_llama::android_device;
-      
+
       if (arch != "llama" && isVlm && isSamsung() && isUltraDevice()) {
         params.mmproj_use_gpu = true;
-        QLOG_IF(Priority::INFO, "[LlamaModel] mmproj_use_gpu set to true for android device S25 Ultra or S26 Ultra");
+        QLOG_IF(
+            Priority::INFO,
+            "[LlamaModel] mmproj_use_gpu set to true for android device S25 "
+            "Ultra or S26 Ultra");
       } else {
         params.mmproj_use_gpu = false;
       }
