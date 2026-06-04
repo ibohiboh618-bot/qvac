@@ -1,5 +1,5 @@
 # parakeet-cpp overlay -> tetherto/qvac-ext-lib-whisper.cpp PR #38 head
-# (QVAC-19213-parakeet-opencl @ 01a71ec6). Built from the parakeet-cpp/
+# (QVAC-19213-parakeet-opencl @ 1cc29a3b). Built from the parakeet-cpp/
 # subfolder; consumes the ggml-speech overlay. Mirrors the registry port's
 # per-platform backends (Metal on Apple, Vulkan on desktop, OpenCL on Android);
 # only Android is OpenCL-only. Drop once PR #38 merges and the registry ships it.
@@ -10,8 +10,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 01a71ec6751e96af74b807f2e6504d8ed99905db
-    SHA512 1c4fe104154b82a0c598fafb70c7d4f1d849c9a0905e5d414fd7ca9908b5fb503bc95f77a09a6e7a905d7dcd2ced3968574af21fdd4cb7a8b359aa8d0e582e6d
+    REF 1cc29a3b37c897ca5b2f11e19e623b710eaf6e04
+    SHA512 2667f92ea2d397623db8d38912f3bde75c791fc506d271552f443fc1116df36f8785e6a120e9b72859bc18ef6d25d59e7d9e5f7f69d5deab79bb19cda259897a
     HEAD_REF QVAC-19213-parakeet-opencl
 )
 

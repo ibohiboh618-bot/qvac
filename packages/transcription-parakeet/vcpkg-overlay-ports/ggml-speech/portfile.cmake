@@ -1,5 +1,5 @@
 # ggml-speech overlay -> tetherto/qvac-ext-ggml PR #19 head
-# (QVAC-19213-parakeet-opencl @ 89bbeeaa). Builds ggml-speech straight from the
+# (QVAC-19213-parakeet-opencl @ bff2347b). Builds ggml-speech straight from the
 # PR branch so the Adreno OpenCL fix can be exercised pre-merge. Mirrors the
 # registry port's per-platform backends (Metal on Apple, Vulkan on desktop,
 # OpenCL on Android) so CI matches baseline; only Android is OpenCL-only
@@ -8,8 +8,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF 89bbeeaa5904a8f30a63c274614b0d6b48dca948
-    SHA512 11ec3cb7cf3f15203bfdaa7a4c7db58ccdc3b6f19b6da9670f02071953d1541c225b37dc2ef89b22fbe211a921a627d95631efbd345852d6f28e397b250b6633
+    REF bff2347b941f4e6741a0cb2a98fed9fcf23692d0
+    SHA512 cffb8927c2a97320a4ab801a06a9ae628bead220a37951df61faed57065b038a280c71c450c8c47b524c9b68312edb71bea4d8cda27a87fcf68fce626b67a5c4
     HEAD_REF QVAC-19213-parakeet-opencl
     PATCHES
         # PR #19's ggml-vulkan.cpp resolves <spirv/unified1/spirv.hpp> via
