@@ -14,7 +14,6 @@
 #include "inference-addon-cpp/Logger.hpp"
 #include "utils/ChatTemplateUtils.hpp"
 #include "utils/LoggingMacros.hpp"
-#include "utils/AndroidDeviceInfo.hpp"
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 
@@ -132,11 +131,10 @@ void MtmdLlmContext::initVisionContext() {
   bool isQwen35 = (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) && std::string(arch) == "qwen35");
 
 #ifdef __ANDROID__
-      using namespace qvac_lib_inference_addon_llama::android_device;
       if (isQwen35) {
         mparams.image_min_tokens = 1024;
         QLOG_IF(Priority::INFO, "[MtmdLlm] image_min_tokens set to 1024 for qwen35 on android device");
-      } 
+      }
 #endif
   mparams.n_threads = params_.cpuparams.n_threads;
   ctxVision_.reset(mtmd_init_from_file(clipPath, model_, mparams));
