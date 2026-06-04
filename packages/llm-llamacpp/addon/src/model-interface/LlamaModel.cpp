@@ -948,7 +948,7 @@ void LlamaModel::commonParamsParse(
 #ifdef __ANDROID__
       using namespace qvac_lib_inference_addon_llama::android_device;
       
-      if (arch == "qwen35" && isVlm && isSamsung() && isUltraDevice()) {
+      if (arch != "llama" && isVlm && isSamsung() && isUltraDevice()) {
         params.mmproj_use_gpu = true;
         QLOG_IF(Priority::INFO, "[LlamaModel] mmproj_use_gpu set to true for android device S25 Ultra or S26 Ultra");
       } else {

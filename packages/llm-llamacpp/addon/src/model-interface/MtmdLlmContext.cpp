@@ -126,11 +126,16 @@ void MtmdLlmContext::initVisionContext() {
   mparams.backend_device =
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
+
+  char arch[64] = {0};
+  int archLen = llama_model_meta_val_str(model_, "general.architecture", arch, sizeof(arch));
+  isQwen35_ = (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) && std::string(arch) == "qwen35");
+
 #ifdef __ANDROID__
       using namespace qvac_lib_inference_addon_llama::android_device;
-      if (isSamsung() && isUltraDevice()) {
+      if (isQwen35) {
         mparams.image_min_tokens = 1024;
-        QLOG_IF(Priority::INFO, "[MtmdLlm] image_min_tokens and set to 1024 for android device S25 Ultra or S26 Ultra");
+        QLOG_IF(Priority::INFO, "[MtmdLlm] image_min_tokens set to 1024 for qwen35 on android device");
       } 
 #endif
   mparams.n_threads = params_.cpuparams.n_threads;
