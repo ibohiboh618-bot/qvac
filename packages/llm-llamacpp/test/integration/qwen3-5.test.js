@@ -19,12 +19,12 @@ const useCpu = isDarwinX64 || isLinuxArm64
 
 const QWEN3_5_MODEL = {
   name: 'Qwen3.5-0.8B-Q8_0.gguf',
-  url: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_0.gguf'
+  url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf'
 }
 
 const QWEN3_5_PROJ_MODEL = {
   name: 'mmproj-Qwen3.5-0.8B-F16.gguf',
-  url: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/mmproj-F16.gguf'
+  url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf'
 }
 
 const BASE_PROMPT = [
@@ -289,7 +289,6 @@ test('Qwen3.5-0.8B can describe an image', {
     gpu_layers: '98',
     ctx_size: '4096',
     temp: '0',
-    n_predict: '400',
     seed: '42',
     verbosity: '2'
   }
@@ -329,7 +328,7 @@ test('Qwen3.5-0.8B can describe an image', {
 
     const output = generatedText.join('')
     t.ok(output.length > 0, `image inference produced output (${output.length} chars)`)
-    console.log(`  output: "${output}"`)
+    console.log(`  output: "${output.slice(0, 200)}"`)
 
     const lowerOutput = output.toLowerCase()
     t.ok(/elephant/.test(lowerOutput), `output mentions elephant: "${output.slice(0, 100)}"`)
