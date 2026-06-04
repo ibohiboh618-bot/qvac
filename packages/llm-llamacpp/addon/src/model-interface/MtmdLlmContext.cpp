@@ -129,7 +129,7 @@ void MtmdLlmContext::initVisionContext() {
 
   char arch[64] = {0};
   int archLen = llama_model_meta_val_str(model_, "general.architecture", arch, sizeof(arch));
-  isQwen35_ = (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) && std::string(arch) == "qwen35");
+  bool isQwen35 = (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) && std::string(arch) == "qwen35");
 
 #ifdef __ANDROID__
       using namespace qvac_lib_inference_addon_llama::android_device;
