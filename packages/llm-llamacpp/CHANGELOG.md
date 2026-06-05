@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.23.3] - 2026-06-04
+## [0.25.0] - 2026-06-04
 
 ### Fixed
 
@@ -10,6 +10,15 @@
 
 - **Enable GPU mmproj on Samsung Ultra devices**: on Samsung Galaxy S25 Ultra (SM-S938*) and S26 Ultra (SM-S948*), `mmproj_use_gpu` is now `true` for non-llama architecture VLMs. All other Android devices retain the existing CPU-only path.
 - Added `AndroidDeviceInfo` utility for querying device manufacturer/model via Android system properties.
+## [0.24.0] - 2026-06-04
+
+### Changed
+
+- Updated the `qvac-fabric` vcpkg dependency to registry version `8828.0.2#1`.
+
+### Added
+
+- **OpenMP feature for Android**: Added `openmp` default feature that enables OpenMP support on Android ARM64 via the `qvac-fabric` dependency. This improves parallelization on supported Android devices.
 
 ## [0.23.2] - 2026-06-03
 
