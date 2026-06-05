@@ -1,4 +1,7 @@
 import { createExecutor, SkipExecutor, type TestDefinition } from "@tetherto/qvac-test-suite";
+import * as qvacSdk from "@qvac/sdk";
+import type { ModelConstant } from "@qvac/sdk";
+import { NMT_PAIRS } from "../translation-nmt-pairs-tests.js";
 import {
   profiler,
   LLAMA_3_2_1B_INST_Q4_0,
@@ -224,6 +227,33 @@ resources.define("bergamot-es-it-pivot", {
     },
   },
 });
+
+// QVAC-18959 — generated per-pair NMT sanity coverage. Constants are
+// resolved by name from the SDK namespace import to avoid listing 100+
+// named imports inline; a missing constant fails loud at startup so a
+// stale pair list is caught before any test runs.
+//
+// `skipPreDownload: true` matters: `downloadAllOnce` fires every
+// contributing def's constants in parallel via Promise.allSettled with
+// no concurrency cap. Letting ~100 Hypercore replications race saturates
+// the registry channel and every download stalls to REQUEST_TIMEOUT.
+// We lazy-load instead — `ensureLoaded` runs per-test, one model at a
+// time, which is naturally sequential and well under the channel budget.
+const nmtRegistry = qvacSdk as unknown as Record<string, ModelConstant>;
+for (const pair of NMT_PAIRS) {
+  const constant = nmtRegistry[pair.constantName];
+  if (!constant) {
+    throw new Error(
+      `NMT pair "${pair.resourceKey}" references missing constant "${pair.constantName}" on @qvac/sdk`,
+    );
+  }
+  resources.define(pair.resourceKey, {
+    constant,
+    type: "nmt",
+    config: { engine: pair.engine, from: pair.from, to: pair.to },
+    skipPreDownload: true,
+  });
+}
 
 resources.define("salamandra", {
   constant: SALAMANDRATA_2B_INST_Q4,

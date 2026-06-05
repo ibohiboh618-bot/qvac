@@ -11,6 +11,7 @@ import { translationBergamotCacheTests } from "./translation-bergamot-cache-test
 import { translationLlmTests } from "./translation-llm-tests.js";
 import { translationSalamandraTests } from "./translation-salamandra-tests.js";
 import { translationAfriquegemmaTests } from "./translation-afriquegemma-tests.js";
+import { translationNmtPairsTests } from "./translation-nmt-pairs-tests.js";
 import { modelInfoTests } from "./model-info-tests.js";
 import { kvCacheTests } from "./kv-cache-tests.js";
 import { errorTests } from "./error-tests.js";
@@ -226,6 +227,13 @@ export const tests = [
 
   // Translation: AfriqueGemma (African languages)
   ...translationAfriquegemmaTests,
+
+  // Translation: NMT per-pair sanity (QVAC-18959). One test per registry
+  // pair (Bergamot + IndicTrans). Gated by env so default "full" runs
+  // (which apply no suite filter) don't accidentally pull ~3 GB of model
+  // downloads on every PR — only the SDK team's explicit on-demand
+  // invocation sets the var.
+  ...(process.env["QVAC_NMT_LANGPAIRS"] === "1" ? translationNmtPairsTests : []),
 
   // Sharded model tests
   ...shardedModelTests,
