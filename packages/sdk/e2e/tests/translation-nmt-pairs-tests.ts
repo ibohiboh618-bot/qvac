@@ -183,6 +183,15 @@ const SUITE = "nmt-langpairs";
 // existing translation-bergamot test budget.
 const ESTIMATED_MS = 15000;
 
+// Desktop-only. The ~100 bergamot blobs + IndicTrans are too heavy to
+// pull reliably over Device Farm's mobile network within the per-test
+// budget, and accuracy is platform-independent so a desktop pass is
+// sufficient coverage.
+const SKIP_MOBILE = {
+  reason: "NMT per-pair sanity is desktop-only: model downloads are too heavy for mobile and accuracy is platform-independent",
+  platforms: ["mobile-ios", "mobile-android"],
+};
+
 function buildSanityTest(pair: NmtPair): TestDefinition | null {
   const lang = LANGUAGES[pair.otherLang];
   if (!lang) return null;
@@ -194,6 +203,7 @@ function buildSanityTest(pair: NmtPair): TestDefinition | null {
     params: { text, resource: pair.resourceKey },
     expectation,
     suites: [SUITE],
+    skip: SKIP_MOBILE,
     metadata: {
       category: CATEGORY,
       dependency: pair.resourceKey,

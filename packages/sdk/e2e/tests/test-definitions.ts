@@ -229,11 +229,11 @@ export const tests = [
   ...translationAfriquegemmaTests,
 
   // Translation: NMT per-pair sanity (QVAC-18959). One test per registry
-  // pair (Bergamot + IndicTrans). Gated by env so default "full" runs
-  // (which apply no suite filter) don't accidentally pull ~3 GB of model
-  // downloads on every PR — only the SDK team's explicit on-demand
-  // invocation sets the var.
-  ...(process.env["QVAC_NMT_LANGPAIRS"] === "1" ? translationNmtPairsTests : []),
+  // pair (Bergamot + IndicTrans). Desktop-only via per-test
+  // `skip.platforms` — mobile devices skip the whole suite because the
+  // ~100 model downloads are too heavy for Device Farm runners and the
+  // accuracy we're sanity-checking is platform-independent.
+  ...translationNmtPairsTests,
 
   // Sharded model tests
   ...shardedModelTests,
