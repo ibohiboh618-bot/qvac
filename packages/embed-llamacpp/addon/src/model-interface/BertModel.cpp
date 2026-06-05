@@ -10,6 +10,9 @@
 #include <llama.h>
 #include <llama/common/arg.h>
 #include <inference-addon-cpp/Errors.hpp>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 #include "BackendSelection.hpp"
 #include "LlamaLazyInitializeBackend.hpp"
@@ -53,10 +56,10 @@ void batchDecode(
           .c_str(),
       nullptr);
   if (llama_decode(ctx, batch) < 0) {
-    qvac_lib_infer_llamacpp_embed::logging::llamaLogCallback(
-        GGML_LOG_LEVEL_ERROR,
-        string_format("%s : failed to process\n", __func__).c_str(),
-        nullptr);
+    throw qvac_errors::StatusError(
+        ADDON_ID,
+        toString(DecodeFailed),
+        string_format("%s: llama_decode failed", __func__));
   }
 
   std::span<const int8_t> logitsSpan{
@@ -299,6 +302,22 @@ common_params setupParams(
   configVector.emplace_back(modelGgufPath);
 
   llama_split_mode splitMode = parseSplitMode(configFilemap);
+
+#if defined(__ANDROID__) ||                                                    \
+    (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS)
+  if (splitMode != LLAMA_SPLIT_MODE_NONE ||
+      configFilemap.count("main-gpu") > 0 ||
+      configFilemap.count("main_gpu") > 0 ||
+      configFilemap.count("tensor-split") > 0 ||
+      configFilemap.count("tensor_split") > 0) {
+    throw qvac_errors::StatusError(
+        ADDON_ID,
+        qvac_errors::general_error::toString(
+            qvac_errors::general_error::InvalidArgument),
+        "Multi-GPU parameters (split-mode, main-gpu, tensor-split) are not "
+        "supported on mobile (single-GPU device).");
+  }
+#endif
 
   auto deviceIt = configFilemap.find("device");
   if (deviceIt == configFilemap.end()) {
@@ -705,15 +724,6 @@ BertEmbeddings BertModel::processBatched(
   std::size_t numStoredEmbeddings = 0; // number of embeddings already stored
   std::size_t numPromptsInBatch = 0;   // number of prompts in current batch
 
-  auto earlyReturn = [&]() {
-    stopCancelled_.store(false);
-    return BertEmbeddings(
-        std::move(embeddings),
-        BertEmbeddings::Layout{
-            .embeddingCount = numStoredEmbeddings,
-            .embeddingSize = static_cast<std::size_t>(n_embd)});
-  };
-
   for (std::size_t k = 0; k < nPrompts && !stopCancelled_.load(); k++) {
     // clamp to n_batch tokens
     const auto& inp = inputs[k];
@@ -727,13 +737,20 @@ BertEmbeddings BertModel::processBatched(
           embSpan
               .subspan(numStoredEmbeddings * static_cast<std::size_t>(n_embd))
               .data();
-      batchDecode(
-          ctx_,
-          batch_,
-          out,
-          static_cast<int>(numPromptsInBatch),
-          n_embd,
-          init_.params.embd_normalize);
+      try {
+        batchDecode(
+            ctx_,
+            batch_,
+            out,
+            static_cast<int>(numPromptsInBatch),
+            n_embd,
+            init_.params.embd_normalize);
+      } catch (...) {
+        if (stopCancelled_.load()) {
+          throw std::runtime_error("Job cancelled");
+        }
+        throw;
+      }
       numStoredEmbeddings +=
           (pooling_type == LLAMA_POOLING_TYPE_NONE ? batch_.n_tokens
                                                    : numPromptsInBatch);
@@ -747,7 +764,7 @@ BertEmbeddings BertModel::processBatched(
   }
 
   if (stopCancelled_.load()) {
-    return earlyReturn();
+    throw std::runtime_error("Job cancelled");
   }
 
   // final batch
@@ -755,13 +772,20 @@ BertEmbeddings BertModel::processBatched(
   float* out =
       embSpan.subspan(numStoredEmbeddings * static_cast<std::size_t>(n_embd))
           .data();
-  batchDecode(
-      ctx_,
-      batch_,
-      out,
-      static_cast<int>(numPromptsInBatch),
-      n_embd,
-      init_.params.embd_normalize);
+  try {
+    batchDecode(
+        ctx_,
+        batch_,
+        out,
+        static_cast<int>(numPromptsInBatch),
+        n_embd,
+        init_.params.embd_normalize);
+  } catch (...) {
+    if (stopCancelled_.load()) {
+      throw std::runtime_error("Job cancelled");
+    }
+    throw;
+  }
   return BertEmbeddings(
       std::move(embeddings),
       BertEmbeddings::Layout{

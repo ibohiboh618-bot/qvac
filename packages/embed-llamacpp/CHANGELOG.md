@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.18.2] - 2026-06-03
+
+### Fixed
+
+- **Multi-GPU params rejected on Android/iOS**: passing `split-mode` (non-`none`), `main-gpu`, or `tensor-split` on a mobile device now throws `InvalidArgument` immediately in `setupParams`, before any backend selection occurs. Previously these parameters could silently cause undefined behaviour on mobile. Use single-GPU config on mobile.
+
+## Pull Requests
+
+- [#2352](https://github.com/tetherto/qvac/pull/2352) - QVAC-18802: reject multi-GPU config on Android/iOS
+
+## [0.18.1] - 2026-06-02
+
+### Changed
+
+- Bumped the `qvac-lib-inference-addon-cpp` vcpkg dependency to `1.2.1`.
+
+## [0.18.0] - 2026-05-29
+
+### Fixed
+
+- **Structured cancellation error on mid-decode cancel**: When an embed request was cancelled mid-decode, the addon threw a generic `"Failed to get sequence embeddings"` error instead of the structured `"Job cancelled"` message that the SDK maps to `InferenceCancelledError` (code 52419). The addon now throws `"Job cancelled"` on all cancel paths — matching the behaviour of the completion addon (`llm-llamacpp`). Additionally, `batchDecode` now throws immediately when `llama_decode` fails instead of continuing to read stale/null embeddings.
+
 ## [0.17.1] - 2026-05-26
 
 ### Changed
