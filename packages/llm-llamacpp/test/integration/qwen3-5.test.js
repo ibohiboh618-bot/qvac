@@ -1,6 +1,7 @@
 'use strict'
 
 const test = require('brittle')
+const fs = require('bare-fs')
 const path = require('bare-path')
 const LlmLlamacpp = require('../../index.js')
 const { ensureModel } = require('./utils')
@@ -162,6 +163,7 @@ test('Qwen3.5-0.8B supports multi-turn conversation with KV cache', {
     await addon.load()
 
     const sessionName = path.join(dirPath, 'qwen3-5-multiturn-cache.bin')
+    try { fs.unlinkSync(sessionName) } catch {}
     const systemMsg = { role: 'system', content: 'You are a helpful assistant. Answer concisely with just the city name.' }
     const userTurn1 = { role: 'user', content: 'What is the capital of France?' }
 
