@@ -91,7 +91,11 @@ const QWEN35_MODEL = {
     modelName: 'mmproj-Qwen3.5-0.8B-F16.gguf',
     downloadUrl: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf'
   },
-  extraConfig: {},
+  // Qwen-VL models require at minimum 1024 image tokens for correct
+  // grounding tasks. Without this the vision encoder under-allocates
+  // tokens and accuracy degrades.
+  // https://github.com/ggml-org/llama.cpp/issues/16842
+  extraConfig: { 'image-min-tokens': '1024' },
   ctxFor: (imageCase) => imageCase.qwenCtxSize
 }
 
