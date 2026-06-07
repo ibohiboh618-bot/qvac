@@ -149,7 +149,12 @@ async function runVlmImagePerf (t, modelDef, imageCase) {
     let error = null
     response.onUpdate(data => { chunks.push(data) })
       .onError(err => { error = err })
-    await response.await()
+    const ticker = setInterval(() => {}, 50)
+    try {
+      await response.await()
+    } finally {
+      clearInterval(ticker)
+    }
     if (error) throw new Error('Inference error: ' + error)
     return {
       output: chunks.join(''),

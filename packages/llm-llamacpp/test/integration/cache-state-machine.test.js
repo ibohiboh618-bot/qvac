@@ -135,7 +135,12 @@ async function runAndCollectStats (model, prompt, runOptions) {
     chain = chain.onError(err => { throw err })
   }
 
-  await chain.await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await chain.await()
+  } finally {
+    clearInterval(ticker)
+  }
   return normalizeStats(response.stats, { _chunkCount: chunkCount })
 }
 
@@ -155,10 +160,13 @@ async function runAndCancelAfterFirstToken (model, prompt, runOptions) {
       throw err
     })
   }
+  const ticker = setInterval(() => {}, 50)
   try {
     await chain.await()
   } catch (err) {
     if (!isCancellationError(err)) throw err
+  } finally {
+    clearInterval(ticker)
   }
   return normalizeStats(response.stats, { _chunkCount: chunkCount })
 }
@@ -497,6 +505,7 @@ safeTest('Options: prefill with saveCacheToDisk persists cache file', { timeout:
 safeTest('saveCacheToDisk to unwritable path rejects with UnableToSaveSessionFile', { timeout: 600_000 }, async t => {
   const { model } = await setupModel(t)
   const badPath = path.join(os.tmpdir(), 'qvac-nonexistent-dir-' + Date.now(), 'session.bin')
+  const ticker = setInterval(() => {}, 50)
   try {
     const response = await model.run([...BASE_PROMPT], { cacheKey: badPath, saveCacheToDisk: true })
     await response.await()
@@ -506,6 +515,8 @@ safeTest('saveCacheToDisk to unwritable path rejects with UnableToSaveSessionFil
       /failed to save session file|failed to promote tmp file/.test(err.message),
       'rejection message identifies the save failure'
     )
+  } finally {
+    clearInterval(ticker)
   }
 })
 

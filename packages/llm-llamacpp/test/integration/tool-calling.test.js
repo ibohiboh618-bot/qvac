@@ -120,11 +120,16 @@ function buildPrompt2 (assistantOutput) {
 
 async function collectResponse (response) {
   const chunks = []
-  await response
-    .onUpdate(data => {
-      chunks.push(data)
-    })
-    .await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response
+      .onUpdate(data => {
+        chunks.push(data)
+      })
+      .await()
+  } finally {
+    clearInterval(ticker)
+  }
 
   const stats = response.stats || {}
   return {

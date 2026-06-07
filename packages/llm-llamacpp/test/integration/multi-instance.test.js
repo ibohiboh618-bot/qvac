@@ -67,7 +67,12 @@ async function createInstance (modelName, dirPath, overrides = {}) {
 
 async function collectResponse (response) {
   const chunks = []
-  await response.onUpdate(data => { chunks.push(data) }).await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.onUpdate(data => { chunks.push(data) }).await()
+  } finally {
+    clearInterval(ticker)
+  }
   return chunks.join('').trim()
 }
 
@@ -165,6 +170,7 @@ safeTest('Unloading one instance does not affect another generating instance', {
     let thresholdReached = false
     const afterTokens = new Promise(resolve => { resolveAfterTokens = resolve })
 
+    const ticker = setInterval(() => {}, 50)
     const responsePromise = response1
       .onUpdate(data => {
         chunks.push(data)
@@ -176,6 +182,7 @@ safeTest('Unloading one instance does not affect another generating instance', {
       })
       .await()
       .finally(() => {
+        clearInterval(ticker)
         if (resolveAfterTokens) {
           resolveAfterTokens()
           resolveAfterTokens = null
@@ -233,6 +240,7 @@ safeTest('Multiple load/unload cycles on one instance while another generates', 
       })
     }
 
+    const ticker = setInterval(() => {}, 50)
     const responsePromise = response1
       .onUpdate(data => {
         chunks.push(data)
@@ -244,6 +252,7 @@ safeTest('Multiple load/unload cycles on one instance while another generates', 
       })
       .await()
       .finally(() => {
+        clearInterval(ticker)
         if (resolveTokenTarget) {
           const resolve = resolveTokenTarget
           resolveTokenTarget = null

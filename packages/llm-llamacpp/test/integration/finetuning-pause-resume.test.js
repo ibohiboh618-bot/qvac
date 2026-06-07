@@ -105,7 +105,12 @@ async function runLoraInference (t, modelVariant, modelName, modelDir, loraAdapt
     ]
     const response = await inferModel.run(prompt)
     let generated = ''
-    await response.onUpdate(token => { generated += token }).await()
+    const ticker = setInterval(() => {}, 50)
+    try {
+      await response.onUpdate(token => { generated += token }).await()
+    } finally {
+      clearInterval(ticker)
+    }
     t.ok(generated.length > 0, `[${modelVariant.id}] LoRA inference should produce output`)
     t.comment(`[${modelVariant.id}] LoRA inference output (${generated.length} chars): ${generated.slice(0, 100)}`)
     t.comment(`[${modelVariant.id}] LoRA inference stats: ${JSON.stringify(response.stats)}`)
@@ -165,7 +170,13 @@ safeTest('finetuning pause and resume', { timeout: PAUSE_RESUME_TIMEOUT_MS, skip
 
       await model.pause()
 
-      const pauseResult = await finetuneHandle.await()
+      const ftTicker1 = setInterval(() => {}, 50)
+      let pauseResult
+      try {
+        pauseResult = await finetuneHandle.await()
+      } finally {
+        clearInterval(ftTicker1)
+      }
       assertLossAndAccuracyAreFinite(t, pauseResult, modelVariant.id)
       if (pauseResult?.status === 'COMPLETED') {
         t.comment(`[${modelVariant.id}] Finetune result: ${JSON.stringify(pauseResult)}`)
@@ -213,7 +224,13 @@ safeTest('finetuning pause and resume', { timeout: PAUSE_RESUME_TIMEOUT_MS, skip
         if (!isNaN(stats.accuracy_uncertainty)) t.ok(Number.isFinite(stats.accuracy_uncertainty), `[${modelVariant.id}] resume progress accuracy_uncertainty should be finite (step ${stats.global_steps})`)
         t.comment(`[${modelVariant.id}] progress: epoch=${stats.current_epoch + 1} step=${stats.global_steps} loss=${stats.loss?.toFixed(4)}±${stats.loss_uncertainty?.toFixed(4)} acc=${(stats.accuracy * 100)?.toFixed(1)}±${(stats.accuracy_uncertainty * 100)?.toFixed(1)}% backend_batch=${stats.current_batch}/${stats.total_batches}`)
       })
-      const result = await resumeHandle.await()
+      const ftTicker2 = setInterval(() => {}, 50)
+      let result
+      try {
+        result = await resumeHandle.await()
+      } finally {
+        clearInterval(ftTicker2)
+      }
 
       t.ok(result, `[${modelVariant.id}] Resume must return result`)
       t.ok(progressCount > 0, `[${modelVariant.id}] Must have received at least one progress stats event`)
@@ -304,7 +321,13 @@ safeTest('cancel() stops finetuning and removes pause checkpoint', { timeout: PA
     await waitForProgress(finetuneHandle, 2)
 
     await model.cancel()
-    const result = await finetuneHandle.await()
+    const ftTicker3 = setInterval(() => {}, 50)
+    let result
+    try {
+      result = await finetuneHandle.await()
+    } finally {
+      clearInterval(ftTicker3)
+    }
     t.comment(`Cancel result: ${JSON.stringify(result)}`)
 
     t.ok(result, 'cancel() must return a result')
@@ -373,12 +396,23 @@ safeTest('inference with session cache works after finetuning', { timeout: PAUSE
     ]
     const preResponse = await model.run(sessionPrompt, { cacheKey: sessionFile })
     let preOutput = ''
-    await preResponse.onUpdate(token => { preOutput += token }).await()
+    const preTicker = setInterval(() => {}, 50)
+    try {
+      await preResponse.onUpdate(token => { preOutput += token }).await()
+    } finally {
+      clearInterval(preTicker)
+    }
     t.ok(preOutput.length > 0, 'Pre-finetune inference with session should produce output')
     t.comment(`Pre-finetune output: ${preOutput}`)
 
     const finetuneHandle = await model.finetune(finetuneConfig)
-    const result = await finetuneHandle.await()
+    const ftTicker4 = setInterval(() => {}, 50)
+    let result
+    try {
+      result = await finetuneHandle.await()
+    } finally {
+      clearInterval(ftTicker4)
+    }
     t.ok(result, 'Finetune should return a result')
     t.comment(`Finetune result: ${JSON.stringify(result)}`)
 
@@ -393,7 +427,12 @@ safeTest('inference with session cache works after finetuning', { timeout: PAUSE
     ]
     const postResponse = await model.run(postPrompt, { cacheKey: sessionFile })
     let postOutput = ''
-    await postResponse.onUpdate(token => { postOutput += token }).await()
+    const postTicker = setInterval(() => {}, 50)
+    try {
+      await postResponse.onUpdate(token => { postOutput += token }).await()
+    } finally {
+      clearInterval(postTicker)
+    }
     t.ok(postOutput.length > 0, 'Post-finetune inference with session should produce output')
     t.ok(postOutput.includes('3'), 'Post-finetune output should include the output of the previous computation')
     t.comment(`Post-finetune output: ${postOutput}`)
@@ -428,7 +467,12 @@ safeTest('microBatchSize override changes backend batch geometry', { timeout: PA
       const handle = await model.finetune(config)
       let totalBatches = null
       handle.on('stats', stats => { if (totalBatches === null) totalBatches = stats.total_batches })
-      await handle.await()
+      const ftTicker = setInterval(() => {}, 50)
+      try {
+        await handle.await()
+      } finally {
+        clearInterval(ftTicker)
+      }
       return totalBatches
     } finally {
       await model.unload().catch(() => {})

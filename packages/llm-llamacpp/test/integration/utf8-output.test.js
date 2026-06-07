@@ -72,11 +72,16 @@ safeTest('model returns UTF-8 emoji without truncation', { timeout: 600_000 }, a
     let output = ''
     await model.load()
     const response = await model.run(UTF8_PROMPT)
-    await response
-      .onUpdate(data => {
-        output += data
-      })
-      .await()
+    const ticker = setInterval(() => {}, 50)
+    try {
+      await response
+        .onUpdate(data => {
+          output += data
+        })
+        .await()
+    } finally {
+      clearInterval(ticker)
+    }
 
     const normalized = output.trim()
     t.ok(normalized.length > 0, 'generated some output')

@@ -62,11 +62,16 @@ async function setupReasoningModel (t, toolsEnabled) {
 async function runCompletion (inference, messages) {
   const result = await inference.run(messages)
   let response = ''
-  await result
-    .onUpdate(token => {
-      response += token
-    })
-    .await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await result
+      .onUpdate(token => {
+        response += token
+      })
+      .await()
+  } finally {
+    clearInterval(ticker)
+  }
   return response
 }
 

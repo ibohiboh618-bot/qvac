@@ -288,19 +288,24 @@ async function collectResponse (response, opts = {}) {
   const { model } = opts
   const chunks = []
   let chunkCount = 0
-  await response
-    .onUpdate(async data => {
-      chunks.push(data)
-      chunkCount++
-      if (opts.maxChunks && chunkCount >= opts.maxChunks) {
-        if (model && typeof model.cancel === 'function') {
-          await model.cancel()
-        } else if (typeof response.cancel === 'function') {
-          await response.cancel()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response
+      .onUpdate(async data => {
+        chunks.push(data)
+        chunkCount++
+        if (opts.maxChunks && chunkCount >= opts.maxChunks) {
+          if (model && typeof model.cancel === 'function') {
+            await model.cancel()
+          } else if (typeof response.cancel === 'function') {
+            await response.cancel()
+          }
         }
-      }
-    })
-    .await()
+      })
+      .await()
+  } finally {
+    clearInterval(ticker)
+  }
   return chunks.join('').trim()
 }
 
@@ -330,7 +335,12 @@ async function runInferenceOrExpectFailure (t, addon, scenario, prompt) {
   if (scenario.expectRunFailure) {
     try {
       const response = await addon.run(prompt)
-      await response.onUpdate(() => {}).await()
+      const ticker2 = setInterval(() => {}, 50)
+      try {
+        await response.onUpdate(() => {}).await()
+      } finally {
+        clearInterval(ticker2)
+      }
       t.fail(`${scenario.name}: expected run failure but succeeded`)
     } catch (err) {
       const errorText = err?.message || (typeof err?.toString === 'function' ? err.toString() : '')

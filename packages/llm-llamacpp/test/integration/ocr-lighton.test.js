@@ -88,7 +88,12 @@ async function runOcr (inference, imageFilePath) {
     error = err
   })
 
-  await response.await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.await()
+  } finally {
+    clearInterval(ticker)
+  }
 
   if (error) {
     throw new Error('Inference error: ' + error)

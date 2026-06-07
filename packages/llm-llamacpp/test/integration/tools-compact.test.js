@@ -178,7 +178,12 @@ async function runAndCollect (model, prompt, runOptions) {
   if (typeof response.onError === 'function') {
     chain = chain.onError(err => { throw err })
   }
-  await chain.await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await chain.await()
+  } finally {
+    clearInterval(ticker)
+  }
   const output = chunks.join('')
   if (output.length >= (FULL_PREDICT_LIMIT - 1)) {
     throw new Error('Full output limit reached: consider re-run or increase limit, tests flaky')
@@ -197,13 +202,15 @@ async function runExpectingInvalidPrompt (t, model, prompt, expectedReason, runO
   if (typeof response.onError === 'function') {
     response.onError(err => { capturedError = err })
   }
-  // Drain output stream so response lifecycle completes.
   response.onUpdate(() => {})
 
+  const ticker = setInterval(() => {}, 50)
   try {
     await response.await()
   } catch (err) {
     capturedError = capturedError || err
+  } finally {
+    clearInterval(ticker)
   }
 
   if (!capturedError) {
@@ -227,10 +234,13 @@ async function runExpectingNoPromptValidationError (t, model, prompt, runOptions
   }
   response.onUpdate(() => {})
 
+  const ticker = setInterval(() => {}, 50)
   try {
     await response.await()
   } catch (err) {
     capturedError = capturedError || err
+  } finally {
+    clearInterval(ticker)
   }
 
   if (!capturedError) {
@@ -755,6 +765,7 @@ safeTest('[tools-compact] cancel mid-generation then reuse with tools', { timeou
 
   let cancelled = false
   let tokenCount = 0
+  const ticker = setInterval(() => {}, 50)
   try {
     await new Promise((resolve, reject) => {
       let chain = response.onUpdate(() => {
@@ -777,6 +788,8 @@ safeTest('[tools-compact] cancel mid-generation then reuse with tools', { timeou
     })
   } catch (err) {
     if (!/cancel|abort|stopp/i.test(err.message || '')) throw err
+  } finally {
+    clearInterval(ticker)
   }
 
   t.ok(cancelled, 'generation was cancelled mid-stream')
@@ -854,7 +867,12 @@ safeTest('[tools-compact] concurrent model.run() rejects cleanly and model survi
   const response1 = await run1
   const chunks = []
   response1.onUpdate(data => { chunks.push(data) })
-  await response1.await()
+  const ticker2 = setInterval(() => {}, 50)
+  try {
+    await response1.await()
+  } finally {
+    clearInterval(ticker2)
+  }
   t.ok(chunks.join('').length > 0, 'first run completes')
 
   const r3 = await runAndCollect(model, [SYSTEM_MESSAGE, { role: 'user', content: 'Say hello.' }, TOOL_A])
@@ -881,7 +899,8 @@ safeTest('[tools-compact] corrupted session file does not crash model', { timeou
     let capturedErr = null
     if (typeof response.onError === 'function') response.onError(err => { capturedErr = err })
     response.onUpdate(data => { chunks.push(data) })
-    try { await response.await() } catch (_) {}
+    const ticker3 = setInterval(() => {}, 50)
+    try { await response.await() } catch (_) {} finally { clearInterval(ticker3) }
     output = chunks.join('')
     if (capturedErr) threw = true
   } catch (err) {

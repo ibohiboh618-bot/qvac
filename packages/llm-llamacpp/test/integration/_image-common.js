@@ -175,7 +175,12 @@ async function describeImage (inference, imageFilePath, prompt = TEST_CONSTANTS.
     error = err
   })
 
-  await response.await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.await()
+  } finally {
+    clearInterval(ticker)
+  }
 
   if (error) {
     throw new Error('Inference error: ' + error)
@@ -210,7 +215,12 @@ async function describeMultipleImages (inference, imageFilePaths, prompt) {
     error = err
   })
 
-  await response.await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.await()
+  } finally {
+    clearInterval(ticker)
+  }
 
   if (error) {
     throw new Error('Inference error: ' + error)
@@ -241,7 +251,12 @@ async function describeImageByPath (inference, imageFilePath, prompt = TEST_CONS
     error = err
   })
 
-  await response.await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.await()
+  } finally {
+    clearInterval(ticker)
+  }
 
   if (error) {
     throw new Error('Inference error: ' + error)

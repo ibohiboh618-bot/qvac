@@ -64,7 +64,12 @@ async function setupModel (t, configOverrides = {}) {
 
 async function collectResponse (response) {
   const chunks = []
-  await response.onUpdate(data => { chunks.push(data) }).await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.onUpdate(data => { chunks.push(data) }).await()
+  } finally {
+    clearInterval(ticker)
+  }
   return chunks.join('').trim()
 }
 
@@ -125,10 +130,13 @@ safeTest('run | cancel: allowed, cancels current job', { timeout: 600_000 }, asy
   const { model } = await setupModel(t)
   const response = await model.run(LONG_PROMPT)
   const cancelPromise = model.cancel()
+  const ticker = setInterval(() => {}, 50)
   try {
     await response.await()
   } catch (err) {
     if (!/cancel|aborted|stopp?ed/i.test(err?.message || '')) throw err
+  } finally {
+    clearInterval(ticker)
   }
   await cancelPromise
   t.pass('cancel during run resolves and stops job')
@@ -142,6 +150,7 @@ safeTest('run | run: second run() throws busy error', { timeout: 600_000 }, asyn
     firstResponse.onError(err => { firstError = err })
   }
 
+  const ticker = setInterval(() => {}, 50)
   const result = await Promise.race([
     model.run(BASE_PROMPT)
       .then(() => ({ kind: 'no-throw' }))
@@ -150,6 +159,7 @@ safeTest('run | run: second run() throws busy error', { timeout: 600_000 }, asyn
       .then(() => ({ kind: 'first-done' }))
       .catch(() => ({ kind: 'first-done' }))
   ])
+  clearInterval(ticker)
 
   if (result.kind === 'busy') {
     t.ok(

@@ -524,7 +524,13 @@ function verifyPauseCheckpoint (t, checkpointDir) {
 
 async function handleEarlyCompletion (t, finetuneHandle, checkpointDir = null, message = 'Finetuning completed too quickly') {
   t.comment(`${message} - this is acceptable for small datasets`)
-  const result = await (finetuneHandle?.await ? finetuneHandle.await() : finetuneHandle)
+  const ticker = setInterval(() => {}, 50)
+  let result
+  try {
+    result = await (finetuneHandle?.await ? finetuneHandle.await() : finetuneHandle)
+  } finally {
+    clearInterval(ticker)
+  }
   t.ok(result && typeof result === 'object', 'Finetuning should complete with result object')
   if (checkpointDir) {
     cleanupCheckpoints(checkpointDir)

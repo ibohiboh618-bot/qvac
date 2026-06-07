@@ -27,7 +27,12 @@ function extractBufferDevices (logs) {
 
 async function collectResponse (response) {
   const chunks = []
-  await response.onUpdate(data => { chunks.push(data) }).await()
+  const ticker = setInterval(() => {}, 50)
+  try {
+    await response.onUpdate(data => { chunks.push(data) }).await()
+  } finally {
+    clearInterval(ticker)
+  }
   return chunks.join('').trim()
 }
 

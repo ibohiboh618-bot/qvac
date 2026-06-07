@@ -145,7 +145,12 @@ async function runBenchmark (cfg, modelInfo) {
 
     const response = await model.run(PROMPT)
     const chunks = []
-    await response.onUpdate(data => { chunks.push(data) }).await()
+    const ticker = setInterval(() => {}, 50)
+    try {
+      await response.onUpdate(data => { chunks.push(data) }).await()
+    } finally {
+      clearInterval(ticker)
+    }
     const output = chunks.join('').trim()
 
     const stats = response.stats || {}
