@@ -213,6 +213,7 @@ private:
 
     // configuration values parsed from configFilemap
     llama_pos configuredNDiscarded_ = 0;
+    int32_t configuredImageMinTokens_ = 0;
     std::optional<CacheManager> cacheManager_;
 
     bool lastRunWasPrefill_ = false;
@@ -257,7 +258,8 @@ private:
   void resetState(bool resetStats = true);
   std::unique_ptr<LlmContext> createContext(
       std::string&& projectionPath, common_params& params,
-      common_init_result_ptr llamaInit, ToolsCompactController& tools);
+      common_init_result_ptr llamaInit, ToolsCompactController& tools,
+      int32_t imageMinTokens = 0);
 
   bool loadMedia(const std::vector<uint8_t>& input);
 

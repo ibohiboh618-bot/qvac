@@ -400,7 +400,8 @@ void LlamaModel::init(bool acquireLock) {
       std::string(constructionArgs_.projectionPath),
       params,
       std::move(llamaInit),
-      *snap->toolsCompact_);
+      *snap->toolsCompact_,
+      snap->configuredImageMinTokens_);
 
   if (snap->configuredNDiscarded_ > 0 && snap->llmContext_) {
     snap->llmContext_->setNDiscarded(snap->configuredNDiscarded_);
@@ -846,6 +847,29 @@ void LlamaModel::commonParamsParse(
     configFilemap.erase(iter);
   }
 
+  for (const std::string& key : {"image-min-tokens", "image_min_tokens"}) {
+    if (auto iter = configFilemap.find(key); iter != configFilemap.end()) {
+      try {
+        long long parsed = std::stoll(iter->second);
+        if (parsed > 0) {
+          state_->configuredImageMinTokens_ = static_cast<int32_t>(parsed);
+        }
+      } catch (...) {
+        std::string errorMsg = string_format(
+            "%s: invalid %s value: %s\n",
+            __func__,
+            key.c_str(),
+            iter->second.c_str());
+        throw qvac_errors::StatusError(
+            ADDON_ID,
+            qvac_errors::general_error::toString(
+                qvac_errors::general_error::InvalidArgument),
+            errorMsg);
+      }
+      configFilemap.erase(iter);
+    }
+  }
+
   // parse tools_compact flag from config
   bool toolsCompactRequested = false;
   if (auto iter = configFilemap.find("tools_compact");
@@ -950,7 +974,7 @@ void LlamaModel::commonParamsParse(
 #ifdef __ANDROID__
       using namespace qvac_lib_inference_addon_llama::android_device;
 
-      if (arch != "llama" && isVlm && isSamsung() && isUltraDevice()) {
+      if (arch == "qwen35" && isVlm && isSamsung() && isUltraDevice()) {
         params.mmproj_use_gpu = true;
         QLOG_IF(
             Priority::INFO,
@@ -1327,11 +1351,12 @@ void LlamaModel::resetState(bool resetStats) {
 
 std::unique_ptr<LlmContext> LlamaModel::createContext(
     std::string&& projectionPath, common_params& params,
-    common_init_result_ptr llamaInit, ToolsCompactController& tools) {
+    common_init_result_ptr llamaInit, ToolsCompactController& tools,
+    int32_t imageMinTokens) {
   if (!projectionPath.empty()) {
     params.mmproj.path = std::move(projectionPath);
     return std::make_unique<MtmdLlmContext>(
-        params, std::move(llamaInit), tools);
+        params, std::move(llamaInit), tools, imageMinTokens);
   }
   return std::make_unique<TextLlmContext>(params, std::move(llamaInit), tools);
 }

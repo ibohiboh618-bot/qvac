@@ -24,9 +24,10 @@ using namespace qvac_lib_inference_addon_llama::utils;
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 MtmdLlmContext::MtmdLlmContext(
     common_params& commonParams, common_init_result_ptr llamaInit,
-    ToolsCompactController& tools)
+    ToolsCompactController& tools, int32_t imageMinTokens)
     : tools_(tools), llamaInit_(std::move(llamaInit)), params_(commonParams),
-      model_(llamaInit_->model()), lctx_(llamaInit_->context()) {
+      model_(llamaInit_->model()), lctx_(llamaInit_->context()),
+      imageMinTokens_(imageMinTokens) {
 
   if (model_ == nullptr) {
     throw qvac_errors::StatusError(
@@ -126,21 +127,14 @@ void MtmdLlmContext::initVisionContext() {
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
 
-  char arch[64] = {0};
-  int archLen = llama_model_meta_val_str(
-      model_, "general.architecture", arch, sizeof(arch));
-  bool isQwen35 =
-      (archLen > 0 && archLen < static_cast<int>(sizeof(arch)) &&
-       std::string(arch) == "qwen35");
-
-#ifdef __ANDROID__
-  if (isQwen35) {
-    mparams.image_min_tokens = 1024;
+  if (imageMinTokens_ > 0) {
+    mparams.image_min_tokens = imageMinTokens_;
     QLOG_IF(
         Priority::INFO,
-        "[MtmdLlm] image_min_tokens set to 1024 for qwen35 on android device");
+        string_format(
+            "[MtmdLlm] image_min_tokens set to %d from config",
+            imageMinTokens_));
   }
-#endif
   mparams.n_threads = params_.cpuparams.n_threads;
   ctxVision_.reset(mtmd_init_from_file(clipPath, model_, mparams));
   if (ctxVision_.get() == nullptr) {

@@ -22,7 +22,7 @@ public:
    */
   MtmdLlmContext(
       common_params& commonParams, common_init_result_ptr llamaInit,
-      ToolsCompactController& tools);
+      ToolsCompactController& tools, int32_t imageMinTokens = 0);
 
   /**
    * The destructor.
@@ -230,5 +230,6 @@ private:
   // tags.
   bool thinkingForcedOpen_ = false;
 
+  int32_t imageMinTokens_ = 0;
   std::atomic<bool> stopGeneration_ = false;
 };

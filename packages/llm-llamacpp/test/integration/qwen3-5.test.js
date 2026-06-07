@@ -290,7 +290,12 @@ test('Qwen3.5-0.8B can describe an image', {
     ctx_size: '4096',
     temp: '0',
     seed: '42',
-    verbosity: '2'
+    verbosity: '2',
+    // Qwen-VL models require at minimum 1024 image tokens for correct
+    // grounding tasks. Without this the vision encoder under-allocates
+    // tokens and accuracy degrades.
+    // https://github.com/ggml-org/llama.cpp/issues/16842
+    'image-min-tokens': '1024'
   }
 
   const inference = new LlmLlamacpp({
