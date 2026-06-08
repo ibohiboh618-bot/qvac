@@ -40,10 +40,11 @@ function runCtScanTest (device, run) {
     t.comment(`Testing DocTR on CT scan diagnostic report image [${tag}] (run ${run}/${PERF_RUNS})`)
     t.comment('Detector: db_mobilenet_v3_large, Recognizer: crnn_mobilenet_v3_small (CTC)')
 
-    // On a GPU host this records a Vulkan ([GPU]) and a forced-CPU ([CPU]) row
-    // for the same test; on non-GPU/local it stays a single CPU pass. The
-    // assertions run on each pass. The `[${tag}]` token (always CPU here) is
-    // normalized to the actual backend by formatOCRPerformanceMetrics.
+    // On a Vulkan GPU host this records a [GPU] and a forced-CPU [CPU] row for
+    // the same test; on non-GPU/local it stays a single CPU pass. The
+    // assertions run on each pass. On Apple/Metal runDoctrComparison forces CPU
+    // (the DocTR recognizer is unstable on the constrained macOS CI runner), so
+    // this stays CPU-only on Metal while Vulkan still records a [GPU] row.
     await runDoctrComparison(t, {
       params: {
         pathDetector: DB_MOBILENET,

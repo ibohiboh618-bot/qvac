@@ -975,7 +975,21 @@ async function runOcrComparison (t, cfg) {
 async function runDoctrComparison (t, cfg) {
   const { params, imagePath, perfLabel, perfOpts, assertResult } = cfg
 
-  const pass1 = await runDoctrOCR(t, params, imagePath)
+  // Metal scoping: the DocTR recognizer runs ggml_backend_graph_compute once
+  // per detected region, and on the constrained `macos-15-xlarge` CI runner the
+  // Metal backend is non-deterministically unstable under that sustained load —
+  // it either aborts the suite ("[DoctrRecognitionGGML] ggml backend graph
+  // compute failed with status -1", exit 134) or silently collapses detection
+  // to garbage. The same image's BMP passes while its JPEG/PNG fail, so there is
+  // no stable per-test subset. Force CPU for ALL DocTR tests when the
+  // auto-selected backend is Metal; Vulkan keeps its GPU pass, and EasyOCR
+  // (runOcrComparison, a different recognizer path) keeps Metal. See the
+  // ocr-ggml Metal memory-pressure investigation.
+  const pass1Params = (getBackendDevice() === 'metal')
+    ? { ...params, backendDevice: 'cpu' }
+    : params
+
+  const pass1 = await runDoctrOCR(t, pass1Params, imagePath)
   const isGpuPass1 = !!(pass1.stats && pass1.stats.backendIsGpu === 1)
   if (perfLabel) {
     t.comment(formatOCRPerformanceMetrics(perfLabel, pass1.stats, pass1.results.map(r => r.text), perfOpts))

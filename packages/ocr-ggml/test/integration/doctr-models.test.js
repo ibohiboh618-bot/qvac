@@ -110,16 +110,21 @@ test('DocTR recognizerBatchSize - batch=1 vs batch=16 both produce valid output'
   const imagePath = getImagePath('/test/images/english.bmp')
   t.comment('Testing recognizerBatchSize=1 vs recognizerBatchSize=16')
 
+  // Backend-agnostic correctness check (batch=1 vs batch=16 output identity),
+  // not a perf comparison — force CPU so it stays deterministic and avoids the
+  // DocTR-recognizer-on-Metal instability on the constrained macOS CI runner.
   const { results: resultsBatch1 } = await runDoctrOCR(t, {
     pathDetector: DB_MOBILENET,
     pathRecognizer: CRNN_MOBILENET,
-    recognizerBatchSize: 1
+    recognizerBatchSize: 1,
+    backendDevice: 'cpu'
   }, imagePath)
 
   const { results: resultsBatch16 } = await runDoctrOCR(t, {
     pathDetector: DB_MOBILENET,
     pathRecognizer: CRNN_MOBILENET,
-    recognizerBatchSize: 16
+    recognizerBatchSize: 16,
+    backendDevice: 'cpu'
   }, imagePath)
 
   const textsBatch1 = resultsBatch1.map(r => r.text)
