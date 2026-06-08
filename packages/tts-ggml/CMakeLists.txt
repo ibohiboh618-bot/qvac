@@ -13,6 +13,16 @@ if(ENABLE_VULKAN)
 endif()
 
 find_package(cmake-bare REQUIRED PATHS node_modules/cmake-bare)
+
+# Overlay-port pinning tts-cpp to qvac-ext-lib-whisper.cpp PR #40 HEAD
+# (971fca0a — "release Supertonic per-stage thread_local caches on
+# Engine teardown") so the on-PR CI can validate the memory-cycle fix
+# before the registry pin moves.  MUST be set BEFORE
+# `find_package(cmake-vcpkg)` because that's what triggers the
+# vcpkg manifest install.  This branch is a tmp- scratch — the
+# overlay goes away on the next registry bump.
+set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg-overlay-ports")
+
 find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
