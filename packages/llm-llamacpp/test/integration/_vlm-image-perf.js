@@ -95,7 +95,10 @@ const QWEN35_MODEL = {
   // grounding tasks. Without this the vision encoder under-allocates
   // tokens and accuracy degrades.
   // https://github.com/ggml-org/llama.cpp/issues/16842
-  extraConfig: { 'image-min-tokens': '1024' },
+  //
+  // mmproj-use-gpu: explicitly enable GPU for the vision projector;
+  // Android defaults to CPU unless overridden.
+  extraConfig: { 'image-min-tokens': '1024', 'mmproj-use-gpu': 'true' },
   ctxFor: (imageCase) => imageCase.qwenCtxSize
 }
 

@@ -847,6 +847,16 @@ void LlamaModel::commonParamsParse(
     configFilemap.erase(iter);
   }
 
+  std::optional<bool> mmprjUseGpuOverride;
+  for (const std::string& key : {"mmproj-use-gpu", "mmproj_use_gpu"}) {
+    if (auto iter = configFilemap.find(key); iter != configFilemap.end()) {
+      std::string val = iter->second;
+      std::ranges::transform(val, val.begin(), ::tolower);
+      mmprjUseGpuOverride = (val == "true" || val == "1");
+      configFilemap.erase(iter);
+    }
+  }
+
   for (const std::string& key : {"image-min-tokens", "image_min_tokens"}) {
     if (auto iter = configFilemap.find(key); iter != configFilemap.end()) {
       try {
@@ -986,6 +996,14 @@ void LlamaModel::commonParamsParse(
 #else
       params.mmproj_use_gpu = true;
 #endif
+      if (mmprjUseGpuOverride.has_value()) {
+        params.mmproj_use_gpu = mmprjUseGpuOverride.value();
+        QLOG_IF(
+            Priority::INFO,
+            string_format(
+                "[LlamaModel] mmproj_use_gpu overridden to %s from config\n",
+                params.mmproj_use_gpu ? "true" : "false"));
+      }
       params.split_mode = splitMode;
       runtimeBackendDevice_ = 1;
 
