@@ -27,7 +27,8 @@ async function main () {
   const config = {
     device: 'gpu',
     gpu_layers: '99',
-    ctx_size: '2048'
+    ctx_size: '2048',
+    mmproj_use_gpu: 'true'
   }
 
   // 3. Loading model
