@@ -14,6 +14,10 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 #include <parakeet/parakeet.h>
 
 #include "ggml.h"
@@ -124,13 +128,39 @@ void ggmlLogTrampoline(ggml_log_level level, const char * text, void * /*user_da
     ggml_log_buf().erase(0, nl + 1);
     if (line.empty()) continue;
     QLOG(ggmlLevelToPriority(ggml_log_buf_level()), line);
+#ifdef __ANDROID__
+    // [DO NOT MERGE] Device-Farm RCA (qvac PR #2476): mirror every ggml line
+    // to logcat so the Vulkan device-caps banner (emitted at DEBUG, and a
+    // no-op through QLOG unless setLogger() is on) is visible in Device-Farm
+    // logs. Strip with the rest of the test scaffolding.
+    __android_log_print(ANDROID_LOG_INFO, "ggml", "%s", line.c_str());
+#endif
   }
+}
+
+// [DO NOT MERGE] Device-Farm Mali RCA (qvac PR #2476): the RN/bare runtime
+// does not forward native stderr to logcat, so a ggml_abort()/GGML_ASSERT
+// failure is invisible in Device-Farm logs. ggml exposes a synchronous abort
+// callback (ggml_set_abort_callback, llama.cpp upstream) invoked with the
+// fully-formatted "file:line: message" immediately before abort(). Forward it
+// straight to logcat via __android_log_print — NOT QLOG, which is a no-op
+// unless setLogger() is called from JS and would hop to the very JS thread
+// that is aborting. Strip with the rest of the test scaffolding.
+void ggmlAbortTrampoline(const char * message) {
+  const char * msg = message ? message : "(null)";
+#ifdef __ANDROID__
+  __android_log_print(ANDROID_LOG_FATAL, "ggml_abort", "%s", msg);
+#else
+  std::fprintf(stderr, "ggml_abort: %s\n", msg);
+#endif
 }
 
 void installGgmlLogTrampolineOnce() {
   static std::once_flag once;
   std::call_once(once, [] {
     ggml_log_set(&ggmlLogTrampoline, nullptr);
+    // [DO NOT MERGE] capture the Mali GGML_ASSERT — see ggmlAbortTrampoline.
+    ggml_set_abort_callback(&ggmlAbortTrampoline);
   });
 }
 
