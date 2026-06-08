@@ -248,6 +248,12 @@ if(ANDROID)
       -Wl,-z,max-page-size=16384
       -Wl,-z,common-page-size=16384
   )
+  # [DO NOT MERGE] Device-Farm Mali RCA (qvac PR #2476): the abort-capture
+  # instrumentation in ParakeetModel.cpp calls __android_log_print, which lives
+  # in liblog. Without linking it the symbol is undefined in the .bare and the
+  # addon fails to dlopen at runtime (bare reports ADDON_NOT_FOUND). Strip with
+  # the rest of the test scaffolding.
+  target_link_libraries(${qvac_lib_infer_parakeet}_module PRIVATE log)
 endif()
 
 if(APPLE)
