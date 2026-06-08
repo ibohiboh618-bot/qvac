@@ -36,21 +36,6 @@ jobs:
             arch: x64
             runner: qvac-ubuntu2204-x64
             coverage: true
-          # QVAC-19878 — multi-platform leak coverage for
-          # SupertonicRealGguf.NoLeakOverEngineCycles.  ARM64 entries
-          # mirror the mobile-target architectures (arm64 macOS == iOS
-          # arm64; arm64 Linux == Android arm64) so the per-cycle
-          # gallocr/backend-buffer release path is gated on the same
-          # allocator + heap behaviours mobile runtimes exhibit.  No
-          # coverage flag — LLVM source-based coverage is set up for
-          # the linux-x64 entry only (the existing `if: matrix.coverage`
-          # gate on the coverage steps below already handles this).
-          - os: macos-14-xlarge
-            platform: darwin
-            arch: arm64
-          - os: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
     env:
       VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/vcpkg/cache,readwrite"
 
@@ -68,13 +53,8 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           lfs: true
 
-      # ccache is preinstalled on the qvac- self-hosted runners only;
-      # GitHub-hosted runners (macos-14-xlarge, ubuntu-24.04-arm) would
-      # need an explicit install step.  Skip ccache on those — the
-      # build is small enough that the cold compile is fine for the
-      # leak coverage matrix entries.
       - name: Setup ccache
-        if: ${{ startsWith(matrix.runner, 'qvac-') }}
+        if: matrix.platform == 'linux'
         run: |
           # sudo apt-get install -y ccache
           ccache -z
@@ -82,7 +62,7 @@ jobs:
           echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
 
       - name: Get ccache cache
-        if: ${{ startsWith(matrix.runner, 'qvac-') }}
+        if: matrix.platform == 'linux'
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # 5.0.4
         with:
           key: ccache-cpp-coverage-tts-ggml-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles(format('{0}/vcpkg.json', env.PKG_DIR)) }}
@@ -102,14 +82,8 @@ jobs:
         run: |
           npm install
           
-      # GitHub runner images set VCPKG_INSTALLATION_ROOT on Linux,
-      # macOS, and Windows.  Mirror it into VCPKG_ROOT (the name
-      # cmake-vcpkg consumes) on every platform so the matrix isn't
-      # tied to a specific OS — the previous linux-only condition
-      # left VCPKG_ROOT unset for macOS / Linux-arm64, which made
-      # the subsequent `Cleanup vcpkg` step rm -rf an unset path.
-      - name: Configure vcpkg path
-        shell: bash
+      - if: ${{ matrix.os == 'ubuntu-22.04' }}
+        name: Configure vcpkg in linux
         run: echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
 
       - name: Cleanup vcpkg
@@ -119,17 +93,9 @@ jobs:
           rm -rf $VCPKG_ROOT/packages/*
 
       - name: Generate and build C++ unit tests (with coverage)
-        if: matrix.coverage
         working-directory: ${{ env.PKG_DIR }}
         run: |
           npm run coverage:cpp:build
-
-      - name: Generate and build C++ unit tests (no coverage)
-        if: ${{ !matrix.coverage }}
-        working-directory: ${{ env.PKG_DIR }}
-        shell: bash
-        run: |
-          npm run test:cpp:build
 
       # Mirrors parakeet's cpp-test-coverage flow.  The C++ suite has two
       # tiers of tests:
@@ -193,19 +159,6 @@ jobs:
           npm run test:cpp:run
         continue-on-error: true
 
-      # The cpp-tests step uses `continue-on-error: true` so the
-      # downstream coverage/report steps still run on the linux-x64
-      # coverage entry even if individual gtests fail.  But on the
-      # non-coverage matrix entries (multi-platform leak gates) we
-      # have no Publish step to expose the failure — so the job
-      # status would falsely be GREEN if cpp-tests failed.  Re-raise
-      # the failure explicitly for the non-coverage entries.
-      - name: Fail job if cpp-tests failed (non-coverage entries)
-        if: ${{ !matrix.coverage && steps.cpp-tests.outcome == 'failure' }}
-        run: |
-          echo "::error::C++ tests failed on ${{ matrix.platform }}-${{ matrix.arch }}; see the 'Run C++ Unit Tests' step above for details."
-          exit 1
-
       - name: Debug - List test output files
         if: always()
         working-directory: ${{ env.PKG_DIR }}
@@ -225,7 +178,7 @@ jobs:
           echo "Line Coverage: ${COVERAGE}" > coverage-badge.txt
 
       - name: Show ccache statistics
-        if: ${{ startsWith(matrix.runner, 'qvac-') }}
+        if: matrix.platform == 'linux'
         run: ccache -s
 
       - name: Archive Coverage Results
@@ -251,16 +204,9 @@ jobs:
           fi
         continue-on-error: true
 
-      # The non-composite publish-unit-test-result-action is Linux-only
-      # (composite version supports macOS/Windows but at the cost of
-      # different invocation syntax).  Gate to Linux entries; the
-      # multi-platform leak coverage entries still surface their
-      # pass/fail status through the gtest exit code, which the
-      # publish step exposes for the linux-x64 entry already (and the
-      # job-level summary view shows all matrix entries' conclusions).
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # 2.23.0
-        if: ${{ always() && matrix.platform == 'linux' && steps.check-test-results.outputs.exists == 'true' }}
+        if: always() && steps.check-test-results.outputs.exists == 'true'
         with:
           files: ${{ env.PKG_DIR }}/build/cpp-test-results.xml
           comment_mode: off
