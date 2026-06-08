@@ -1,17 +1,19 @@
-# ggml-speech: OVERLAY pinned to tetherto/qvac-ext-ggml PR #14 (commit
-# 8bf760f4) -- Adreno 740 Vulkan support + the Parakeet quantized-matmul
-# fix (disable integer-dot MMQ + force a quantized src0 -> f16 dequant on
-# Qualcomm, so the int8-only shaders the Adreno SPIR-V compiler rejects are
-# never used). DO NOT MERGE: device-farm validation overlay only. Pairs
-# with the Android default-features below dropping OpenCL so the Parakeet
-# Android tests exercise the Vulkan backend.
+# ggml-speech: OVERLAY pinned to tetherto/qvac-ext-ggml branch
+# QVAC-19214-mali-rca (commit 9be02126) = PR #14's Adreno-Vulkan fix
+# (8bf760f4) PLUS a DO-NOT-MERGE diagnostic that forwards ggml_abort's
+# "file:line: GGML_ASSERT(...)" to Android logcat (tag ggml_abort), to
+# capture the exact Mali-G715 EOU-Vulkan assertion that is otherwise
+# invisible (bare drops native stderr; the addon abort callback never fires
+# for the dlopen'd backend's separate linker namespace). DO NOT MERGE:
+# device-farm RCA overlay only. Pairs with the Android default-features
+# below dropping OpenCL so the Parakeet Android tests exercise Vulkan.
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF 8bf760f41a3f510216c6f1a80ca8b5795c1b2ffd
-    SHA512 5c2f894cc719f97d7ca8a5e52be40be4639881d162d4b5a695ef4ce05ad7ee4083353a1d2dca8e8bab330d080348a8548a577fb40054a452be6ff104a129b946
-    HEAD_REF QVAC-19213-adreno-vulkan-shmem-fix
+    REF 9be02126c72d0a8f2404059b6bfa242efc354acf
+    SHA512 d7fedf1ca7256aec1b0c008e3b64ca6b4586fe5eadd6a311ac04076227c0ab3085c2f1376b85305d31628671402be9712ad65e46fb5a691fabdd6f324f060475
+    HEAD_REF QVAC-19214-mali-rca
 )
 
 set(GGML_METAL  OFF)
