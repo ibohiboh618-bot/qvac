@@ -152,6 +152,20 @@ async function runMobilePerfCase (t, opts) {
 
     t.ok(receivedStats.length >= NUM_TRANSCRIPTIONS, `${modelLabel} ${epLabel} should receive JobEnded stats for every run (got ${receivedStats.length})`)
     t.ok(timings.length === NUM_TRANSCRIPTIONS, `${modelLabel} ${epLabel} should complete ${NUM_TRANSCRIPTIONS} transcriptions (got ${timings.length})`)
+
+    // DO NOT MERGE (device-farm Vulkan validation): assert the Android GPU run
+    // actually selected the Vulkan backend (backendId 3), not OpenCL (4) or a
+    // CPU fallback (0). Both forced-Vulkan Device Farm devices (Adreno + Mali)
+    // must report Vulkan. BackendId: 0=CPU 1=Metal 2=CUDA 3=Vulkan 4=OpenCL.
+    if (useGPU && platform.startsWith('android')) {
+      const finalStats = receivedStats.length > 0
+        ? receivedStats[receivedStats.length - 1].stats
+        : null
+      const backendId = finalStats ? finalStats.backendId : null
+      t.ok(backendId === 3,
+        `${modelLabel} ${epLabel} Android use_gpu=true must select Vulkan (backendId=3); got ${backendId}`)
+    }
+
     console.log(`✅ Mobile perf case ${modelLabel} ${epLabel} completed successfully!\n`)
   } finally {
     console.log('=== Cleanup ===')

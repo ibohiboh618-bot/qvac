@@ -11,7 +11,8 @@
     {
       "name": "parakeet-cpp",
       "version>=": "2026-05-26#2",
-      "features": ["vulkan", "opencl"],
+      "features": ["vulkan"],
+      "default-features": false,
       "platform": "android"
     },
     {
