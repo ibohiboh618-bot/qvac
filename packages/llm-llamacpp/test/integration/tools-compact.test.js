@@ -3,19 +3,13 @@
 const path = require('bare-path')
 const fs = require('bare-fs')
 const LlmLlamacpp = require('../../index.js')
-const { ensureModel, safeTest } = require('./utils')
+const { ensureModel, safeTest, removeStaleCache } = require('./utils')
 const { attachSpecLogger } = require('./spec-logger')
 const os = require('bare-os')
 
 const isDarwinX64 = os.platform() === 'darwin' && os.arch() === 'x64'
 const isLinuxArm64 = os.platform() === 'linux' && os.arch() === 'arm64'
 const useCpu = isDarwinX64 || isLinuxArm64
-
-function removeStaleCache (...paths) {
-  for (const p of paths) {
-    try { fs.unlinkSync(p) } catch {}
-  }
-}
 
 const QWEN3_MODEL = {
   name: 'Qwen3-0.6B-Q8_0.gguf',

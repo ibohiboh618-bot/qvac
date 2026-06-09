@@ -8,7 +8,7 @@
 #include <sys/system_properties.h>
 
 namespace qvac_lib_inference_addon_llama {
-namespace android_device {
+namespace utils {
 
 namespace {
 
@@ -70,7 +70,7 @@ bool isS26Ultra() {
 
 bool isUltraDevice() { return isS25Ultra() || isS26Ultra(); }
 
-} // namespace android_device
+} // namespace utils
 } // namespace qvac_lib_inference_addon_llama
 
 #endif // __ANDROID__

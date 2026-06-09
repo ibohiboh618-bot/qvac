@@ -28,7 +28,7 @@ async function main () {
     device: 'gpu',
     gpu_layers: '99',
     ctx_size: '2048',
-    mmproj_use_gpu: 'true'
+    'mmproj-use-gpu': 'true'
   }
 
   // 3. Loading model

@@ -848,19 +848,41 @@ void LlamaModel::commonParamsParse(
   }
 
   std::optional<bool> mmprjUseGpuOverride;
-  for (const std::string& key : {"mmproj-use-gpu", "mmproj_use_gpu"}) {
-    if (auto iter = configFilemap.find(key); iter != configFilemap.end()) {
-      std::string val = iter->second;
-      std::ranges::transform(val, val.begin(), ::tolower);
+  {
+    auto hIt = configFilemap.find("mmproj-use-gpu");
+    auto uIt = configFilemap.find("mmproj_use_gpu");
+    if (hIt != configFilemap.end() && uIt != configFilemap.end()) {
+      throw qvac_errors::StatusError(
+          qvac_errors::general_error::InvalidArgument,
+          string_format(
+              "%s: both 'mmproj-use-gpu' and 'mmproj_use_gpu' are present; "
+              "use one or the other.\n",
+              __func__));
+    }
+    if (auto it = (hIt != configFilemap.end()) ? hIt : uIt;
+        it != configFilemap.end()) {
+      std::string val = it->second;
+      std::transform(val.begin(), val.end(), val.begin(), ::tolower);
       mmprjUseGpuOverride = (val == "true" || val == "1");
-      configFilemap.erase(iter);
+      configFilemap.erase(it);
     }
   }
 
-  for (const std::string& key : {"image-min-tokens", "image_min_tokens"}) {
-    if (auto iter = configFilemap.find(key); iter != configFilemap.end()) {
+  {
+    auto hIt = configFilemap.find("image-min-tokens");
+    auto uIt = configFilemap.find("image_min_tokens");
+    if (hIt != configFilemap.end() && uIt != configFilemap.end()) {
+      throw qvac_errors::StatusError(
+          qvac_errors::general_error::InvalidArgument,
+          string_format(
+              "%s: both 'image-min-tokens' and 'image_min_tokens' are present; "
+              "use one or the other.\n",
+              __func__));
+    }
+    if (auto it = (hIt != configFilemap.end()) ? hIt : uIt;
+        it != configFilemap.end()) {
       try {
-        long long parsed = std::stoll(iter->second);
+        long long parsed = std::stoll(it->second);
         if (parsed > 0) {
           state_->configuredImageMinTokens_ = static_cast<int32_t>(parsed);
         }
@@ -868,15 +890,15 @@ void LlamaModel::commonParamsParse(
         std::string errorMsg = string_format(
             "%s: invalid %s value: %s\n",
             __func__,
-            key.c_str(),
-            iter->second.c_str());
+            it->first.c_str(),
+            it->second.c_str());
         throw qvac_errors::StatusError(
             ADDON_ID,
             qvac_errors::general_error::toString(
                 qvac_errors::general_error::InvalidArgument),
             errorMsg);
       }
-      configFilemap.erase(iter);
+      configFilemap.erase(it);
     }
   }
 
@@ -982,7 +1004,7 @@ void LlamaModel::commonParamsParse(
               arch.c_str(),
               isVlm ? "true" : "false"));
 #ifdef __ANDROID__
-      using namespace qvac_lib_inference_addon_llama::android_device;
+      using namespace qvac_lib_inference_addon_llama::utils;
 
       if (arch == "qwen35" && isVlm && isSamsung() && isUltraDevice()) {
         params.mmproj_use_gpu = true;

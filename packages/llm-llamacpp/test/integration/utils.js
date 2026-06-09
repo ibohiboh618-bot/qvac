@@ -308,6 +308,12 @@ function getFinetuneModel () {
   }
 }
 
+function removeStaleCache (...paths) {
+  for (const p of paths) {
+    try { fs.unlinkSync(p) } catch {}
+  }
+}
+
 function createDefaultGpuConfig (overrides = {}) {
   return {
     gpu_layers: '99',
@@ -556,6 +562,7 @@ module.exports = {
   makeOutputCollector,
   getDefaultTextModel,
   getFinetuneModel,
+  removeStaleCache,
   createDefaultGpuConfig,
   createTestAddon,
   waitForJobCompletion,

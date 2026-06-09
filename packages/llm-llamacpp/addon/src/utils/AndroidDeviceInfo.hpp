@@ -7,7 +7,7 @@ namespace qvac_lib_inference_addon_llama {
 
 #ifdef __ANDROID__
 
-namespace android_device {
+namespace utils {
 
 /// Get device manufacturer (lowercased)
 std::optional<std::string> getManufacturer();
@@ -27,7 +27,7 @@ bool isS26Ultra();
 /// Check if device is S25 Ultra OR S26 Ultra
 bool isUltraDevice();
 
-} // namespace android_device
+} // namespace utils
 
 #endif // __ANDROID__
 

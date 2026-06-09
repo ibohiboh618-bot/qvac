@@ -3,7 +3,7 @@
 const path = require('bare-path')
 const fs = require('bare-fs')
 const LlmLlamacpp = require('../../index.js')
-const { ensureModel, safeTest } = require('./utils')
+const { ensureModel, safeTest, removeStaleCache } = require('./utils')
 const { attachSpecLogger } = require('./spec-logger')
 const os = require('bare-os')
 
@@ -78,12 +78,6 @@ function buildPrompt (options = {}) {
 
 function buildStoppingPrompt () {
   return [...STOP_PROMPT]
-}
-
-function removeStaleCache (...paths) {
-  for (const p of paths) {
-    try { fs.unlinkSync(p) } catch {}
-  }
 }
 
 function cacheOpts (sessionName, extra = {}) {
