@@ -10,6 +10,24 @@ const TRANSIENT_ERROR_CODES = new Set([
   'ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ESIZE'
 ])
 
+const cleanedIntegrationCacheFiles = new Set()
+
+function cleanupIntegrationCacheFiles (...cachePaths) {
+  for (const cachePath of cachePaths.flat()) {
+    if (!cachePath || cleanedIntegrationCacheFiles.has(cachePath)) continue
+    if (!path.isAbsolute(cachePath)) {
+      throw new Error(`integration cache cleanup requires an absolute path: ${cachePath}`)
+    }
+
+    cleanedIntegrationCacheFiles.add(cachePath)
+    try {
+      fs.unlinkSync(cachePath)
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+    }
+  }
+}
+
 function isTransientError (err) {
   if (err.code && TRANSIENT_ERROR_CODES.has(err.code)) return true
   if (err.statusCode) {
@@ -308,12 +326,6 @@ function getFinetuneModel () {
   }
 }
 
-function removeStaleCache (...paths) {
-  for (const p of paths) {
-    try { fs.unlinkSync(p) } catch {}
-  }
-}
-
 function createDefaultGpuConfig (overrides = {}) {
   return {
     gpu_layers: '99',
@@ -411,7 +423,7 @@ function createPauseResumeTestDataset (filePath, count = 8) {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true })
   const content = samples.map(s => JSON.stringify(s)).join('\n')
-  fs.writeFileSync(filePath, content)
+  fs.writeFileSync(filePath, content + '\n')
   return filePath
 }
 
@@ -556,13 +568,13 @@ function safeTest (name, opts, fn) {
 }
 
 module.exports = {
+  cleanupIntegrationCacheFiles,
   ensureModel,
   ensureModelPath,
   getMediaPath,
   makeOutputCollector,
   getDefaultTextModel,
   getFinetuneModel,
-  removeStaleCache,
   createDefaultGpuConfig,
   createTestAddon,
   waitForJobCompletion,

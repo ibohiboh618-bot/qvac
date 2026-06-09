@@ -2,11 +2,33 @@
 
 ## [0.24.0] - 2026-06-08
 
+This release adds sliding-context support for M-RoPE/iM-RoPE models such as Qwen3.5 and Qwen-VL style decoders. Long-running multimodal sessions can now slide under context pressure while preserving image recall, cache save/load behavior, and quantized KV-cache operation.
+
 ### Added
 
 - **`image-min-tokens` configurable from JS**: wire `image-min-tokens` / `image_min_tokens` through the config pipeline so it can be set per-model from JavaScript instead of being hardcoded. Qwen-VL models require at minimum 1024 image tokens for correct grounding ([llama.cpp#16842](https://github.com/ggml-org/llama.cpp/issues/16842)).
 - **`mmproj-use-gpu` configurable from JS**: wire `mmproj-use-gpu` / `mmproj_use_gpu` as a boolean override. When set, it takes precedence over platform defaults (Android Samsung Ultra auto-detect, non-Android always-true).
 - Added `AndroidDeviceInfo` utility for querying device manufacturer/model via Android system properties.
+
+### Features
+
+#### M-RoPE/iM-RoPE sliding context
+
+`llm-llamacpp` now tracks multimodal context usage as both logical decoder positions and physical KV-cache cells. This lets Qwen3.5-style prompts slide at the right time even when image chunks occupy a different number of cache cells than position slots.
+
+Context sliding now supports bounded full-wipe and tail-preserving fallback behavior while respecting the configured discard budget. Native KV memory-operation failures surface as `ContextSlideFailed`, making them distinguishable from ordinary context overflow.
+
+Shifted multimodal cache metadata now persists both logical positions and KV-cache usage, so sessions that slide after image turns can be saved and loaded without losing track of protected prefixes or current cache occupancy.
+
+#### Quantized KV-cache sliding coverage
+
+The local `qvac-fabric` overlay now points at the Fabric branch with M-RoPE/iM-RoPE K-shift support and quantized KV-cache shift handling. Integration coverage exercises Qwen3.5 text sliding, tool-compaction pressure, multimodal image recall after sliding save/load, quantized K-cache sliding, and Llama RoPE baseline sliding.
+
+### New APIs
+
+#### `ContextSlideFailed`
+
+`ContextSlideFailed` is a new addon error code used when Fabric/native KV memory operations reject a sliding range. Callers can now tell this apart from context overflow, where there is simply not enough room to append the requested tokens.
 
 ### Fixed
 
@@ -16,6 +38,10 @@
 ### Changed
 
 - **Enable GPU mmproj on Samsung Ultra devices**: on Samsung Galaxy S25 Ultra (SM-S938\*) and S26 Ultra (SM-S948\*), `mmproj_use_gpu` is now `true` for Qwen3.5 architecture VLMs. All other Android devices retain the existing CPU-only path.
+
+## Pull Requests
+
+- [#2438](https://github.com/tetherto/qvac/pull/2438) - feat[notask]: add M-RoPE sliding context support
 
 ## [0.23.2] - 2026-06-03
 

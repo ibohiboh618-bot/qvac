@@ -3,7 +3,7 @@
 const path = require('bare-path')
 const fs = require('bare-fs')
 const LlmLlamacpp = require('../../index.js')
-const { ensureModel, safeTest, removeStaleCache } = require('./utils')
+const { cleanupIntegrationCacheFiles, ensureModel, safeTest } = require('./utils')
 const { attachSpecLogger } = require('./spec-logger')
 const os = require('bare-os')
 
@@ -97,6 +97,12 @@ function normalizeStats (rawStats = {}) {
   }
 }
 
+function cleanupRunOptionsCache (runOptions) {
+  if (typeof runOptions?.cacheKey === 'string') {
+    cleanupIntegrationCacheFiles(runOptions.cacheKey)
+  }
+}
+
 async function setupModel (t, overrides = {}) {
   const [modelName, dirPath] = await ensureModel({
     modelName: QWEN3_MODEL.name,
@@ -172,6 +178,7 @@ async function ensureToolsSupportOrSkip (t, model, logs) {
 }
 
 async function runAndCollect (model, prompt, runOptions) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
   const chunks = []
   let chain = response.onUpdate(data => { chunks.push(data) })
@@ -191,6 +198,7 @@ async function runAndCollect (model, prompt, runOptions) {
 }
 
 async function runExpectingInvalidPrompt (t, model, prompt, expectedReason, runOptions) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
 
   let capturedError = null
@@ -219,6 +227,7 @@ async function runExpectingInvalidPrompt (t, model, prompt, expectedReason, runO
 }
 
 async function runExpectingNoPromptValidationError (t, model, prompt, runOptions, invalidReason) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
 
   let capturedError = null
@@ -249,7 +258,7 @@ safeTest('[tools-compact] multi-turn session with wrong tools provided', { timeo
   const { model, dirPath, logs } = await setupModel(t)
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const sessionName = path.join(dirPath, 'tools-compact-changing.bin')
-  removeStaleCache(sessionName)
+  cleanupIntegrationCacheFiles(sessionName)
   const opts = { cacheKey: sessionName }
 
   const prompt1 = [
@@ -302,7 +311,7 @@ safeTest('[tools-compact] multi-turn session with same tools and cut LLM output'
   const { model, dirPath, logs } = await setupModel(t, { n_predict: CUT_PREDICT_LIMIT })
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const sessionName = path.join(dirPath, 'tools-compact-cut-output.bin')
-  removeStaleCache(sessionName)
+  cleanupIntegrationCacheFiles(sessionName)
   const opts = { cacheKey: sessionName }
 
   const prompt1 = [
@@ -335,7 +344,7 @@ safeTest('[tools-compact] multi-turn session with same tools works correctly', {
   const { model, dirPath, logs } = await setupModel(t)
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const sessionName = path.join(dirPath, 'tools-compact-same.bin')
-  removeStaleCache(sessionName)
+  cleanupIntegrationCacheFiles(sessionName)
   const opts = { cacheKey: sessionName }
 
   const prompt1 = [
@@ -418,7 +427,7 @@ safeTest('[tools-compact] rejects invalid prompt shapes', { timeout: 600_000 }, 
   const { model, dirPath } = await setupModel(t)
 
   const invalidCachePath = path.join(dirPath, 'tools-compact-invalid-user-tail.bin')
-  removeStaleCache(invalidCachePath)
+  cleanupIntegrationCacheFiles(invalidCachePath)
   const noCacheOpts = { cacheKey: invalidCachePath }
 
   await runExpectingInvalidPrompt(
@@ -473,7 +482,7 @@ safeTest('[tools-compact] cache-aware empty-tools contract', { timeout: 600_000 
   // No-cache marker/tool strictness is covered deterministically in
   // test/unit/test_tools_compact_controller.cpp.
   const sessionName = path.join(dirPath, 'tools-compact-cache-aware-contract.bin')
-  removeStaleCache(sessionName)
+  cleanupIntegrationCacheFiles(sessionName)
   const opts = { cacheKey: sessionName }
 
   await runExpectingNoPromptValidationError(
@@ -521,7 +530,7 @@ safeTest('[tools-compact] prefill with tools persists cache and loads on fresh m
 
   const { model: warmModel, dirPath } = await setupModel(t)
   const sessionName = path.join(dirPath, 'tools-compact-prefill-save.bin')
-  removeStaleCache(sessionName)
+  cleanupIntegrationCacheFiles(sessionName)
 
   // Prefill the warmed [system, user, TOOL_A] prefix with persistence.
   // tools_compact intentionally skips its post-generation trim on prefill,
@@ -603,7 +612,7 @@ safeTest('[tools-compact] tool_call references current tool after swap', { timeo
   const { model, dirPath, logs } = await setupModel(t, { n_predict: '256' })
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const swapPath = path.join(dirPath, 'tc-swap-verify.bin')
-  removeStaleCache(swapPath)
+  cleanupIntegrationCacheFiles(swapPath)
   const opts = { cacheKey: swapPath }
 
   const r1 = await runAndCollect(model, [
@@ -635,7 +644,7 @@ safeTest('[tools-compact] conversation history preserved after tool swap', { tim
   const { model, dirPath, logs } = await setupModel(t, { n_predict: '128' })
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const historyPath = path.join(dirPath, 'tc-history.bin')
-  removeStaleCache(historyPath)
+  cleanupIntegrationCacheFiles(historyPath)
   const opts = { cacheKey: historyPath }
 
   await runAndCollect(model, [
@@ -665,7 +674,7 @@ safeTest('[tools-compact] extended 5-turn session with mixed tool changes', { ti
   const { model, dirPath, logs } = await setupModel(t)
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const extendedPath = path.join(dirPath, 'tc-extended.bin')
-  removeStaleCache(extendedPath)
+  cleanupIntegrationCacheFiles(extendedPath)
   const opts = { cacheKey: extendedPath }
 
   const turns = [
@@ -731,7 +740,7 @@ safeTest('[tools-compact] session save, destroy, reload with different tools', {
   const { model: model1, dirPath, logs } = await setupModel(t)
   if (!await ensureToolsSupportOrSkip(t, model1, logs)) return
   const sessionName = path.join(dirPath, 'tc-lifecycle.bin')
-  removeStaleCache(sessionName)
+  cleanupIntegrationCacheFiles(sessionName)
 
   const r1 = await runAndCollect(model1, [
     SYSTEM_MESSAGE,
@@ -811,7 +820,7 @@ safeTest('[tools-compact] large tool payload near context limit', { timeout: 600
   const { model, dirPath, logs } = await setupModel(t, { ctx_size: '512', n_predict: CUT_PREDICT_LIMIT })
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const largePath = path.join(dirPath, 'tc-large-payload.bin')
-  removeStaleCache(largePath)
+  cleanupIntegrationCacheFiles(largePath)
   const opts = { cacheKey: largePath }
 
   const bigTool = {
@@ -837,7 +846,7 @@ safeTest('[tools-compact] same tool name with evolved schema between turns', { t
   const { model, dirPath, logs } = await setupModel(t, { n_predict: '128' })
   if (!await ensureToolsSupportOrSkip(t, model, logs)) return
   const evolvedPath = path.join(dirPath, 'tc-evolved.bin')
-  removeStaleCache(evolvedPath)
+  cleanupIntegrationCacheFiles(evolvedPath)
   const opts = { cacheKey: evolvedPath }
 
   const weatherV1 = { type: 'function', name: 'getWeather', description: 'Get weather for a city', parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] } }
