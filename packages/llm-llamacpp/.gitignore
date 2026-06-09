@@ -28,6 +28,7 @@ p2p-models/
 .clang-tidy
 # Added by lint-cpp
 .clang-format
+test/integration/benchmarks/
 benchmarks/results
 benchmarks/performance/results/
 benchmarks/performance/models/
