@@ -1,6 +1,7 @@
 # ggml-speech: OVERLAY pinned to tetherto/qvac-ext-ggml branch
-# QVAC-19214-mali-rca (commit 9be02126) = PR #14's Adreno-Vulkan fix
-# (8bf760f4) PLUS a DO-NOT-MERGE diagnostic that forwards ggml_abort's
+# QVAC-19214-mali-rca (commit 45c159d7) = PR #14's Adreno-Vulkan fix
+# (8bf760f4) PLUS the generic descriptor-set grow-on-demand fix for the
+# Mali-G715 EOU-Vulkan crash, PLUS a DO-NOT-MERGE diagnostic that forwards ggml_abort's
 # "file:line: GGML_ASSERT(...)" to Android logcat (tag ggml_abort), to
 # capture the exact Mali-G715 EOU-Vulkan assertion that is otherwise
 # invisible (bare drops native stderr; the addon abort callback never fires
@@ -11,8 +12,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF ddfbf1788b0cc69495f06efa029e5e69f5ecc0e6
-    SHA512 f06e0f58c5549dddc6e764c7796fc3c2cd6b96caba94bf1f6b6c495f90b3594646a39652e8ffaf1c0d063ef1c888c11a72057dc44fc09ee2eb9bed2333c8815b
+    REF 45c159d7490ed2946a4095d8d5aa0f14243a18d9
+    SHA512 2cc5ac3680125108da2bf4a21534e28f7e38eb7a2aad61c8989dd7f7b81aa8843dc7991e1a8e9465dc41696ea60f0e60414202ede52c39dfcb238a5ed0f7d31c
     HEAD_REF QVAC-19214-mali-rca
 )
 
