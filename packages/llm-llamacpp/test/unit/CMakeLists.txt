@@ -142,6 +142,21 @@ if(NOT WIN32)
       -fsanitize=address
   )
 endif()
+if(WIN32)
+  # The fabric runtime is delay-loaded: the imported prebuilt module target
+  # propagates /DELAYLOAD:qvac__fabric@0.bare but not the delay-load helper.
+  # add_bare_module() attaches that helper (bare_delay_load -> delayimp, which
+  # provides __delayLoadHelper2) to real .bare modules, but this standalone test
+  # executable is a plain add_executable() and never goes through it, so it must
+  # link the helper itself. The parent CMakeLists defines bare_delay_load via its
+  # add_bare_module(inference-addon-llama) call before this subdirectory is added.
+  target_link_libraries(
+    addon-test
+    PRIVATE
+      bare_delay_load
+  )
+endif()
+
 # Copy the shared @qvac/fabric runtime next to the test executable so it
 # resolves at runtime (on desktop the ggml backends are static inside it).
 if(NOT FABRIC_STATIC_MOBILE)
