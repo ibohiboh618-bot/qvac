@@ -133,9 +133,17 @@ if(NOT WIN32)
 endif()
 
 if(WIN32)
+  # The fabric runtime is delay-loaded: the imported prebuilt module target
+  # propagates /DELAYLOAD:qvac__fabric@0.bare but not the delay-load helper.
+  # add_bare_module() attaches that helper (bare_delay_load -> delayimp, which
+  # provides __delayLoadHelper2) to real .bare modules, but this standalone test
+  # executable is a plain add_executable() and never goes through it, so it must
+  # link the helper itself. The parent CMakeLists defines bare_delay_load via its
+  # add_bare_module(inference-addon-llama) call before this subdirectory is added.
   target_link_libraries(
     addon-test
     PRIVATE
+      bare_delay_load
       msvcrt.lib
   )
 endif()

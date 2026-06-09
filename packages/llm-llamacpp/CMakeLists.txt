@@ -226,6 +226,11 @@ if(BUILD_CLI)
           ${qvac_fabric_target}_module
           nlohmann_json::nlohmann_json
   )
+  # See test/unit/CMakeLists.txt: a plain executable that delay-loads the fabric
+  # runtime needs the bare delay-load helper (__delayLoadHelper2 via delayimp).
+  if(WIN32)
+    target_link_libraries(cli_tool PRIVATE bare_delay_load)
+  endif()
   find_path(QVAC_LIB_INFERENCE_ADDON_CPP_INCLUDE_DIRS "inference-addon-cpp/JsInterface.hpp")
   target_include_directories(cli_tool PRIVATE ${QVAC_LIB_INFERENCE_ADDON_CPP_INCLUDE_DIRS})
   # Set C++20 standard for std::views support
