@@ -190,23 +190,9 @@ void ChatterboxModel::reload() {
 void ChatterboxModel::loadLocked() {
   if (engine_) return;
 
-  // Force useGPU to false on Android until Vulkan (Mali) and OpenCL (Adreno)
-  // stabilize for the Chatterbox graph.
-#ifdef __ANDROID__
-  {
-    const bool wantsGpu =
-        cfg_.useGpu.value_or(false) ||
-        (cfg_.nGpuLayers.has_value() && *cfg_.nGpuLayers != 0);
-    if (wantsGpu) {
-      QLOG(logger::Priority::WARNING,
-           "Chatterbox: useGPU=true is currently ignored on Android "
-           "(GPU backends disabled at engine boundary pending Vulkan/Mali "
-           "and OpenCL/Adreno driver fixes); falling back to CPU.");
-    }
-    cfg_.useGpu     = false;
-    cfg_.nGpuLayers = 0;
-  }
-#endif
+  // DO NOT MERGE (device-farm Vulkan validation): the Android useGPU=false guard
+  // is removed so useGPU=true reaches the engine and the Chatterbox Android tests
+  // exercise the Vulkan backend on the Device Farm Adreno device.
 
   try {
     engine_ = std::make_shared<tts_cpp::chatterbox::Engine>(toEngineOptions(cfg_));

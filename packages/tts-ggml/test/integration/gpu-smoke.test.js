@@ -101,7 +101,10 @@ function assertGpuBackend (t, engineTag, stats) {
   } else if (platform === 'linux' || platform === 'win32') {
     t.is(id, 3, `${engineTag}/${platform}: expected Vulkan backendId=3, got ${name}`)
   } else if (platform === 'android') {
-    t.ok(id === 3 || id === 4, `${engineTag}/${platform}: expected Vulkan(3) or OpenCL(4) backendId, got ${name}`)
+    // DO NOT MERGE (device-farm Vulkan validation): the tts-cpp overlay drops the
+    // Android OpenCL default-feature, so the Adreno run must select Vulkan (3),
+    // not OpenCL (4) or a CPU fallback.
+    t.is(id, 3, `${engineTag}/${platform}: expected Vulkan backendId=3, got ${name}`)
   }
 }
 
@@ -123,10 +126,8 @@ function assertCpuBackend (t, engineTag, stats) {
 }
 
 test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (platform === 'android') {
-    t.pass('Android: GPU disabled at engine boundary pending Vulkan/Mali + OpenCL/Adreno upstream fixes')
-    return
-  }
+  // DO NOT MERGE (device-farm Vulkan validation): the Android skip is removed so
+  // Chatterbox runs on the GPU and the Adreno device-farm run asserts Vulkan.
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
