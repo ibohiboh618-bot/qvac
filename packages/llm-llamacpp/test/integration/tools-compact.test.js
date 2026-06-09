@@ -737,7 +737,7 @@ safeTest('[tools-compact] many tools with complex schemas', { timeout: 600_000 }
 // WHY: Apps that recover from errors need session to survive a full lifecycle.
 // ---------------------------------------------------------------------------
 safeTest('[tools-compact] session save, destroy, reload with different tools', { timeout: 600_000 }, async t => {
-  const { model: model1, dirPath, logs } = await setupModel(t)
+  const { model: model1, dirPath, logs } = await setupModel(t, { n_predict: '256' })
   if (!await ensureToolsSupportOrSkip(t, model1, logs)) return
   const sessionName = path.join(dirPath, 'tc-lifecycle.bin')
   cleanupIntegrationCacheFiles(sessionName)
@@ -752,7 +752,7 @@ safeTest('[tools-compact] session save, destroy, reload with different tools', {
 
   await model1.unload()
 
-  const { model: model2 } = await setupModel(t)
+  const { model: model2 } = await setupModel(t, { n_predict: '256' })
   const r2 = await runAndCollect(model2, [
     { role: 'user', content: 'Search for sunscreen products' },
     TOOL_B

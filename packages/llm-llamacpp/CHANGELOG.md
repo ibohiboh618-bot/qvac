@@ -5,17 +5,12 @@
 ### Added
 
 - **`image-min-tokens` configurable from JS**: wire `image-min-tokens` / `image_min_tokens` through the config pipeline so it can be set per-model from JavaScript instead of being hardcoded. Qwen-VL models require at minimum 1024 image tokens for correct grounding ([llama.cpp#16842](https://github.com/ggml-org/llama.cpp/issues/16842)).
-- **`mmproj-use-gpu` configurable from JS**: wire `mmproj-use-gpu` / `mmproj_use_gpu` as a boolean override. When set, it takes precedence over platform defaults (Android Samsung Ultra auto-detect, non-Android always-true).
-- Added `AndroidDeviceInfo` utility for querying device manufacturer/model via Android system properties.
+- **`mmproj-use-gpu` configurable from JS**: wire `mmproj-use-gpu` / `mmproj_use_gpu` as a boolean override. When set, it takes precedence over platform defaults (Android defaults to CPU, non-Android defaults to GPU).
 
 ### Fixed
 
 - **VLM accuracy on Android (Qwen3.5)**: set `image_min_tokens = 1024` for Qwen3.5 architecture on Android to prevent token under-allocation that degraded vision accuracy.
 - **Stale cache files in integration tests**: delete leftover `.bin` session files before each cache/tools-compact test so format-incompatible caches from previous CI runs do not cause load failures.
-
-### Changed
-
-- **Enable GPU mmproj on Samsung Ultra devices**: on Samsung Galaxy S25 Ultra (SM-S938\*) and S26 Ultra (SM-S948\*), `mmproj_use_gpu` is now `true` for Qwen3.5 architecture VLMs. All other Android devices retain the existing CPU-only path.
 
 ## [0.24.0] - 2026-06-06
 
