@@ -40,27 +40,27 @@ export interface VersionedSection {
 
 export const API_SECTION: VersionedSection = {
   basePath: '/reference/api',
-  latest: 'v0.11.0',
-  latestSeries: 'v0.11.x',
+  latest: 'v0.12.0',
+  latestSeries: 'v0.12.x',
   versions: [
-    { label: 'v0.11.x (latest)', value: 'v0.11.x', isLatest: true },
+    { label: 'v0.12.x (latest)', value: 'v0.12.x', isLatest: true },
+    { label: 'v0.11.x', value: 'v0.11.x' },
     { label: 'v0.10.x', value: 'v0.10.x' },
     { label: 'v0.9.x', value: 'v0.9.x' },
     { label: 'v0.8.x', value: 'v0.8.x' },
-    { label: 'v0.7.x', value: 'v0.7.x' },
   ],
 };
 
 export const RELEASE_NOTES_SECTION: VersionedSection = {
   basePath: '/reference/release-notes',
-  latest: 'v0.11.0',
-  latestSeries: 'v0.11.x',
+  latest: 'v0.12.0',
+  latestSeries: 'v0.12.x',
   versions: [
-    { label: 'v0.11.x (latest)', value: 'v0.11.x', isLatest: true },
+    { label: 'v0.12.x (latest)', value: 'v0.12.x', isLatest: true },
+    { label: 'v0.11.x', value: 'v0.11.x' },
     { label: 'v0.10.x', value: 'v0.10.x' },
     { label: 'v0.9.x', value: 'v0.9.x' },
     { label: 'v0.8.x', value: 'v0.8.x' },
-    { label: 'v0.7.x', value: 'v0.7.x' },
   ],
 };
 
@@ -111,15 +111,22 @@ export function getCurrentVersion(
 
 /**
  * Build the URL to navigate to when the user picks a target series inside
- * a section. The current latest series maps to the bare `basePath`; any
- * other series maps to `basePath/<value>`.
+ * a section. The current latest series maps to `basePath/`; any other
+ * series maps to `basePath/<value>/`.
+ *
+ * Trailing slash is mandatory: these URLs are consumed by the browser-side
+ * version selector, and archived series slugs contain dots (`v0.8.x`).
+ * Sevalla's Pretty URLs treats a bare dotted final segment as a file
+ * request and 404s it before `_redirects` runs, so the bare→with-slash
+ * normalization never fires for them. Emitting the trailing-slash form
+ * directly lands on the `200` rewrite (see `public/_redirects`).
  */
 export function computeSectionVersionUrl(
   section: VersionedSection,
   targetVersion: string,
 ): string {
-  if (targetVersion === section.latestSeries) return section.basePath;
-  return `${section.basePath}/${targetVersion}`;
+  if (targetVersion === section.latestSeries) return `${section.basePath}/`;
+  return `${section.basePath}/${targetVersion}/`;
 }
 
 /**
