@@ -1,20 +1,17 @@
-# ggml-speech: OVERLAY pinned to tetherto/qvac-ext-ggml branch
-# QVAC-19214-mali-rca (commit 45c159d7) = PR #14's Adreno-Vulkan fix
-# (8bf760f4) PLUS the generic descriptor-set grow-on-demand fix for the
-# Mali-G715 EOU-Vulkan crash, PLUS a DO-NOT-MERGE diagnostic that forwards ggml_abort's
-# "file:line: GGML_ASSERT(...)" to Android logcat (tag ggml_abort), to
-# capture the exact Mali-G715 EOU-Vulkan assertion that is otherwise
-# invisible (bare drops native stderr; the addon abort callback never fires
-# for the dlopen'd backend's separate linker namespace). DO NOT MERGE:
-# device-farm RCA overlay only. Pairs with the Android default-features
-# below dropping OpenCL so the Parakeet Android tests exercise Vulkan.
+# ggml-speech: OVERLAY pinned to the tetherto/qvac-ext-ggml PR #14 head
+# (commit e6578d01) = the Adreno-Vulkan guards PLUS the generic descriptor-set
+# pool grow-on-demand fix for the Mali-G715 EOU-Vulkan crash. This is the CLEAN
+# commit that lands on PR #14 (no RCA instrumentation). DO NOT MERGE this
+# overlay: device-farm validation vehicle only. Pairs with the Android
+# default-features below dropping OpenCL so the Parakeet Android tests exercise
+# Vulkan.
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF 45c159d7490ed2946a4095d8d5aa0f14243a18d9
-    SHA512 1cf6b6708d215130d24b9dfdbb56add0b6250627159dadca85633797866e54782fa476d2d3b3ac4754ad66e9c00c53ed1c1d28bdf9aeef196f52f86a136c5324
-    HEAD_REF QVAC-19214-mali-rca
+    REF e6578d0139235e0abd40804faf01f19bed15e414
+    SHA512 1ac36882d355781b81f7e77b3cf06c04bcf7f7b90905d3f3ec5391bacf260e046860471b0fc1cb4c1b80093de16e88611938f932ee8b74190950463d8b928c28
+    HEAD_REF QVAC-19213-adreno-vulkan-shmem-fix
 )
 
 set(GGML_METAL  OFF)
