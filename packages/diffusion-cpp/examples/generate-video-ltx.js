@@ -34,7 +34,7 @@ const EMBEDDINGS_CONNECTORS =
 // Generation params — edit freely (or override via env vars).
 // ---------------------------------------------------------------------------
 const PROMPT = process.env.PROMPT ||
-  'a calico cat walking through a sunlit garden, gentle birdsong and rustling leaves'
+  'a claymation cat playing jazz on a piano'
 
 const NEG_PROMPT = process.env.NEG_PROMPT ||
   'blurry, low quality, static, jittery, watermark, distorted audio'
@@ -45,11 +45,11 @@ const HEIGHT = parseInt(process.env.HEIGHT || '512', 10)
 // Frame count must satisfy (8*k + 1), k >= 1, max 257.  @24 fps:
 //   25 frames  → 1.00 s     49 frames → 2.00 s     73 frames → 3.00 s
 //   97 frames  → 4.00 s    121 frames → 5.00 s    257 frames → 10.67 s (max)
-const VIDEO_FRAMES = parseInt(process.env.FRAMES || '49', 10)
+const VIDEO_FRAMES = parseInt(process.env.FRAMES || '241', 10)
 const FPS = parseInt(process.env.FPS || '24', 10)
 // Distilled variants run in 4-8 steps with cfg ~1.0. For the full --dev model
 // use STEPS=20+ and CFG_SCALE=7.0.
-const STEPS = parseInt(process.env.STEPS || '8', 10)
+const STEPS = parseInt(process.env.STEPS || '20', 10)
 const CFG_SCALE = parseFloat(process.env.CFG_SCALE || '1.0')
 const SEED = parseInt(process.env.SEED || '42', 10)
 // Temporal tiling bounds peak VRAM during the video VAE decode at the cost of
