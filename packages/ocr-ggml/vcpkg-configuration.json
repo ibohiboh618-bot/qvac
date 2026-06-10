@@ -1,7 +1,8 @@
 {
   "default-registry": {
     "kind": "git",
-    "baseline": "c5955445a221df255d2204be964647c08c82c28f",
+    "baseline": "d63ab6db5b54088a8fe80ee804fd507739f51f49",
+    "reference": "test/ocr-metal-conv2d-dw",
     "repository": "https://github.com/tetherto/qvac-registry-vcpkg.git"
   },
   "registries": [
