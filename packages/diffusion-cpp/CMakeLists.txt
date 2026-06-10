@@ -23,11 +23,6 @@ endif()
 # GGML_BACKEND_DL is ON only on Android (set in the ggml portfile), mirroring
 # qvac-fabric. On Linux/macOS/Windows GPU backends are statically linked.
 
-# Local overlay ports: use the unified ggml (rope_flux + LTX Metal kernels) and
-# the feature/ltx stable-diffusion.cpp engine instead of the registry pins.
-set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports;${VCPKG_OVERLAY_PORTS}")
-set(ENV{VCPKG_OVERLAY_PORTS} "${CMAKE_CURRENT_SOURCE_DIR}/ports")
-
 find_package(cmake-bare REQUIRED PATHS node_modules/cmake-bare)
 find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
