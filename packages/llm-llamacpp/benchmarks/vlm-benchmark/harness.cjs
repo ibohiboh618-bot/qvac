@@ -48,8 +48,9 @@ const ENABLED = isMobile || env('QVAC_VLM_MATRIX') === '1'
 function intEnv (k) { const v = parseInt(env(k), 10); return Number.isFinite(v) && v > 0 ? v : null }
 
 // Active preset = the run SIZE (tasks × samples × repeats), independent of mode.
-// QVAC_VLM_PRESET overrides config.defaultPreset on desktop; on mobile there is no env
-// passthrough, so config.defaultPreset is the only knob. Unknown name => all-defaults.
+// QVAC_VLM_PRESET overrides config.defaultPreset on every target — the workflow sets
+// it directly on desktop and forwards it to phones via the pushed device config
+// (os.setEnv before this module loads). Unknown name => all-defaults.
 const PRESET = config.presets[env('QVAC_VLM_PRESET') || config.defaultPreset] ||
   { tasks: null, samplesPerTask: null, devices: null }
 

@@ -4,8 +4,9 @@ name: Benchmark VLM (model comparison)
 # @qvac/llm-llamacpp. Runs the config-driven matrix in
 # packages/llm-llamacpp/benchmarks/vlm-benchmark/ — either two-models (compare two
 # model blobs) or several-sources (one model across addon / fabric-cli / upstream-cli)
-# — on desktop (Linux CPU/GPU, macOS arm64 CPU/Metal) and mobile (Samsung S25 and
-# iPhone via AWS Device Farm), and renders one report.
+# — on a token-selected set of desktop legs (Linux / macOS arm64 / Windows ×
+# CPU/GPU via matrix_desktop) and mobile devices (S25, Pixel 9, iPhone 16/17/
+# 17 Pro × CPU/GPU on AWS Device Farm via matrix_mobile), and renders one report.
 # Self-contained: the benchmark folder + this workflow are the only additions; the
 # mobile leg bootstraps the test into the framework at launch (nothing committed
 # outside the folder). See benchmarks/vlm-benchmark/README.md.
@@ -52,7 +53,7 @@ on:
         type: string
         default: "addon"
       matrix_desktop:
-        description: "  desktop matrix legs, comma-sep: linux-cpu,linux-gpu,macos-cpu,macos-gpu"
+        description: "  desktop legs, comma-sep <os>-<backend>: linux-cpu,linux-gpu,macos-cpu,macos-gpu,windows-cpu,windows-gpu"
         required: false
         type: string
         default: "linux-cpu,linux-gpu"
@@ -62,7 +63,7 @@ on:
         type: string
         default: ""
       matrix_mobile:
-        description: "  mobile (AWS Device Farm) legs, comma-sep: s25,iphone (empty = no mobile)"
+        description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's25-cpu,s25-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
         required: false
         type: string
         default: ""
@@ -87,6 +88,8 @@ jobs:
       ref: ${{ steps.ctx.outputs.ref }}
       desktop_matrix: ${{ steps.dmatrix.outputs.value }}
       desktop_count: ${{ steps.dmatrix.outputs.count }}
+      mobile_matrix: ${{ steps.mmatrix.outputs.value }}
+      mobile_count: ${{ steps.mmatrix.outputs.count }}
       merge_base: ${{ steps.commits.outputs.merge_base }}
       head_sha: ${{ steps.commits.outputs.head_sha }}
       head_title: ${{ steps.commits.outputs.head_title }}
@@ -122,14 +125,18 @@ jobs:
               cpu_runner=qvac-ubuntu2204-x64
               if [[ "$MATRIX_MODE" == "several-sources" ]]; then cpu_runner=ubuntu-latest; fi
               case "$sel" in
-                linux-cpu) host=linux; backend=cpu; runner=$cpu_runner;             no_gpu=true ;;
-                linux-gpu) host=linux; backend=gpu; runner=qvac-ubuntu2404-x64-gpu;  no_gpu=false ;;
+                linux-cpu)   host=linux;   backend=cpu; runner=$cpu_runner;             no_gpu=true ;;
+                linux-gpu)   host=linux;   backend=gpu; runner=qvac-ubuntu2404-x64-gpu;  no_gpu=false ;;
                 # macOS arm64 (Apple Silicon): same GitHub-hosted runner for both
                 # backends — gpu means Metal there, selected by the addon at runtime.
-                macos-cpu) host=macos; backend=cpu; runner=macos-15-xlarge;          no_gpu=true ;;
-                macos-gpu) host=macos; backend=gpu; runner=macos-15-xlarge;          no_gpu=false ;;
+                macos-cpu)   host=macos;   backend=cpu; runner=macos-15-xlarge;          no_gpu=true ;;
+                macos-gpu)   host=macos;   backend=gpu; runner=macos-15-xlarge;          no_gpu=false ;;
+                # Windows x64: the self-hosted runners the LLM integration tests
+                # use (the gpu one is Vulkan-provisioned).
+                windows-cpu) host=windows; backend=cpu; runner=qvac-win25-x64;           no_gpu=true ;;
+                windows-gpu) host=windows; backend=gpu; runner=qvac-win25-x64-gpu;       no_gpu=false ;;
                 "") continue ;;
-                *) echo "::warning::Unknown matrix_desktop token '$sel' (known: linux-cpu, linux-gpu, macos-cpu, macos-gpu)"; continue ;;
+                *) echo "::warning::Unknown matrix_desktop token '$sel' (known: {linux,macos,windows}-{cpu,gpu})"; continue ;;
               esac
               cells=$(echo "$cells" | jq -c \
                 --arg h "$host" --arg b "$backend" --arg r "$runner" --arg n "$no_gpu" \
@@ -140,6 +147,47 @@ jobs:
           echo "value=$cells" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "Desktop matrix ($count entries): $cells"
+      # Mobile matrix: one cell per <device>[-<backend>] token. The device part
+      # maps to an AWS Device Farm filter (one phone per leg); the backend part
+      # becomes QVAC_VLM_DEVICES on the phone (absent = cpu,gpu in one session).
+      # Adding a phone (e.g. a future s26) = one new case line, nothing else.
+      - id: mmatrix
+        shell: bash
+        env:
+          RUN_MATRIX: ${{ inputs.run_matrix }}
+          MATRIX_MOBILE: ${{ inputs.matrix_mobile }}
+          MATRIX_MODE: ${{ inputs.matrix_mode }}
+        run: |
+          cells='[]'
+          # Mobile runs the addon only; several-sources (native CLIs) is Linux-only.
+          if [[ "$RUN_MATRIX" == "true" && "$MATRIX_MODE" != "several-sources" && -n "$MATRIX_MOBILE" ]]; then
+            IFS=',' read -ra tokens <<< "$MATRIX_MOBILE"
+            for raw in "${tokens[@]}"; do
+              sel=$(echo "$raw" | xargs)
+              [[ -z "$sel" ]] && continue
+              case "$sel" in
+                *-cpu) vlm_devices=cpu;       dev=${sel%-cpu} ;;
+                *-gpu) vlm_devices=gpu;       dev=${sel%-gpu} ;;
+                *)     vlm_devices="cpu,gpu"; dev=$sel ;;
+              esac
+              case "$dev" in
+                s25)         platform=Android; manufacturer=Samsung; model="S25 Ultra" ;;
+                pixel9)      platform=Android; manufacturer=Google;  model="Pixel 9" ;;
+                iphone16)    platform=iOS;     manufacturer=Apple;   model="iPhone 16" ;;
+                iphone17)    platform=iOS;     manufacturer=Apple;   model="iPhone 17" ;;
+                iphone17pro) platform=iOS;     manufacturer=Apple;   model="iPhone 17 Pro" ;;
+                *) echo "::warning::Unknown matrix_mobile device '$dev' (known: s25, pixel9, iphone16, iphone17, iphone17pro)"; continue ;;
+              esac
+              cells=$(echo "$cells" | jq -c \
+                --arg t "$sel" --arg p "$platform" --arg man "$manufacturer" \
+                --arg mod "$model" --arg d "$vlm_devices" \
+                '. + [{"token":$t,"platform":$p,"manufacturer":$man,"model":$mod,"vlm_devices":$d}]')
+            done
+          fi
+          count=$(echo "$cells" | jq 'length')
+          echo "value=$cells" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Mobile matrix ($count entries): $cells"
       # Resolve commit metadata so the consolidated report can show what
       # the candidate ref + merge-base actually point at (hash, title,
       # date). Needs a real clone — sparse checkout doesn't give us git
@@ -358,6 +406,15 @@ jobs:
                 GPU_NAME=$(system_profiler SPDisplaysDataType 2>/dev/null | sed -n 's/^ *Chipset Model: //p' | head -1)
                 echo "- gpu: ${GPU_NAME:-Apple virtualized} (Metal)"
               fi
+            elif [ "${{ matrix.host }}" = "windows" ]; then
+              # git-bash: query hardware via CIM (wmic is removed on Server 2025)
+              PS="powershell -NoProfile -Command"
+              echo "- os: $($PS '(Get-CimInstance Win32_OperatingSystem).Caption' 2>/dev/null | tr -d '\r') $(uname -m)"
+              echo "- cpu: $($PS '(Get-CimInstance Win32_Processor).Name' 2>/dev/null | tr -d '\r' | head -1) (${NUMBER_OF_PROCESSORS:-?} cores)"
+              echo "- ram: $($PS '[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB)' 2>/dev/null | tr -d '\r') GB"
+              if [ "${{ matrix.backend }}" = "gpu" ]; then
+                echo "- gpu: $($PS '(Get-CimInstance Win32_VideoController).Name' 2>/dev/null | tr -d '\r' | head -1) (Vulkan)"
+              fi
             else
               echo "- os: $(. /etc/os-release 2>/dev/null; echo "$PRETTY_NAME") $(uname -m)"
               echo "- cpu: $(lscpu 2>/dev/null | sed -n 's/^Model name:[[:space:]]*//p' | head -1) ($(nproc) cores)"
@@ -380,18 +437,23 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-  # ── Matrix mode: Samsung S25 (AWS Device Farm) ─────────────────────
-  # Reuses the Android-only mobile workflow to run the SAME matrix harness
-  # on-device. qvac_perf_only restricts the run to perf-tests.json
-  # (runVlmMatrixTest) → only the vlmMatrix group is scheduled. The active
-  # preset on-device is config.defaultPreset (Device Farm forwards no custom
-  # env), so config.cjs defaultPreset governs the S25 set. The
-  # raw on-device log (bare_console.log) carries the [VLMROW] markers and is
-  # uploaded by collect-and-upload-logs as console-logs-llamacpp-llm-Android.
-  matrix-s25:
+  # ── Matrix mode: mobile (AWS Device Farm) ──────────────────────────
+  # One leg per matrix_mobile token, each reusing the mobile workflow to run
+  # the SAME matrix harness on ONE phone (single-device filter — extra devices
+  # only add Device Farm queue/concurrency contention and can outwait the
+  # 120-min job ceiling; see the first iPhone run). The backend selection and
+  # the dispatched mode/preset reach the phone via device_env (the
+  # qvacPerfConfig.txt push channel), so mobile runs what was dispatched —
+  # config.cjs stays the fallback when env is absent. Markers come back in
+  # the S25's logcat / the iPhone's bare_console.log (no logcat on iOS),
+  # uploaded as console-logs-…-<platform>-<token>.
+  matrix-mobile:
     needs: context
-    # S25 runs the addon only; several-sources (native CLIs) is Linux-only.
-    if: inputs.run_matrix && contains(inputs.matrix_mobile, 's25') && inputs.matrix_mode != 'several-sources'
+    if: needs.context.outputs.mobile_count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.context.outputs.mobile_matrix) }}
     uses: ./.github/workflows/integration-mobile-test-llm-llamacpp.yml
     secrets: inherit
     with:
@@ -404,37 +466,14 @@ jobs:
       # Fixture-image object store (kept only in this workflow). The reusable workflow
       # syncs from this URI without referencing it literally.
       fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
-      # Samsung S25 (Android) only — the benchmark targets the S25 device pool; skip iOS.
-      platforms: Android
-      # One run on the S25 only (no Pixel sibling): a second device adds Device Farm
-      # queue/concurrency contention and its results aren't surfaced anyway.
-      scheduling_mode: single-flagship
+      platforms: ${{ matrix.platform }}
+      device_manufacturer: ${{ matrix.manufacturer }}
+      device_model: ${{ matrix.model }}
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}"
+      artifact_suffix: ${{ matrix.token }}
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
-      qvac_perf_only: false
-      test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
-
-  # ── Matrix mode: iPhone (AWS Device Farm) ──────────────────────────
-  # Same bootstrap as matrix-s25, but on the iOS leg of the reusable mobile
-  # workflow, scheduled on a single iPhone 17 via device filter (the full iOS
-  # pool fans out to extra devices that can sit in the Device Farm queue past
-  # this job's ceiling). On iOS there is no logcat — the on-device console
-  # capture (bare_console.log inside Customer_Artifacts.zip) carries the
-  # [VLMROW] markers and is uploaded as console-logs-…-iOS.
-  matrix-iphone:
-    needs: context
-    # iPhone runs the addon only; several-sources (native CLIs) is Linux-only.
-    if: inputs.run_matrix && contains(inputs.matrix_mobile, 'iphone') && inputs.matrix_mode != 'several-sources'
-    uses: ./.github/workflows/integration-mobile-test-llm-llamacpp.yml
-    secrets: inherit
-    with:
-      ref: ${{ needs.context.outputs.ref }}
-      repository: ${{ needs.context.outputs.repository }}
-      pre_build_script: benchmarks/vlm-benchmark/stage.cjs
-      fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
-      platforms: iOS
-      scheduling_mode: single-flagship
       qvac_perf_only: false
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
 
@@ -448,8 +487,7 @@ jobs:
     needs:
       - context
       - matrix-desktop
-      - matrix-s25
-      - matrix-iphone
+      - matrix-mobile
     if: always() && inputs.run_matrix && needs.context.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -488,62 +526,77 @@ jobs:
         shell: bash
         run: |
           mkdir -p consolidated
-          # Tag each input with its platform host so mobile/macOS rows don't
-          # collapse onto the Linux rows ([VLMROW].device is only cpu/gpu).
+          # Tag each input with its platform host so mobile/macOS/Windows rows
+          # don't collapse onto the Linux rows ([VLMROW].device is only cpu/gpu).
           ARGS=""
           # Desktop legs: one log per host+backend; the host is the filename's
-          # third dash-token (vlm-matrix-<host>-<backend>.log → linux / macos).
+          # third dash-token (vlm-matrix-<host>-<backend>.log → linux/macos/windows).
           for f in $(find matrix-logs -name 'vlm-matrix-*.log' 2>/dev/null | sort); do
             HOST=$(basename "$f" | cut -d- -f3)
             ARGS="$ARGS --in $HOST $f"
           done
-          # S25: the Samsung device's full logcat carries the [VLMROW] markers
-          # (the Android pool may also include a Pixel; we surface S25 here).
-          for f in $(find matrix-logs -name '*Galaxy_S25*logcat_full*' 2>/dev/null | sort); do
-            ARGS="$ARGS --in s25 $f"
+          # Mobile legs: the host label is the device-model slug parsed from the
+          # Device Farm file name (Galaxy_S25→s25, Pixel_9→pixel9,
+          # iPhone_17_Pro→iphone17pro) — it matches the matrix_mobile device
+          # token, and same-device cpu/gpu legs merge under one host with the
+          # row's device field telling them apart.
+          host_of () {
+            basename "$1" | grep -oE 'Galaxy_S[0-9]+|Pixel_[0-9]+|iPhone_[0-9]+(_Pro(_Max)?)?' \
+              | head -1 | tr '[:upper:]' '[:lower:]' | sed 's/galaxy_//' | tr -d '_'
+          }
+          # Android: the device's full logcat carries the [VLMROW] markers.
+          for f in $(find matrix-logs -name '*logcat_full*' 2>/dev/null | sort); do
+            H=$(host_of "$f")
+            ARGS="$ARGS --in ${H:-android} $f"
           done
-          # iPhone: no logcat on iOS — the on-device console capture
-          # (<device>_bare_console.log, extracted from Customer_Artifacts.zip)
-          # carries the markers.
-          for f in $(find matrix-logs -name '*iPhone*bare_console*' 2>/dev/null | sort); do
-            ARGS="$ARGS --in iphone $f"
+          # iOS: no logcat — the on-device console capture (<device>_bare_console.log,
+          # extracted from Customer_Artifacts.zip) carries the markers.
+          for f in $(find matrix-logs -path '*iOS*' -name '*bare_console*' 2>/dev/null | sort); do
+            H=$(host_of "$f")
+            ARGS="$ARGS --in ${H:-iphone} $f"
           done
           # HW/SW provenance: desktop legs ship prov-<host>-*.md; synthesize one
-          # per mobile device below.
+          # per mobile device below (deduped per host — cpu/gpu legs share it).
           PROV=""
           for p in $(find matrix-logs -name 'prov-*.md' 2>/dev/null | sort); do
             PROV="$PROV --provenance $p"
           done
-          # S25 hardware provenance, parsed from the device's own logcat (model /
-          # Android / ABI from the Play-store UA line, RAM from the JS totalMemory
-          # line, GPU from the Adreno-Vulkan driver load).
-          S25F=$(find matrix-logs -name '*Galaxy_S25*logcat_full*' 2>/dev/null | head -1)
-          if [ -n "$S25F" ]; then
-            MODEL=$(grep -oE 'model=SM-[A-Z0-9]+' "$S25F" | head -1 | cut -d= -f2)
-            ANDROID=$(grep -oE 'platformVersionRelease=[0-9]+' "$S25F" | head -1 | cut -d= -f2)
-            ABI=$(grep -oE 'supportedAbis=[a-z0-9-]+' "$S25F" | head -1 | cut -d= -f2)
-            RAMB=$(grep -oE 'totalMemory: [0-9]+' "$S25F" | head -1 | grep -oE '[0-9]+$')
+          SEEN_HOSTS=" "
+          # Android hardware provenance, parsed from the device's own logcat
+          # (model / Android / ABI from the Play-store UA line, RAM from the JS
+          # totalMemory line, GPU from the Adreno-Vulkan driver load).
+          for f in $(find matrix-logs -name '*logcat_full*' 2>/dev/null | sort); do
+            H=$(host_of "$f"); H=${H:-android}
+            case "$SEEN_HOSTS" in *" $H "*) continue ;; esac
+            SEEN_HOSTS="$SEEN_HOSTS$H "
+            DEVNAME=$(basename "$f" | grep -oE '(Samsung|Google)_[A-Za-z0-9_]*' | head -1 | tr '_' ' ')
+            MODEL=$(grep -oE 'model=[A-Za-z0-9-]+' "$f" | head -1 | cut -d= -f2)
+            ANDROID=$(grep -oE 'platformVersionRelease=[0-9]+' "$f" | head -1 | cut -d= -f2)
+            ABI=$(grep -oE 'supportedAbis=[a-z0-9-]+' "$f" | head -1 | cut -d= -f2)
+            RAMB=$(grep -oE 'totalMemory: [0-9]+' "$f" | head -1 | grep -oE '[0-9]+$')
             RAMGB=$(awk -v b="${RAMB:-0}" 'BEGIN{ if (b>0) printf "%.1f GB", b/1073741824; else printf "?" }')
-            GPU=$(grep -qiE 'AdrenoVK|vulkan\.adreno' "$S25F" && echo 'Adreno (Vulkan)' || echo '?')
+            GPU=$(grep -qiE 'AdrenoVK|vulkan\.adreno' "$f" && echo 'Adreno (Vulkan)' || echo '?')
             {
-              echo "**s25** — Samsung Galaxy S25 Ultra (AWS Device Farm)"
-              echo "- device: ${MODEL:-SM-?} · Android ${ANDROID:-?} · ${ABI:-arm64-v8a}"
+              echo "**${H}** — ${DEVNAME:-Android device} (AWS Device Farm)"
+              echo "- device: ${MODEL:-?} · Android ${ANDROID:-?} · ${ABI:-arm64-v8a}"
               echo "- ram: ${RAMGB} · gpu: ${GPU}"
               echo "- engine: \`@qvac/llm-llamacpp\` addon (published prebuild)"
-            } > prov-s25.md
-            PROV="$PROV --provenance prov-s25.md"
-          fi
-          # iPhone hardware provenance: the Device Farm device name is baked into
+            } > "prov-${H}.md"
+            PROV="$PROV --provenance prov-${H}.md"
+          done
+          # iOS hardware provenance: the Device Farm device name is baked into
           # the extracted log's filename (<run>_<device>_bare_console.log).
-          IPHF=$(find matrix-logs -name '*iPhone*bare_console*' 2>/dev/null | head -1)
-          if [ -n "$IPHF" ]; then
-            DEV=$(basename "$IPHF" | sed -n 's/.*\(Apple_[A-Za-z0-9_]*\)_bare_console.*/\1/p' | tr '_' ' ')
+          for f in $(find matrix-logs -path '*iOS*' -name '*bare_console*' 2>/dev/null | sort); do
+            H=$(host_of "$f"); H=${H:-iphone}
+            case "$SEEN_HOSTS" in *" $H "*) continue ;; esac
+            SEEN_HOSTS="$SEEN_HOSTS$H "
+            DEV=$(basename "$f" | grep -oE 'Apple_[A-Za-z0-9_]*' | head -1 | sed 's/_bare_console.*//' | tr '_' ' ')
             {
-              echo "**iphone** — ${DEV:-Apple iPhone} (AWS Device Farm)"
+              echo "**${H}** — ${DEV:-Apple iPhone} (AWS Device Farm)"
               echo "- engine: \`@qvac/llm-llamacpp\` addon (published prebuild)"
-            } > prov-iphone.md
-            PROV="$PROV --provenance prov-iphone.md"
-          fi
+            } > "prov-${H}.md"
+            PROV="$PROV --provenance prov-${H}.md"
+          done
           echo "aggregate inputs:$ARGS"
           echo "provenance:$PROV"
           if [ -z "$ARGS" ]; then

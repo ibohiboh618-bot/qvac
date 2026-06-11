@@ -43,20 +43,36 @@ A run targets one or more **(platform × backend)** pairs. The benchmark is
 platform-agnostic — adding an OS or a device is a runner/workflow change, not a config
 change.
 
-| Platform | Default target | Backends |
-|---|---|---|
-| **desktop** | Linux | CPU, GPU/Vulkan (where the runner supports it) |
-| **desktop** | macOS arm64 (`macos-15-xlarge`, Apple Silicon) | CPU, GPU/Metal |
-| **mobile** | Samsung Galaxy S25 (AWS Device Farm, Android) | CPU, GPU |
-| **mobile** | iPhone (AWS Device Farm, iOS) | CPU, GPU |
+Every leg is a dispatch token — pick any combination per run, e.g.
+*"linux-cpu, linux-gpu, iphone17-cpu, s25-cpu, s25-gpu"*.
 
-- **Desktop legs** are token-driven: the `matrix_desktop` input
-  (`linux-cpu,linux-gpu,macos-cpu,macos-gpu`) maps to runners in the workflow's
-  `context` job. Add another desktop OS by adding a case there.
-- **Mobile legs** reuse the `integration-mobile-test-llm-llamacpp.yml` workflow —
-  the `matrix_mobile` input (`s25,iphone`) selects the Android and/or iOS leg.
-  Point a leg at a different phone by changing its Device Farm pool; the harness
-  is unchanged.
+**Desktop** — `matrix_desktop`, tokens `<os>-<backend>`:
+
+| token | runner | GPU backend |
+|---|---|---|
+| `linux-cpu` / `linux-gpu` | `qvac-ubuntu2204-x64` / `qvac-ubuntu2404-x64-gpu` | Vulkan |
+| `macos-cpu` / `macos-gpu` | `macos-15-xlarge` (Apple Silicon) | Metal |
+| `windows-cpu` / `windows-gpu` | `qvac-win25-x64` / `qvac-win25-x64-gpu` | Vulkan |
+
+**Mobile (AWS Device Farm)** — `matrix_mobile`, tokens `<device>[-<backend>]`;
+a bare device token runs CPU **and** GPU in one on-device session, a `-cpu`/`-gpu`
+suffix pins one backend:
+
+| device token | Device Farm filter |
+|---|---|
+| `s25` | Samsung · "S25 Ultra" (Android) |
+| `pixel9` | Google · "Pixel 9" (Android) |
+| `iphone16` | Apple · "iPhone 16" (iOS) |
+| `iphone17` | Apple · "iPhone 17" (iOS; CONTAINS — may pick a 17-family variant) |
+| `iphone17pro` | Apple · "iPhone 17 Pro" (iOS) |
+
+- Each mobile leg schedules **exactly one phone** (model filter, maxDevices 1)
+  through the `integration-mobile-test-llm-llamacpp.yml` workflow; the backend
+  selection and the dispatched mode/preset are forwarded to the device via the
+  `qvacPerfConfig.txt` push channel (`device_env`).
+- **Adding a platform is one map entry**: a desktop OS = one case in the workflow
+  `context` job's `dmatrix` step; a phone (e.g. a future S26) = one case in the
+  `mmatrix` step — provided the device exists in the Device Farm fleet.
 - The config never names a platform — it only selects backends via `devices`
   (`cpu` / `gpu` / both).
 
@@ -111,8 +127,9 @@ constants to change what runs; nothing else needs to change.
 | `base` | 5 tasks × 3 × 1 | **default** evaluation |
 | `full` | 5 tasks × 5 × 1 | the complete fixture |
 
-**Run knobs** (preset fields). On desktop each is overridable by env; mobile always
-uses the preset as written (Device Farm forwards no env):
+**Run knobs** (preset fields). Each is overridable by env on every target — desktop
+gets env directly from the workflow; mobile gets it via the `qvacPerfConfig.txt`
+file the workflow pushes to the device (`device_env`):
 
 | field | env override | meaning |
 |---|---|---|
@@ -121,9 +138,9 @@ uses the preset as written (Device Farm forwards no env):
 | `devices` | `QVAC_VLM_DEVICES`, `NO_GPU` | backends; `null` = CPU + GPU where applicable |
 | `tasks` | `QVAC_VLM_TASKS` | task subset; `null` = all fixture tasks |
 
-**Which preset runs where.** Desktop uses `QVAC_VLM_PRESET` (set from the workflow's
-`matrix_preset` input), falling back to `defaultPreset`. Mobile always uses
-`defaultPreset` — to change what mobile runs, edit that field.
+**Which preset runs where.** Every leg uses `QVAC_VLM_PRESET` (set from the
+workflow's `matrix_preset` input — forwarded to phones as device env), falling
+back to the committed `defaultPreset` when run outside the workflow.
 
 **Model sources.** Each model blob carries a `source` descriptor — `hf` (pinned
 HuggingFace commit), `url` (direct link), `s3` (presigned URL) — plus an optional
@@ -142,11 +159,12 @@ The benchmark is driven by the **Benchmark VLM (model comparison)** workflow
 
 There are **two ways to configure a launch**, and each item below shows both:
 
-- **Config (committed):** edit `config.cjs` and push. Required for the model choice and
-  for anything the **mobile (S25) leg** does — Device Farm forwards **no env**, so the
-  phone always runs the committed `config.mode` / `defaultPreset` / models.
-- **Dispatch (`-f`):** pass to `gh workflow run` (or the *Run workflow* UI). Overrides the
-  config on the **desktop legs only**, no commit needed.
+- **Config (committed):** edit `config.cjs` and push. Required for the model choice
+  (models are config-only); also the fallback for mode/preset when run outside the
+  workflow.
+- **Dispatch (`-f`):** pass to `gh workflow run` (or the *Run workflow* UI). Overrides
+  the config on **every leg** — desktop via env, phones via the pushed device env —
+  no commit needed.
 
 Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is measured;
 3–9 decide *how* it runs.
@@ -171,22 +189,22 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 
 **3. Mode** — what's compared.
    - Config: `mode: 'two-models' | 'several-sources'`.
-   - Dispatch: `-f matrix_mode=…` (desktop). *Mobile uses `config.mode`.*
+   - Dispatch: `-f matrix_mode=…` (every leg; forwarded to phones as device env).
 
 **4. Preset** — run size (`smoke` 1×1×1 · `base` 5×3×1 · `full` 5×5×1).
    - Config: `defaultPreset: '…'` (and the `presets` definitions: tasks/samples/repeats).
-   - Dispatch: `-f matrix_preset=…` (desktop). *Mobile uses `defaultPreset`.*
+   - Dispatch: `-f matrix_preset=…` (every leg; forwarded to phones as device env).
+     Keep mobile light (`base` or below); `full` risks the Device Farm session window.
 
 **5. Desktop platforms × backends.**
-   - Dispatch: `-f matrix_desktop=linux-cpu,linux-gpu,macos-cpu,macos-gpu` (any subset;
-     `macos-*` = Apple Silicon, gpu = Metal).
+   - Dispatch: `-f matrix_desktop=linux-cpu,linux-gpu,macos-cpu,macos-gpu,windows-cpu,windows-gpu`
+     (any subset; gpu = Vulkan on Linux/Windows, Metal on macOS).
    - Config: backends per preset via `devices` (`null` = both); env `NO_GPU=true`.
 
-**6. Mobile (AWS Device Farm: Samsung S25 and/or iPhone).**
-   - Dispatch: `-f matrix_mobile=s25,iphone` (any subset; empty = no mobile; two-models
-     only — ignored for several-sources).
-   - Config: each phone's run is `config.mode` + `defaultPreset` — set them before
-     pushing. Keep it light (`base`); `full` overruns the Device Farm session window.
+**6. Mobile devices × backends (AWS Device Farm).**
+   - Dispatch: `-f matrix_mobile=s25,pixel9,iphone16,iphone17,iphone17pro` tokens, each
+     optionally suffixed `-cpu`/`-gpu` (bare = both in one session). Empty = no mobile;
+     two-models only — ignored for several-sources.
 
 **7. Engine / sources.**
    - two-models engine — Config: `engine: 'addon'`; Dispatch: `-f matrix_engine=addon`.
@@ -202,22 +220,22 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 | input | overrides | purpose |
 |---|---|---|
 | `run_matrix` | — | **must be true** to run the matrix at all |
-| `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (desktop) |
-| `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (desktop) |
+| `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (every leg) |
+| `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (every leg) |
 | `matrix_engine` | `config.engine` | two-models fixed engine |
-| `matrix_desktop` | — | desktop legs: `linux-cpu,linux-gpu,macos-cpu,macos-gpu` (any subset) |
-| `matrix_mobile` | — | mobile (Device Farm) legs: `s25,iphone` (any subset; empty = none; two-models only) |
-| `matrix_samples` | preset `samplesPerTask` | override samples/task (empty = default) |
+| `matrix_desktop` | — | desktop legs: `{linux,macos,windows}-{cpu,gpu}` (any subset) |
+| `matrix_mobile` | — | mobile legs: `{s25,pixel9,iphone16,iphone17,iphone17pro}[-{cpu,gpu}]` (any subset; empty = none; two-models only) |
+| `matrix_samples` | preset `samplesPerTask` | override samples/task, every leg (empty = default) |
 | `fabric_ref` / `upstream_ref` | — | native CLI versions (several-sources) |
 
-**Example** — two-models on every platform (Linux + macOS, CPU+GPU, S25 + iPhone), base preset:
+**Example** — two-models, mixed leg selection, base preset:
 
 ```bash
 gh workflow run benchmark-vlm-model-comparison.yml --ref <branch> \
   -f run_matrix=true -f matrix_mode=two-models -f matrix_preset=base \
   -f matrix_engine=addon \
-  -f matrix_desktop=linux-cpu,linux-gpu,macos-cpu,macos-gpu \
-  -f matrix_mobile=s25,iphone
+  -f matrix_desktop=linux-cpu,linux-gpu,macos-gpu \
+  -f matrix_mobile=s25-cpu,s25-gpu,iphone17
 ```
 
 **Locally** you can run the harness directly under `bare` (desktop) by exporting
@@ -266,9 +284,10 @@ The benchmark is meant to grow. The three common changes:
 - **Change the models.** Edit `MODEL_1` / `MODEL_2` (two-models) or `SOURCES_MODEL`
   (several-sources) in `config.cjs` — give each blob a `source` descriptor. To compare
   two variants of one model, point both at the same `llm` and vary only the `mmproj`.
-- **Add platforms.** Desktop: add a case to the `matrix_desktop` → runner map in the
-  workflow `context` job. Mobile: add a leg token (and a job like `matrix-iphone`) or
-  change a Device Farm pool. No harness changes.
+- **Add platforms.** Desktop: one case in the `matrix_desktop` → runner map
+  (`dmatrix` step of the workflow `context` job). Mobile: one case in the device
+  map (`mmatrix` step) — any phone available in the Device Farm fleet. No harness
+  changes.
 
 ---
 

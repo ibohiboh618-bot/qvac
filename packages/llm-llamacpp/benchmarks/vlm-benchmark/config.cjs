@@ -11,11 +11,11 @@
 //                   / upstream-cli). Desktop-only — the CLIs are native binaries.
 //
 // ─ Targets ─ A "target" is a (platform × backend) pair. Platform-agnostic:
-//   desktop (Linux by default) and mobile (Samsung Galaxy S25 by default), each on
+//   desktop (Linux / macOS / Windows) and mobile (Device Farm phones), each on
 //   CPU and GPU where applicable. Adding an OS/phone is a workflow/runner change.
-//   • desktop reads the active preset from QVAC_VLM_PRESET (per-field QVAC_VLM_*
-//     overrides); on mobile there is NO env passthrough, so it always uses
-//     `defaultPreset` below.
+//   • every target reads the active run from QVAC_VLM_PRESET / QVAC_VLM_* env —
+//     the workflow sets it directly on desktop and forwards it to phones via the
+//     pushed device config; `defaultPreset` below is the no-env fallback.
 //
 // ─ A "model" ─ a complete VLM: a main LLM blob + a vision-projector (mmproj) blob.
 //   Each blob carries a `source` descriptor (how to fetch the bytes) and an optional
@@ -105,8 +105,9 @@ module.exports = {
 
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of
-  // the mode. Used verbatim on mobile, and the desktop default when QVAC_VLM_PRESET is
-  // unset. Per-field desktop env overrides:
+  // the mode. The fallback on every target when QVAC_VLM_PRESET is unset (the workflow
+  // sets it everywhere, incl. phones via the pushed device config). Per-field env
+  // overrides:
   //   QVAC_VLM_SAMPLES→samplesPerTask · QVAC_VLM_REPEATS→repeats
   //   QVAC_VLM_DEVICES→devices (csv) · QVAC_VLM_TASKS→tasks (csv)
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
