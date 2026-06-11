@@ -8,25 +8,37 @@ const { computeWER } = require('@qvac/bci-whispercpp/wer')
 const isMobile = os.platform() === 'ios' || os.platform() === 'android'
 
 // On mobile, the test framework copies test/mobile/testAssets/ into the
-// app bundle and exposes the on-device asset root via global.testDir
-// (writable scratch). Fall back to test/mobile/testAssets/ on disk so
-// the same code paths work when these tests are exercised from the
-// repo root (e.g. during local mobile dry-runs).
+// app sandbox and exposes each file via global.assetPaths, a map keyed by
+// the in-project path '../../testAssets/<file>' -> 'file:///.../cache/<file>'.
+// The legacy global.testDir is never populated with these assets, so resolve
+// through global.assetPaths (mirrors transcription-whispercpp/test/
+// integration/helpers.js getAssetPath). Fall back to test/mobile/testAssets/
+// on disk so the same code paths work during local mobile dry-runs.
 function getMobileAssetsDir () {
   if (typeof global !== 'undefined' && global.testDir) return global.testDir
   return path.join(__dirname, '..', 'mobile', 'testAssets')
 }
 
+function getMobileAssetPath (filename) {
+  const projectPath = `../../testAssets/${filename}`
+  if (global.assetPaths && global.assetPaths[projectPath]) {
+    return global.assetPaths[projectPath].replace('file://', '')
+  }
+  return path.join(getMobileAssetsDir(), filename)
+}
+
 function getModelPath (filename) {
-  if (isMobile) return path.join(getMobileAssetsDir(), filename)
+  if (isMobile) return getMobileAssetPath(filename)
   return path.join(__dirname, '..', '..', 'models', filename)
 }
 
 function getTestPaths () {
+  const manifestPath = isMobile
+    ? getMobileAssetPath('manifest.json')
+    : path.join(__dirname, '..', 'fixtures', 'manifest.json')
   const fixturesDir = isMobile
-    ? getMobileAssetsDir()
+    ? path.dirname(manifestPath)
     : path.join(__dirname, '..', 'fixtures')
-  const manifestPath = path.join(fixturesDir, 'manifest.json')
 
   let manifest = { samples: [] }
   if (fs.existsSync(manifestPath)) {
@@ -36,7 +48,9 @@ function getTestPaths () {
   return {
     fixturesDir,
     manifest,
-    getSamplePath: (filename) => path.join(fixturesDir, filename)
+    getSamplePath: (filename) => isMobile
+      ? getMobileAssetPath(filename)
+      : path.join(fixturesDir, filename)
   }
 }
 
