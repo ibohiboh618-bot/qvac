@@ -491,9 +491,10 @@ def _boxes_to_serializable(boxes) -> list:
     "--backend",
     "backend_device",
     default="cpu",
-    type=click.Choice(["cpu", "vulkan"]),
-    help="ggml backend device for the QVAC GGML backends. 'vulkan' uses the "
-         "GPU and falls back to CPU inside the addon when none is available."
+    type=click.Choice(["cpu", "vulkan", "metal"]),
+    help="ggml backend device for the QVAC GGML backends. 'vulkan' (Linux/"
+         "Windows GPU) and 'metal' (Apple GPU) use the GPU and fall back to CPU "
+         "inside the addon when none is available."
 )
 def main(
     dataset_path: str,
