@@ -2,7 +2,7 @@
 
 **Goal:** Reach ~2 s inference for DocTR (`db_mobilenet_v3_large` detector + `crnn_mobilenet_v3_small` recognizer) on the `clinical_chemistry` test image on a Pixel 9 Pro, preferably on Vulkan.
 
-**Status:** Root cause fully isolated. Committed Vulkan optimizations took the full pipeline from **10.3 s → 6.0 s** on real Mali. The residual is a **Mali-specific GPU cost on the detector's conv2d dispatches** that resisted every backend/app-level fix tried. Full-Vulkan 2 s is **not reachable** with available levers; the pragmatic ~2.5 s path (hybrid: CPU detection + Vulkan recognition) is identified but not yet landed.
+**Status:** Root cause fully isolated and a fix landed. The pipeline went from **10.3 s → 2.6 s warm** on real Mali (**~4×**) via two committed changes: (1) Vulkan op-level optimizations, and (2) an **auto-hybrid** path that runs detection on CPU and recognition on Vulkan, with CPU detection accelerated by **NHWC/KleidiAI conv2d prepacking**. The residual is a **Mali-specific GPU cost on the detector's conv2d dispatches** that resisted every full-Vulkan backend/app-level fix tried — so full-Vulkan 2 s is **not reachable** with available levers. The hybrid is auto-enabled on Mali/Immortalis GPUs only; other GPUs stay full-Vulkan. Warm result **2.6 s** (det 1.35 s CPU+KleidiAI, rec 1.22 s Vulkan), boxes=197 (detections unchanged).
 
 Work branch: `perf/doctr-vulkan-mali` (off `ocr-ggml-doctr-bn-fold`).
 
@@ -60,7 +60,8 @@ So: **the GPU genuinely spends ~3.6 s executing the detector command buffer, but
 | CPU command recording | `GCPROF` | 2 ms |
 | Op-fusion (conv + bias-add + activation) | `FUSION_PROBE`: skip bias-add + activation | **no change** (~50 ms) → **fusion would NOT help** |
 | CPU-detection: more threads | hybrid nThreads 4 vs 8 | 8 is *worse* (det 2.9s vs 1.5s; A520 efficiency cores) |
-| CPU-detection: KleidiAI GEMM | enabled `kleidiai` feature, rebuilt CPU backend | **no change** (det ~1.47s) — detector is f16; KleidiAI's i8mm path needs int8, and conv cost is im2col/memory not GEMM ALU |
+| CPU-detection: KleidiAI (feature only) | enabled `kleidiai` feature, no weight prepack | **no change** (det ~1.47s) — KleidiAI only claims convs whose weights are NHWC-prepacked into its "extra" buffer type **and** that use the fused `GGML_OP_CONV_2D`; the im2col+mul_mat path bypasses it entirely |
+| CPU-detection: KleidiAI **+ NHWC prepack** | route regular conv weights through the prepack buft + switch those convs to `GGML_OP_CONV_2D` | **landed** — det **1.48s → 1.35s**, boxes=197 (committed `perf[mod]: NHWC-prepack`). Modest: KleidiAI accelerates the regular convs, but depthwise + FPN/head ops remain the CPU floor |
 
 **Conclusion:** the residual ~3.4 s is intrinsic to Mali executing the detector's conv2d dispatches and is not addressable via barriers, submission strategy, op fusion, or pipeline caching. `shader_core_count` is `0` on Mali (ARM falls through to the placeholder), so conv tile selection is also untuned — but since measured conv *compute* is only 236 ms, tile tuning is a long shot for a 3.4 s gap.
 
@@ -116,13 +117,16 @@ Rebuilding the ggml fork through vcpkg is ~20 min. Instead: edit `ggml-vulkan.cp
 | baseline Vulkan (run 27284290269) | 5448 | 4871 | 10345 | — |
 | Vulkan (committed: batch + fused conv) | ~3.6 s | ~1.2 s | ~4.8 s warm / 6.0 s cold | 197 ✓ |
 | CPU | ~1.3 s | ~2.1 s | ~3.4 s | 197 ✓ |
-| **Hybrid (CPU det + Vulkan rec) — validated** | **~1.48 s** | **~1.25 s** | **~2.76 s warm** (3.6 s cold) | **197 ✓** |
+| Hybrid (CPU det + Vulkan rec) — pre-KleidiAI | ~1.48 s | ~1.25 s | ~2.76 s warm | 197 ✓ |
+| **Hybrid + NHWC/KleidiAI — validated** | **~1.35 s** | **~1.22 s** | **~2.6 s warm** (3.5 s cold) | **197 ✓** |
 
-Hybrid is implemented (`detectionBackendDevice` param) and measured on real Mali:
-`[WARM:hybrid] total 2762–2766 ms, det 1478–1494 (CPU), rec 1233–1259 (Vulkan), boxes=197`.
-**3.7× faster than the Vulkan baseline; recognition stays on Vulkan.** The
-remaining gap to 2.0 s: warm hybrid is 2.76 s (CPU detection is now the larger
-half); cold is 3.6 s due to the Vulkan recognizer's one-time pipeline
+Hybrid is implemented (`detectionBackendDevice` param, auto-on-Mali) and the
+NHWC/KleidiAI conv2d prepack for CPU detection is committed; both measured on
+real Mali: `[WARM:auto] total 2582–2619 ms, det 1343–1370 (CPU+KleidiAI),
+rec 1219–1233 (Vulkan), boxes=197`.
+**~4× faster than the Vulkan baseline; recognition stays on Vulkan.** The
+remaining gap to 2.0 s: warm hybrid is 2.6 s (CPU detection is now the larger
+half); cold is ~3.5 s due to the Vulkan recognizer's one-time pipeline
 compilation (~860 ms) — a persistent `VkPipelineCache` / load-time warm-up
 would bring cold ≈ warm.
 
@@ -130,12 +134,13 @@ would bring cold ≈ warm.
 
 ## 6. Recommendation / next steps
 
-1. **Hybrid landed, auto-on-Mali, validated (~2.75 s warm on real Mali).**
-   - `detectionBackendDevice` param + **auto-policy**: a plain `backendDevice:'vulkan'` request on a Mali/Immortalis GPU auto-routes DocTR detection to CPU and keeps recognition on Vulkan; other GPUs stay full-Vulkan; explicit override wins. Validated: `[WARM:auto] det 1506ms (CPU) + rec 1221ms (Vulkan) = ~2.75s, boxes=197`; `[WARM:fullvk] = ~5.1s`. The normal benchmark now reflects this automatically on Mali.
+1. **Hybrid + NHWC/KleidiAI landed, auto-on-Mali, validated (~2.6 s warm on real Mali).**
+   - `detectionBackendDevice` param + **auto-policy**: a plain `backendDevice:'vulkan'` request on a Mali/Immortalis GPU auto-routes DocTR detection to CPU and keeps recognition on Vulkan; other GPUs stay full-Vulkan; explicit override wins. Validated: `[WARM:auto] det ~1.35s (CPU+KleidiAI) + rec ~1.22s (Vulkan) = ~2.6s, boxes=197`; `[WARM:fullvk] = ~5.1s`. The normal benchmark now reflects this automatically on Mali.
+   - **NHWC/KleidiAI conv2d prepack (committed):** regular conv weights are NHWC-packed into the CPU device's KleidiAI prepack buffer type at load and switched to the fused `GGML_OP_CONV_2D`, dropping CPU detection 1.48s → 1.35s with no accuracy change (boxes=197).
    - **nThreads:** tested 4 vs 8 for CPU detection — 8 is *worse* (det 2.9s vs 1.5s; the extra cores are slow A520 efficiency cores). 4 (the X4 + A720 cluster) is optimal.
-   - To reach 2.0 s from here the CPU-detection half (~1.5 s) must drop ~2×. Tried and ruled out: more threads (worse), KleidiAI (no-op for f16). Remaining options are larger changes: **int8-quantize the detector** (then KleidiAI i8mm + half the memory traffic — needs a quantized `.gguf` + accuracy check) or **NHWC convs** (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`). Persistent `VkPipelineCache` / load-time warm-up would remove the ~860 ms recognizer cold-start (helps first inference, not warm).
+   - To reach 2.0 s from here the CPU-detection half (~1.35 s) must drop further. KleidiAI now engaged for the regular convs; the remaining floor is the depthwise convs + FPN/head ops (not KleidiAI-accelerated). Bigger levers: **int8-quantize the detector** (KleidiAI i8mm + half the memory traffic — needs a quantized `.gguf` + medical-OCR accuracy check) and/or **further recognizer batching**. Persistent `VkPipelineCache` / load-time warm-up would remove the ~860 ms recognizer cold-start (helps first inference, not warm).
 2. **Full-Vulkan 2 s is blocked** on a Mali GPU characteristic (per-conv-dispatch overhead, ~9 ms × the heavy convs, invisible to the per-op profiler). Realistic only via deep Mali-driver-level work or upstream Mali ggml-vulkan support — low odds, large effort.
-3. To shave the hybrid toward 2.0 s: faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) and/or further recognizer batching.
+3. To shave the hybrid toward 2.0 s: int8-quantized detector (KleidiAI i8mm) and/or further recognizer batching; verify clinical-chemistry keyword accuracy on any quantization.
 
 ## 7. Open question
 The per-op GPU profiler (236 ms) vs the real GPU wait (~3.6 s) discrepancy is the crux. Confirming *physically* what the GPU does in that 3.4 s (e.g., with a Mali profiler such as Arm Streamline / `perfetto` GPU counters) would settle whether it's per-dispatch job-manager overhead, a hidden tile flush, or DVFS, and whether anything can be done at the backend level.
