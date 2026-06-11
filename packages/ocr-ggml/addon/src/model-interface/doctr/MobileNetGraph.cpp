@@ -217,7 +217,8 @@ struct GraphBuilder {
     const int pad = samePadding(kernel);
     // Fused GGML_OP_CONV_2D on Vulkan (no im2col buffer; conv-shaped tiling),
     // im2col + mul_mat elsewhere — see GraphBuilder::conv2d. The fused kernel
-    // measured ~2x slower than the tuned GEMM on Metal, so it stays Vulkan-only.
+    // measured ~2x slower than the tuned GEMM on Metal, so it stays
+    // Vulkan-only.
     struct ggml_tensor* conv = conv2d(kernelT, x, stride, pad);
     // BN scale folded into the conv weights at load time; `.shift` carries the
     // combined (conv bias + BN shift) offset. One add instead of add+mul+add.
@@ -387,8 +388,9 @@ struct GraphBuilder {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
     // Direct depthwise kernel (GGML_OP_CONV_2D_DW) — much faster than the
-    // im2col + per-channel batched matmul on GPU backends. Weight is [KW,KH,1,C]
-    // and promoted to F32 (see addConvWeight) so it runs on every backend.
+    // im2col + per-channel batched matmul on GPU backends. Weight is
+    // [KW,KH,1,C] and promoted to F32 (see addConvWeight) so it runs on every
+    // backend.
     struct ggml_tensor* conv =
         ggml_conv_2d_dw_direct(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     // BN scale folded into the depthwise weights at load time; `.shift` carries
@@ -1001,7 +1003,8 @@ WeightsBundle loadWeights(
     }
   };
 
-  auto foldBnWithEps = [&](const std::string& bnPrefix, float eps,
+  auto foldBnWithEps = [&](const std::string& bnPrefix,
+                           float eps,
                            bool foldIntoConv) {
     const size_t n =
         static_cast<size_t>(ggml_nelements(tensors.at(bnPrefix + ".scale")));
@@ -1087,8 +1090,10 @@ WeightsBundle loadWeights(
   // prob_head.0 is a plain 3x3 conv (foldable); prob_head.3/.4 is the
   // sub-pixel transposed conv whose weight is reshaped at graph build, so its
   // BN stays as a runtime scale/shift (applyFoldedBn in convTransposeBnAct).
-  foldBnWithEps("dbnet.prob_head.1", dbnetBatchNormEpsilon, /*foldIntoConv=*/true);
-  foldBnWithEps("dbnet.prob_head.4", dbnetBatchNormEpsilon, /*foldIntoConv=*/false);
+  foldBnWithEps(
+      "dbnet.prob_head.1", dbnetBatchNormEpsilon, /*foldIntoConv=*/true);
+  foldBnWithEps(
+      "dbnet.prob_head.4", dbnetBatchNormEpsilon, /*foldIntoConv=*/false);
 
   // Classifier FC tensors stay FP16 and are copied directly from GGUF bytes.
   // auto uploadClassifierTensor = [&](const std::string& name) {
@@ -1129,9 +1134,10 @@ ComputeGraph buildGraph(
     const char* backendName = ggml_backend_name(backends[0]);
     if (backendName != nullptr) {
       std::string lower(backendName);
-      std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-      });
+      std::transform(
+          lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+          });
       isVulkan = lower.find("vulkan") != std::string::npos;
     }
   }

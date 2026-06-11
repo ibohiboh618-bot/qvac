@@ -23,8 +23,9 @@ cv::Mat decodeOrWrapImage(const OcrInput& input) {
             input.data.data()));
     cv::Mat decoded = cv::imdecode(encoded, cv::IMREAD_COLOR);
     if (decoded.empty()) {
-      throw std::runtime_error("ocr-ggml: failed to decode image (unsupported "
-                               "format or corrupt data)");
+      throw std::runtime_error(
+          "ocr-ggml: failed to decode image (unsupported "
+          "format or corrupt data)");
     }
     // cv::imdecode returns BGR; the OCR pre-processing expects RGB.
     cv::cvtColor(decoded, decoded, cv::COLOR_BGR2RGB);
@@ -40,23 +41,23 @@ cv::Mat decodeOrWrapImage(const OcrInput& input) {
   int expectedBytesPerPixel = 0;
   // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
   switch (input.bitsPerPixel) {
-    case 8:
-      matType = CV_8UC1;
-      expectedBytesPerPixel = 1;
-      break;
-    case 24:
-      matType = CV_8UC3;
-      expectedBytesPerPixel = 3;
-      break;
-    case 32:
-      matType = CV_8UC4;
-      expectedBytesPerPixel = 4;
-      break;
-    default:
-      throw std::runtime_error(
-          "ocr-ggml: unsupported raw image bitsPerPixel " +
-          std::to_string(input.bitsPerPixel) +
-          " (only 8 / 24 / 32 are supported)");
+  case 8:
+    matType = CV_8UC1;
+    expectedBytesPerPixel = 1;
+    break;
+  case 24:
+    matType = CV_8UC3;
+    expectedBytesPerPixel = 3;
+    break;
+  case 32:
+    matType = CV_8UC4;
+    expectedBytesPerPixel = 4;
+    break;
+  default:
+    throw std::runtime_error(
+        "ocr-ggml: unsupported raw image bitsPerPixel " +
+        std::to_string(input.bitsPerPixel) +
+        " (only 8 / 24 / 32 are supported)");
   }
   // NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 
@@ -128,8 +129,8 @@ Pipeline::Pipeline(
   const bool selectedIsVulkan =
       ocr_backend_selection::isVulkanBackendName(backendInfo_.backendName);
   const int doctrRecognizerBatch = config_.recognizerBatchSize > 0
-      ? config_.recognizerBatchSize
-      : (selectedIsVulkan ? 32 : 4);
+                                       ? config_.recognizerBatchSize
+                                       : (selectedIsVulkan ? 32 : 4);
   const int easyRecognizerBatch =
       config_.recognizerBatchSize > 0 ? config_.recognizerBatchSize : 4;
 
@@ -292,4 +293,3 @@ qvac_lib_inference_addon_cpp::RuntimeStats Pipeline::runtimeStats() const {
 }
 
 } // namespace qvac_lib_infer_ocr_ggml
-
