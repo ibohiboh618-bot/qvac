@@ -461,18 +461,22 @@ struct GraphBuilder {
   const std::unordered_map<std::string, struct ggml_tensor*>& w;
 
   // Use the fused GGML_OP_CONV_2D kernel for regular convs on Vulkan (no im2col
-  // buffer; conv-shaped tiling). Vulkan-only — on Metal the tuned GEMM makes
+  // buffer; conv-shaped tiling). On Metal the tuned GEMM makes
   // im2col + mul_mat ~2x faster than the fused kernel. See the detection graph
   // (MobileNetGraph.cpp) for the same rationale.
   bool useFusedConv = false;
 
-  /// Conv2d that picks the fused kernel on Vulkan and im2col + mul_mat
-  /// elsewhere. Args mirror ggml_conv_2d.
+  // CPU mixed lowering: fused for spatial (KW>1) kernels, explicit for 1x1
+  // (see MobileNetGraph.cpp).
+  bool fusedSpatialConv = false;
+
+  /// Conv2d that picks the lowering per backend and kernel size (see flags
+  /// above). Args mirror ggml_conv_2d.
   // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
   struct ggml_tensor* conv2d(
       struct ggml_tensor* kernelT, struct ggml_tensor* x, int strideW,
       int strideH, int pad) const {
-    if (useFusedConv) {
+    if (useFusedConv || (fusedSpatialConv && kernelT->ne[0] > 1)) {
       return ggml_conv_2d_direct(
           ctx, kernelT, x, strideW, strideH, pad, pad, 1, 1);
     }
@@ -1404,15 +1408,21 @@ private:
     }
 
     // Fused conv on Vulkan only; CPU and Metal keep the explicit
-    // im2col + mul_mat lowering (faster on both — see MobileNetGraph.cpp).
-    // OCR_DOCTR_FUSED_CONV=0/1 overrides the non-Vulkan choice (A/B).
+    // im2col + mul_mat lowering (measured fastest on both — see
+    // MobileNetGraph.cpp). OCR_DOCTR_FUSED_CONV=0/1 overrides the non-Vulkan
+    // choice (0 = all explicit, 1 = all fused) for A/B measurement.
     bool useFusedConv = isVulkan;
+    bool fusedSpatialConv = false;
     if (const char* fusedEnv = std::getenv("OCR_DOCTR_FUSED_CONV");
         fusedEnv != nullptr && !isVulkan) {
       useFusedConv = fusedEnv[0] == '1';
+      fusedSpatialConv = useFusedConv;
     }
     GraphBuilder gb{
-        .ctx = ctx, .w = graph.weights, .useFusedConv = useFusedConv};
+        .ctx = ctx,
+        .w = graph.weights,
+        .useFusedConv = useFusedConv,
+        .fusedSpatialConv = fusedSpatialConv};
     struct ggml_tensor* x = gb.convBnAct(
         graph.input,
         "crnn.features.0.0",

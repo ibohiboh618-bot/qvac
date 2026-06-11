@@ -182,13 +182,20 @@ struct GraphBuilder {
   // im2col + mul_mat ~2x faster than the fused kernel (measured).
   bool useFusedConv = false;
 
-  /// Conv2d that picks the fused kernel on Vulkan and im2col + mul_mat
-  /// elsewhere. Args mirror ggml_conv_2d.
+  // CPU mixed lowering: spatial (KW>1) convs use the fused kernel — their
+  // materialised im2col is KW*KH times the activation tensor, and the fused
+  // chunked im2col + GEMM avoids that traffic — while 1x1 convs keep the
+  // explicit lowering (their im2col is a cheap NEON-tiled transpose and the
+  // standalone GEMM beats the fused kernel for that shape on big.LITTLE).
+  bool fusedSpatialConv = false;
+
+  /// Conv2d that picks the lowering per backend and kernel size (see the
+  /// flags above). Args mirror ggml_conv_2d.
   // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
   struct ggml_tensor* conv2d(
       struct ggml_tensor* kernelT, struct ggml_tensor* x, int stride,
       int pad) const {
-    if (useFusedConv) {
+    if (useFusedConv || (fusedSpatialConv && kernelT->ne[0] > 1)) {
       return ggml_conv_2d_direct(
           ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     }
@@ -1213,20 +1220,26 @@ ComputeGraph buildGraph(
     }
   }
 
-  // Fused GGML_OP_CONV_2D on Vulkan (avoids the per-conv im2col dispatch).
-  // CPU keeps the explicit im2col + mul_mat lowering: measured on Mali-G715's
-  // CPU (Pixel 9 Pro, warm) explicit is ~1.0s vs ~1.15s fused for the DBNet
-  // detector (the fused kernel's statically-split inner im2col straggles on
+  // Conv lowering: fused GGML_OP_CONV_2D everywhere on Vulkan (avoids the
+  // per-conv im2col dispatch); CPU and Metal keep the explicit
+  // im2col + mul_mat lowering for every regular conv — measured fastest on
+  // Mali-G715's CPU (det ~0.95s explicit vs ~1.0s mixed vs ~1.15s all-fused,
+  // warm; the fused kernel's statically-split inner im2col straggles on
   // asymmetric big.LITTLE cores), and on Metal the tuned GEMM favours
-  // explicit by ~2x. OCR_DOCTR_FUSED_CONV=0/1 overrides the non-Vulkan
-  // choice at graph-build time for on-device A/B measurement.
+  // explicit ~2x. OCR_DOCTR_FUSED_CONV=0/1 overrides the non-Vulkan choice
+  // at graph-build time (0 = all explicit, 1 = all fused) for A/B runs.
   bool useFusedConv = isVulkan || weights.prepacked;
+  bool fusedSpatialConv = false;
   if (const char* fusedEnv = std::getenv("OCR_DOCTR_FUSED_CONV");
       fusedEnv != nullptr && !isVulkan) {
     useFusedConv = fusedEnv[0] == '1';
+    fusedSpatialConv = useFusedConv;
   }
   GraphBuilder gb{
-      .ctx = ctx, .w = weights.tensors, .useFusedConv = useFusedConv};
+      .ctx = ctx,
+      .w = weights.tensors,
+      .useFusedConv = useFusedConv,
+      .fusedSpatialConv = fusedSpatialConv};
 
   // Stem.
   struct ggml_tensor* x = gb.convBnAct(
