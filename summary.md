@@ -128,7 +128,10 @@ would bring cold ≈ warm.
 
 ## 6. Recommendation / next steps
 
-1. **Hybrid landed & validated (~2.76 s warm on real Mali)** — `detectionBackendDevice` shipped; DocTR detection on CPU + recognition on Vulkan. To reach 2.0 s from here: (a) persistent `VkPipelineCache` / load-time warm-up to remove the ~860 ms recognizer cold-start, and (b) faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) to shave the 1.48 s detection half.
+1. **Hybrid landed, auto-on-Mali, validated (~2.75 s warm on real Mali).**
+   - `detectionBackendDevice` param + **auto-policy**: a plain `backendDevice:'vulkan'` request on a Mali/Immortalis GPU auto-routes DocTR detection to CPU and keeps recognition on Vulkan; other GPUs stay full-Vulkan; explicit override wins. Validated: `[WARM:auto] det 1506ms (CPU) + rec 1221ms (Vulkan) = ~2.75s, boxes=197`; `[WARM:fullvk] = ~5.1s`. The normal benchmark now reflects this automatically on Mali.
+   - **nThreads:** tested 4 vs 8 for CPU detection — 8 is *worse* (det 2.9s vs 1.5s; the extra cores are slow A520 efficiency cores). 4 (the X4 + A720 cluster) is optimal.
+   - To reach 2.0 s from here: (a) faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) to shave the ~1.5 s detection half; (b) persistent `VkPipelineCache` / load-time warm-up to remove the ~860 ms recognizer cold-start (helps first-inference, not warm).
 2. **Full-Vulkan 2 s is blocked** on a Mali GPU characteristic (per-conv-dispatch overhead, ~9 ms × the heavy convs, invisible to the per-op profiler). Realistic only via deep Mali-driver-level work or upstream Mali ggml-vulkan support — low odds, large effort.
 3. To shave the hybrid toward 2.0 s: faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) and/or further recognizer batching.
 
