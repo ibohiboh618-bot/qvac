@@ -56,6 +56,10 @@ export interface LlamaConfig {
   'split-mode'?: 'none' | 'layer' | 'row'
   /** Proportions for distributing layers/rows across GPUs (e.g. '1,1' for equal split, '3,1' for 75/25). */
   'tensor-split'?: string
+  /** Minimum image tokens for the vision encoder. `0` (default) uses the model default. Qwen-VL models need `'1024'` for accurate grounding. Accepts the `image_min_tokens` spelling too. */
+  'image-min-tokens'?: NumericLike
+  /** Override whether the vision projector runs on GPU. Defaults to the platform default (Android: CPU, otherwise GPU). Accepts `'true'` or `'false'`, and the `mmproj_use_gpu` spelling too. */
+  'mmproj-use-gpu'?: boolean | 'true' | 'false'
   'cache-type-k'?: string
   'cache-type-v'?: string
   /** Writable directory for OpenCL kernel binary cache. Required on Android for fast GPU startup. */

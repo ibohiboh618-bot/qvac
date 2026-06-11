@@ -180,7 +180,7 @@ const config = {
 | split-mode        | `"none"`, `"layer"`, or `"row"`             | `"none"`                     | How to split the model across GPUs ([details](./docs/multi-gpu.md)) |
 | tensor-split      | comma-separated proportions (e.g. `"1,1"`)  | —                            | GPU split ratios for layer/row parallelism ([details](./docs/multi-gpu.md)) |
 | image-min-tokens  | integer                                     | 0 (use model default)        | Minimum image tokens for the vision encoder. Qwen-VL models need `"1024"` for accurate grounding ([llama.cpp#16842](https://github.com/ggml-org/llama.cpp/issues/16842)) |
-| mmproj-use-gpu    | `"true"` or `"false"`                       | platform default             | Override whether the vision projector runs on GPU. Android defaults to CPU except on Samsung Ultra devices |
+| mmproj-use-gpu    | `"true"` or `"false"`                       | platform default             | Override whether the vision projector runs on GPU. Defaults to CPU on Android and GPU elsewhere |
 
 
 #### IGPU/GPU  selection logic:

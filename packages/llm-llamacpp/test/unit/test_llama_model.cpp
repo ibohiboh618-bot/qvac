@@ -774,6 +774,146 @@ TEST_F(LlamaModelTest, CommonParamsParseInvalidArgument) {
       qvac_errors::StatusError);
 }
 
+// Helper: build a baseline config that loads cleanly, so the tests below can
+// isolate the behavior of a single added key.
+static std::unordered_map<std::string, std::string> makeBaseParseConfig() {
+  std::unordered_map<std::string, std::string> config;
+  config["device"] = test_common::getTestDevice();
+  config["ctx_size"] = "2048";
+  config["gpu_layers"] = test_common::getTestGpuLayers();
+  config["n_predict"] = "10";
+
+  fs::path backendDir;
+#ifdef TEST_BINARY_DIR
+  backendDir = fs::path(TEST_BINARY_DIR);
+#else
+  backendDir = fs::current_path() / "build" / "test" / "unit";
+#endif
+  config["backendsDir"] = backendDir.string();
+  return config;
+}
+
+TEST_F(LlamaModelTest, CommonParamsParseMmprojUseGpuBothSpellings) {
+  if (!fs::exists(getValidModelPath())) {
+    FAIL() << "Test model not found at: " << getValidModelPath();
+  }
+
+  auto config = makeBaseParseConfig();
+  config["mmproj-use-gpu"] = "true";
+  config["mmproj_use_gpu"] = "false";
+
+  EXPECT_THROW(
+      {
+        LlamaModel model(
+            getValidModelPath(),
+            std::string(test_projection_path),
+            std::unordered_map<std::string, std::string>(config));
+        model.waitForLoadInitialization();
+      },
+      qvac_errors::StatusError);
+}
+
+TEST_F(LlamaModelTest, CommonParamsParseMmprojUseGpuInvalidValue) {
+  if (!fs::exists(getValidModelPath())) {
+    FAIL() << "Test model not found at: " << getValidModelPath();
+  }
+
+  // Only "true"/"false" are accepted. Arbitrary strings and the numeric
+  // forms "1"/"0" (intentionally unsupported) must all be rejected.
+  for (const char* invalidValue : {"maybe", "1", "0", "yes"}) {
+    auto config = makeBaseParseConfig();
+    config["mmproj-use-gpu"] = invalidValue;
+
+    EXPECT_THROW(
+        {
+          LlamaModel model(
+              getValidModelPath(),
+              std::string(test_projection_path),
+              std::unordered_map<std::string, std::string>(config));
+          model.waitForLoadInitialization();
+        },
+        qvac_errors::StatusError)
+        << "expected rejection for mmproj-use-gpu=" << invalidValue;
+  }
+}
+
+TEST_F(LlamaModelTest, CommonParamsParseImageMinTokensBothSpellings) {
+  if (!fs::exists(getValidModelPath())) {
+    FAIL() << "Test model not found at: " << getValidModelPath();
+  }
+
+  auto config = makeBaseParseConfig();
+  config["image-min-tokens"] = "1024";
+  config["image_min_tokens"] = "512";
+
+  EXPECT_THROW(
+      {
+        LlamaModel model(
+            getValidModelPath(),
+            std::string(test_projection_path),
+            std::unordered_map<std::string, std::string>(config));
+        model.waitForLoadInitialization();
+      },
+      qvac_errors::StatusError);
+}
+
+TEST_F(LlamaModelTest, CommonParamsParseImageMinTokensInvalidValue) {
+  if (!fs::exists(getValidModelPath())) {
+    FAIL() << "Test model not found at: " << getValidModelPath();
+  }
+
+  auto config = makeBaseParseConfig();
+  config["image-min-tokens"] = "abc";
+
+  EXPECT_THROW(
+      {
+        LlamaModel model(
+            getValidModelPath(),
+            std::string(test_projection_path),
+            std::unordered_map<std::string, std::string>(config));
+        model.waitForLoadInitialization();
+      },
+      qvac_errors::StatusError);
+}
+
+TEST_F(LlamaModelTest, CommonParamsParseImageMinTokensOverflow) {
+  if (!fs::exists(getValidModelPath())) {
+    FAIL() << "Test model not found at: " << getValidModelPath();
+  }
+
+  // Larger than INT32_MAX: std::stoll would have wrapped this to a small value,
+  // std::from_chars + bounds check rejects it.
+  auto config = makeBaseParseConfig();
+  config["image-min-tokens"] = "4294967297";
+
+  EXPECT_THROW(
+      {
+        LlamaModel model(
+            getValidModelPath(),
+            std::string(test_projection_path),
+            std::unordered_map<std::string, std::string>(config));
+        model.waitForLoadInitialization();
+      },
+      qvac_errors::StatusError);
+}
+
+TEST_F(LlamaModelTest, CommonParamsParseImageMinTokensValid) {
+  if (!fs::exists(getValidModelPath())) {
+    FAIL() << "Test model not found at: " << getValidModelPath();
+  }
+
+  auto config = makeBaseParseConfig();
+  config["image-min-tokens"] = "1024";
+
+  EXPECT_NO_THROW({
+    LlamaModel model(
+        getValidModelPath(),
+        std::string(test_projection_path),
+        std::unordered_map<std::string, std::string>(config));
+    model.waitForLoadInitialization();
+  });
+}
+
 TEST_F(LlamaModelTest, FormatPromptMediaInTextOnlyModel) {
   if (!fs::exists(getValidModelPath())) {
     FAIL() << "Test model not found at: " << getValidModelPath();

@@ -130,9 +130,9 @@ void MtmdLlmContext::initVisionContext() {
   if (imageMinTokens_ > 0) {
     mparams.image_min_tokens = imageMinTokens_;
     QLOG_IF(
-        Priority::INFO,
+        Priority::DEBUG,
         string_format(
-            "[MtmdLlm] image_min_tokens set to %d from config",
+            "[MtmdLlm] image_min_tokens set to %d from config\n",
             imageMinTokens_));
   }
   mparams.n_threads = params_.cpuparams.n_threads;

@@ -6,6 +6,7 @@
 #include <cinttypes>
 #include <cstddef>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <shared_mutex>
 #include <sstream>
@@ -48,6 +49,29 @@ static void maybeSaveCacheToDisk(
       cacheManager->hasActiveCache()) {
     cacheManager->saveCache();
   }
+}
+
+/// Look up a config key that accepts both hyphenated and underscored
+/// spellings. Throws InvalidArgument if both spellings are present;
+/// returns the iterator to whichever exists, or end() if neither does.
+static std::unordered_map<std::string, std::string>::iterator
+findConfigKeyEitherSpelling(
+    std::unordered_map<std::string, std::string>& configFilemap,
+    const char* hyphenKey, const char* underscoreKey) {
+  const auto hIt = configFilemap.find(hyphenKey);
+  const auto uIt = configFilemap.find(underscoreKey);
+  if (hIt != configFilemap.end() && uIt != configFilemap.end()) {
+    std::string errorMsg = string_format(
+        "both '%s' and '%s' are present; use one or the other.\n",
+        hyphenKey,
+        underscoreKey);
+    throw qvac_errors::StatusError(
+        ADDON_ID,
+        qvac_errors::general_error::toString(
+            qvac_errors::general_error::InvalidArgument),
+        errorMsg);
+  }
+  return (hIt != configFilemap.end()) ? hIt : uIt;
 }
 
 static std::vector<std::string> split(const std::string& str, char delimiter) {
@@ -847,58 +871,56 @@ void LlamaModel::commonParamsParse(
   }
 
   std::optional<bool> mmprjUseGpuOverride;
-  {
-    auto hIt = configFilemap.find("mmproj-use-gpu");
-    auto uIt = configFilemap.find("mmproj_use_gpu");
-    if (hIt != configFilemap.end() && uIt != configFilemap.end()) {
+  if (auto it = findConfigKeyEitherSpelling(
+          configFilemap, "mmproj-use-gpu", "mmproj_use_gpu");
+      it != configFilemap.end()) {
+    std::string val = it->second;
+    std::transform(val.begin(), val.end(), val.begin(), ::tolower);
+    if (val == "true") {
+      mmprjUseGpuOverride = true;
+    } else if (val == "false") {
+      mmprjUseGpuOverride = false;
+    } else {
+      std::string errorMsg = string_format(
+          "%s: invalid %s value: %s (expected true or false)\n",
+          __func__,
+          it->first.c_str(),
+          it->second.c_str());
       throw qvac_errors::StatusError(
-          qvac_errors::general_error::InvalidArgument,
-          string_format(
-              "%s: both 'mmproj-use-gpu' and 'mmproj_use_gpu' are present; "
-              "use one or the other.\n",
-              __func__));
+          ADDON_ID,
+          qvac_errors::general_error::toString(
+              qvac_errors::general_error::InvalidArgument),
+          errorMsg);
     }
-    if (auto it = (hIt != configFilemap.end()) ? hIt : uIt;
-        it != configFilemap.end()) {
-      std::string val = it->second;
-      std::transform(val.begin(), val.end(), val.begin(), ::tolower);
-      mmprjUseGpuOverride = (val == "true" || val == "1");
-      configFilemap.erase(it);
-    }
+    configFilemap.erase(it);
   }
 
-  {
-    auto hIt = configFilemap.find("image-min-tokens");
-    auto uIt = configFilemap.find("image_min_tokens");
-    if (hIt != configFilemap.end() && uIt != configFilemap.end()) {
+  if (auto it = findConfigKeyEitherSpelling(
+          configFilemap, "image-min-tokens", "image_min_tokens");
+      it != configFilemap.end()) {
+    // `std::from_chars` rejects trailing garbage and reports overflow, unlike
+    // `std::stoll` which truncates silently and would let a value larger than
+    // INT32_MAX wrap to a smaller (or negative) min-token count.
+    const std::string& raw = it->second;
+    long long parsed = 0;
+    const char* begin = raw.data();
+    const char* end = begin + raw.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    if (ec != std::errc{} || ptr != end || parsed <= 0 ||
+        parsed > std::numeric_limits<int32_t>::max()) {
+      std::string errorMsg = string_format(
+          "%s: invalid %s value: %s (expected a positive integer)\n",
+          __func__,
+          it->first.c_str(),
+          raw.c_str());
       throw qvac_errors::StatusError(
-          qvac_errors::general_error::InvalidArgument,
-          string_format(
-              "%s: both 'image-min-tokens' and 'image_min_tokens' are present; "
-              "use one or the other.\n",
-              __func__));
+          ADDON_ID,
+          qvac_errors::general_error::toString(
+              qvac_errors::general_error::InvalidArgument),
+          errorMsg);
     }
-    if (auto it = (hIt != configFilemap.end()) ? hIt : uIt;
-        it != configFilemap.end()) {
-      try {
-        long long parsed = std::stoll(it->second);
-        if (parsed > 0) {
-          state_->configuredImageMinTokens_ = static_cast<int32_t>(parsed);
-        }
-      } catch (...) {
-        std::string errorMsg = string_format(
-            "%s: invalid %s value: %s\n",
-            __func__,
-            it->first.c_str(),
-            it->second.c_str());
-        throw qvac_errors::StatusError(
-            ADDON_ID,
-            qvac_errors::general_error::toString(
-                qvac_errors::general_error::InvalidArgument),
-            errorMsg);
-      }
-      configFilemap.erase(it);
-    }
+    state_->configuredImageMinTokens_ = static_cast<int32_t>(parsed);
+    configFilemap.erase(it);
   }
 
   // parse tools_compact flag from config
@@ -996,8 +1018,7 @@ void LlamaModel::commonParamsParse(
       std::string arch = archOpt.value_or("unknown");
 
       QLOG_IF(
-          Priority::INFO,
-
+          Priority::DEBUG,
           string_format(
               "[LlamaModel] GPU backend selected - arch=%s, VLM=%s\n",
               arch.c_str(),
@@ -1010,7 +1031,7 @@ void LlamaModel::commonParamsParse(
       if (mmprjUseGpuOverride.has_value()) {
         params.mmproj_use_gpu = mmprjUseGpuOverride.value();
         QLOG_IF(
-            Priority::INFO,
+            Priority::DEBUG,
             string_format(
                 "[LlamaModel] mmproj_use_gpu overridden to %s from config\n",
                 params.mmproj_use_gpu ? "true" : "false"));
@@ -1034,6 +1055,12 @@ void LlamaModel::commonParamsParse(
       runtimeBackendDevice_ = 0;
       params.split_mode = LLAMA_SPLIT_MODE_NONE;
       params.main_gpu = -1;
+      if (mmprjUseGpuOverride.has_value()) {
+        QLOG_IF(
+            Priority::WARNING,
+            "[LlamaModel] mmproj-use-gpu override ignored: selected backend is "
+            "not GPU\n");
+      }
       if (splitMode != LLAMA_SPLIT_MODE_NONE) {
         QLOG_IF(
             Priority::WARNING,
