@@ -120,6 +120,19 @@ Pipeline::Pipeline(
       config_.backendDevice, config_.gpuDevice);
   ggml_backend_dev_t selectedDevice = backendInfo_.device;
 
+  // Resolve the recognizer feature-extractor batch (0 = auto). On Vulkan, many
+  // tiny per-crop dispatches dominate recognition (the matmul/dispatch overhead
+  // is brutal on mobile GPUs like Mali), so a large batch is markedly faster;
+  // on Metal the per-op cost grows super-linearly with batch, so 4 is the
+  // measured optimum. A positive override always wins.
+  const bool selectedIsVulkan =
+      ocr_backend_selection::isVulkanBackendName(backendInfo_.backendName);
+  const int doctrRecognizerBatch = config_.recognizerBatchSize > 0
+      ? config_.recognizerBatchSize
+      : (selectedIsVulkan ? 32 : 4);
+  const int easyRecognizerBatch =
+      config_.recognizerBatchSize > 0 ? config_.recognizerBatchSize : 4;
+
   if (config_.mode == PipelineMode::DOCTR) {
     doctrDetector_ =
         std::make_unique<doctr::ggml::pipeline::StepDoctrDetectionGGML>(
@@ -128,7 +141,7 @@ Pipeline::Pipeline(
     doctrRecognizer_ =
         std::make_unique<doctr::ggml::pipeline::StepDoctrRecognitionGGML>(
             pathRecognizer,
-            config_.recognizerBatchSize,
+            doctrRecognizerBatch,
             doctr::ggml::pipeline::DecodingMethod::CTC,
             selectedDevice,
             config_.nThreads);
@@ -148,7 +161,7 @@ Pipeline::Pipeline(
         config_.defaultRotationAngles,
         config_.contrastRetry,
         config_.lowConfidenceThreshold,
-        config_.recognizerBatchSize,
+        easyRecognizerBatch,
         config_.nThreads,
         config_.backendsDir);
     recogConfig.backendDevice = selectedDevice;
