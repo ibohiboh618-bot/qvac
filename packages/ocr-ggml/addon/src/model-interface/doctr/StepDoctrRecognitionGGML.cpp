@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -457,6 +458,25 @@ struct GraphBuilder {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
   const std::unordered_map<std::string, struct ggml_tensor*>& w;
 
+  // Use the fused GGML_OP_CONV_2D kernel for regular convs on Vulkan (no im2col
+  // buffer; conv-shaped tiling). Vulkan-only — on Metal the tuned GEMM makes
+  // im2col + mul_mat ~2x faster than the fused kernel. See the detection graph
+  // (MobileNetGraph.cpp) for the same rationale.
+  bool useFusedConv = false;
+
+  /// Conv2d that picks the fused kernel on Vulkan and im2col + mul_mat
+  /// elsewhere. Args mirror ggml_conv_2d.
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+  struct ggml_tensor* conv2d(
+      struct ggml_tensor* kernelT, struct ggml_tensor* x, int strideW,
+      int strideH, int pad) const {
+    if (useFusedConv) {
+      return ggml_conv_2d_direct(
+          ctx, kernelT, x, strideW, strideH, pad, pad, 1, 1);
+    }
+    return ggml_conv_2d(ctx, kernelT, x, strideW, strideH, pad, pad, 1, 1);
+  }
+
   [[nodiscard]] struct ggml_tensor* t(const std::string& name) const {
     auto it = w.find(name);
     if (it == w.end()) {
@@ -483,16 +503,8 @@ struct GraphBuilder {
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
       const std::string& convPrefix, const std::string& bnPrefix, int strideW,
       int strideH, int kernel, bool applyActivation, bool useHardswish) const {
-    struct ggml_tensor* conv = ggml_conv_2d(
-        ctx,
-        t(convPrefix + ".weight"),
-        x,
-        strideW,
-        strideH,
-        samePadding(kernel),
-        samePadding(kernel),
-        1,
-        1);
+    struct ggml_tensor* conv = conv2d(
+        t(convPrefix + ".weight"), x, strideW, strideH, samePadding(kernel));
     conv = applyBn(conv, bnPrefix);
     return applyActivation ? activate(conv, useHardswish) : conv;
   }
@@ -503,8 +515,9 @@ struct GraphBuilder {
       const std::string& convPrefix, const std::string& bnPrefix, int strideW,
       int strideH, int kernel, bool useHardswish) const {
     // Depthwise via the direct Metal kernel (GGML_OP_CONV_2D_DW) instead of the
-    // im2col + per-channel batched matmul, which is pathologically slow on Metal
-    // (it dominated recognition latency). Weight is [KW,KH,1,C] as required.
+    // im2col + per-channel batched matmul, which is pathologically slow on
+    // Metal (it dominated recognition latency). Weight is [KW,KH,1,C] as
+    // required.
     struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
         ctx,
         t(convPrefix + ".weight"),
@@ -522,8 +535,12 @@ struct GraphBuilder {
   struct ggml_tensor* convBiasAct(
       struct ggml_tensor* x, const std::string& convPrefix,
       bool applyActivation, bool useHardswish) const {
-    struct ggml_tensor* conv =
-        ggml_conv_2d(ctx, t(convPrefix + ".weight"), x, 1, 1, 0, 0, 1, 1);
+    struct ggml_tensor* conv = conv2d(
+        t(convPrefix + ".weight"),
+        x,
+        /*strideW=*/1,
+        /*strideH=*/1,
+        /*pad=*/0);
     conv = ggml_add(ctx, conv, t(convPrefix + ".bias_br"));
     return applyActivation ? activate(conv, useHardswish) : conv;
   }
@@ -1221,10 +1238,12 @@ private:
           if (static_cast<size_t>(oc) != scale.size()) {
             raise("BN fold: output-channel mismatch for " + convWeightName);
           }
-          const int64_t perOc = wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
+          const int64_t perOc =
+              wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
           const size_t n = static_cast<size_t>(oc * perOc);
           // Pointwise/regular conv weights are F16; depthwise weights are F32
-          // (see isDepthwiseWeight). Fold the per-channel scale in either dtype.
+          // (see isDepthwiseWeight). Fold the per-channel scale in either
+          // dtype.
           if (wTensor->type == GGML_TYPE_F16) {
             std::vector<ggml_fp16_t> wbuf(n);
             ggml_backend_tensor_get(
@@ -1240,8 +1259,7 @@ private:
                 wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
           } else if (wTensor->type == GGML_TYPE_F32) {
             std::vector<float> wbuf(n);
-            ggml_backend_tensor_get(
-                wTensor, wbuf.data(), 0, n * sizeof(float));
+            ggml_backend_tensor_get(wTensor, wbuf.data(), 0, n * sizeof(float));
             for (int64_t o = 0; o < oc; ++o) {
               const float s = scale[static_cast<size_t>(o)];
               for (int64_t i = 0; i < perOc; ++i) {
@@ -1249,10 +1267,10 @@ private:
                 wbuf[idx] *= s;
               }
             }
-            ggml_backend_tensor_set(
-                wTensor, wbuf.data(), 0, n * sizeof(float));
+            ggml_backend_tensor_set(wTensor, wbuf.data(), 0, n * sizeof(float));
           } else {
-            raise("BN fold: unexpected conv weight dtype for " + convWeightName);
+            raise(
+                "BN fold: unexpected conv weight dtype for " + convWeightName);
           }
         }
       }
@@ -1341,7 +1359,20 @@ private:
     ggml_set_name(graph.input, "recognition_input");
     ggml_set_input(graph.input);
 
-    GraphBuilder gb{.ctx = ctx, .w = graph.weights};
+    bool isVulkan = false;
+    if (graph.backend != nullptr) {
+      const char* backendName = ggml_backend_name(graph.backend);
+      if (backendName != nullptr) {
+        std::string lower(backendName);
+        std::transform(
+            lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+              return static_cast<char>(std::tolower(c));
+            });
+        isVulkan = lower.find("vulkan") != std::string::npos;
+      }
+    }
+
+    GraphBuilder gb{.ctx = ctx, .w = graph.weights, .useFusedConv = isVulkan};
     struct ggml_tensor* x = gb.convBnAct(
         graph.input,
         "crnn.features.0.0",
