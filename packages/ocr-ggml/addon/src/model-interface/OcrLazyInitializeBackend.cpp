@@ -35,7 +35,7 @@ void ocrGgmlLogCallback(
   if (text == nullptr || text[0] == '\0') { // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     return;
   }
-  if (level == GGML_LOG_LEVEL_DEBUG) {
+  if (level == GGML_LOG_LEVEL_DEBUG && getenv("GGML_VK_PERF_LOGGER") == nullptr) {
     return;
   }
 
@@ -67,6 +67,13 @@ void ocrGgmlLogCallback(
         level == GGML_LOG_LEVEL_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
         "ggml-ocr", "%.*s", static_cast<int>(len), text);
   }
+#ifdef OCR_VK_PROFILE
+  // Surface DEBUG/INFO (incl. the Vulkan per-op profiler) to logcat.
+  else {
+    __android_log_print(
+        ANDROID_LOG_INFO, "ggml-ocr", "%.*s", static_cast<int>(len), text);
+  }
+#endif
 #endif
 
   std::string message;
@@ -142,6 +149,13 @@ static void installCallbacksInBackendSos() {
 
 bool OcrLazyInitializeBackend::initialize(const std::string& backendsDir) {
   std::lock_guard<std::mutex> lock(g_initMutex);
+
+#ifdef OCR_VK_PROFILE
+  // Force-enable the ggml-vulkan per-op profiler before any backend device is
+  // created (the flag is read at device init via getenv). Per-op timings are
+  // emitted at GGML_LOG_LEVEL_DEBUG and routed to logcat by ocrGgmlLogCallback.
+  setenv("GGML_VK_PERF_LOGGER", "1", 1);
+#endif
 
   if (g_initialized) {
     if (!backendsDir.empty() && !g_recordedBackendsDir.empty() &&

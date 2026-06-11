@@ -136,6 +136,14 @@ target_compile_definitions(
     JS_LOGGER
 )
 
+if(DEFINED ENV{OCR_QLOG_STDERR})
+  target_compile_definitions(${ocr-ggml} PRIVATE OCR_QLOG_STDERR)
+endif()
+
+# TEMP (profiling branch only): force the ggml-vulkan per-op profiler on so the
+# Mali per-op breakdown reaches logcat in CI device-farm runs. Do not merge.
+target_compile_definitions(${ocr-ggml} PRIVATE OCR_VK_PROFILE)
+
 target_compile_definitions(${ocr-ggml} PRIVATE BACKENDS_SUBDIR="${BACKENDS_SUBDIR_VALUE}")
 
 # Mirror vla-ggml: when ggml is built with GGML_BACKEND_DL=ON (Android),
