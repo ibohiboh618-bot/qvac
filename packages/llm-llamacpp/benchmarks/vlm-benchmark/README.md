@@ -45,14 +45,18 @@ change.
 
 | Platform | Default target | Backends |
 |---|---|---|
-| **desktop** | Linux | CPU, GPU (where the runner supports it) |
-| **mobile** | Samsung Galaxy S25 (AWS Device Farm) | CPU, GPU |
+| **desktop** | Linux | CPU, GPU/Vulkan (where the runner supports it) |
+| **desktop** | macOS arm64 (`macos-15-xlarge`, Apple Silicon) | CPU, GPU/Metal |
+| **mobile** | Samsung Galaxy S25 (AWS Device Farm, Android) | CPU, GPU |
+| **mobile** | iPhone (AWS Device Farm, iOS) | CPU, GPU |
 
-- **Desktop legs** are token-driven: the `matrix_linux` input (`linux-cpu,linux-gpu`)
-  maps to runners in the workflow's `context` job. Add another desktop OS by adding a
-  case there.
-- **Mobile** reuses the `integration-mobile-test-llm-llamacpp.yml` workflow. Point it at
-  a different phone by changing the Device Farm pool; the harness is unchanged.
+- **Desktop legs** are token-driven: the `matrix_desktop` input
+  (`linux-cpu,linux-gpu,macos-cpu,macos-gpu`) maps to runners in the workflow's
+  `context` job. Add another desktop OS by adding a case there.
+- **Mobile legs** reuse the `integration-mobile-test-llm-llamacpp.yml` workflow —
+  the `matrix_mobile` input (`s25,iphone`) selects the Android and/or iOS leg.
+  Point a leg at a different phone by changing its Device Farm pool; the harness
+  is unchanged.
 - The config never names a platform — it only selects backends via `devices`
   (`cpu` / `gpu` / both).
 
@@ -69,7 +73,7 @@ and varies another.
 | Holds fixed | the engine (default `addon`) | the model |
 | Compares | `MODEL_1` vs `MODEL_2` | `addon` vs `fabric-cli` vs `upstream-cli` |
 | Default example | Qwen3.5 mmproj-F16 vs mmproj-Q8 | Qwen3.5 + q8 mmproj across all three engines |
-| Targets | desktop + mobile, CPU + GPU | **desktop only** (CLIs are native binaries) |
+| Targets | desktop + mobile, CPU + GPU | **Linux only** (the CLIs are native binaries built there) |
 | Headline metric | per-model quality + vision-encode time | per-engine quality + encode/TTFT |
 
 **two-models** compares the two complete VLMs configured as `MODEL_1` and `MODEL_2`.
@@ -134,12 +138,6 @@ The benchmark is driven by the **Benchmark VLM (model comparison)** workflow
 (`.github/workflows/benchmark-vlm-model-comparison.yml`). *Run workflow* (or `gh workflow run`)
 → set `run_matrix = true`, then pick the axes via the dispatch inputs below.
 
-> **Important:** the same workflow also hosts a *separate* source-engines benchmark
-> (the `desktop` job — addon/fabric/upstream legs across many platforms). It is **on by
-> default**. For a clean matrix-only run, turn it off:
-> `run_addon=false run_fabric_cli=false run_upstream_cli=false run_android=false`
-> (that zeroes the `desktop`/`summarize`/`android` jobs so only the matrix runs).
-
 ### Launch configuration checklist
 
 There are **two ways to configure a launch**, and each item below shows both:
@@ -180,13 +178,15 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    - Dispatch: `-f matrix_preset=…` (desktop). *Mobile uses `defaultPreset`.*
 
 **5. Desktop platforms × backends.**
-   - Dispatch: `-f matrix_linux=linux-cpu,linux-gpu` (drop one for a single backend).
+   - Dispatch: `-f matrix_desktop=linux-cpu,linux-gpu,macos-cpu,macos-gpu` (any subset;
+     `macos-*` = Apple Silicon, gpu = Metal).
    - Config: backends per preset via `devices` (`null` = both); env `NO_GPU=true`.
 
-**6. Mobile (Samsung S25).**
-   - Dispatch: `-f run_matrix_s25=true` (two-models only; ignored for several-sources).
-   - Config: the phone's run is `config.mode` + `defaultPreset` — set them before pushing.
-     Keep it light (`base`); `full` overruns the Device Farm session window.
+**6. Mobile (AWS Device Farm: Samsung S25 and/or iPhone).**
+   - Dispatch: `-f matrix_mobile=s25,iphone` (any subset; empty = no mobile; two-models
+     only — ignored for several-sources).
+   - Config: each phone's run is `config.mode` + `defaultPreset` — set them before
+     pushing. Keep it light (`base`); `full` overruns the Device Farm session window.
 
 **7. Engine / sources.**
    - two-models engine — Config: `engine: 'addon'`; Dispatch: `-f matrix_engine=addon`.
@@ -197,10 +197,6 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    - Repeats / tasks — Config: preset `repeats` / `tasks`; (local env
      `QVAC_VLM_REPEATS` / `QVAC_VLM_TASKS` — no dispatch input).
 
-**9. Silence the source-engines benchmark** (for a clean matrix-only run).
-   - Dispatch: `-f run_addon=false -f run_fabric_cli=false -f run_upstream_cli=false -f run_android=false`
-     (zeroes the `desktop`/`summarize`/`android` jobs). Always set `-f run_matrix=true`.
-
 **Dispatch inputs reference**
 
 | input | overrides | purpose |
@@ -209,19 +205,19 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 | `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (desktop) |
 | `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (desktop) |
 | `matrix_engine` | `config.engine` | two-models fixed engine |
-| `matrix_linux` | — | desktop legs, e.g. `linux-cpu,linux-gpu` |
+| `matrix_desktop` | — | desktop legs: `linux-cpu,linux-gpu,macos-cpu,macos-gpu` (any subset) |
+| `matrix_mobile` | — | mobile (Device Farm) legs: `s25,iphone` (any subset; empty = none; two-models only) |
 | `matrix_samples` | preset `samplesPerTask` | override samples/task (empty = default) |
-| `run_matrix_s25` | — | also run the mobile (S25) leg (two-models only) |
 | `fabric_ref` / `upstream_ref` | — | native CLI versions (several-sources) |
-| `run_addon` / `run_fabric_cli` / `run_upstream_cli` / `run_android` | — | source-engines legs — **false** for matrix-only |
 
-**Example** — clean two-models, desktop CPU+GPU + S25, base preset:
+**Example** — two-models on every platform (Linux + macOS, CPU+GPU, S25 + iPhone), base preset:
 
 ```bash
 gh workflow run benchmark-vlm-model-comparison.yml --ref <branch> \
   -f run_matrix=true -f matrix_mode=two-models -f matrix_preset=base \
-  -f matrix_engine=addon -f matrix_linux=linux-cpu,linux-gpu -f run_matrix_s25=true \
-  -f run_addon=false -f run_fabric_cli=false -f run_upstream_cli=false -f run_android=false
+  -f matrix_engine=addon \
+  -f matrix_desktop=linux-cpu,linux-gpu,macos-cpu,macos-gpu \
+  -f matrix_mobile=s25,iphone
 ```
 
 **Locally** you can run the harness directly under `bare` (desktop) by exporting
@@ -270,18 +266,19 @@ The benchmark is meant to grow. The three common changes:
 - **Change the models.** Edit `MODEL_1` / `MODEL_2` (two-models) or `SOURCES_MODEL`
   (several-sources) in `config.cjs` — give each blob a `source` descriptor. To compare
   two variants of one model, point both at the same `llm` and vary only the `mmproj`.
-- **Add platforms.** Desktop: add a case to the `matrix_linux` → runner map in the
-  workflow `context` job. Mobile: change the Device Farm pool. No harness changes.
+- **Add platforms.** Desktop: add a case to the `matrix_desktop` → runner map in the
+  workflow `context` job. Mobile: add a leg token (and a job like `matrix-iphone`) or
+  change a Device Farm pool. No harness changes.
 
 ---
 
 ## Known limitations
 
-- **several-sources is desktop-only.** `fabric-cli`/`upstream-cli` are native binaries;
-  the mobile path runs an addon app, not arbitrary CLIs.
+- **several-sources is Linux-only.** `fabric-cli`/`upstream-cli` are native binaries
+  built by the Linux legs; the mobile path runs an addon app, not arbitrary CLIs.
 - **mmproj vision-encode time is unavailable on mobile.** It comes from llama.cpp's native
-  stderr, which Android logcat doesn't capture — the report shows `—` there and uses
-  **TTFT** (which includes vision-encode) as the mobile proxy.
+  stderr, which neither Android logcat nor the iOS console capture carries — the report
+  shows `—` there and uses **TTFT** (which includes vision-encode) as the mobile proxy.
 - **addon vs CLI prompt parity.** The addon API sends the image as its own `user` turn
   (~+11 tokens) vs the CLIs' single turn, so the *addon-vs-CLI* quality comparison is
   not strictly apples-to-apples. `fabric-cli` vs `upstream-cli` share an identical

@@ -356,9 +356,9 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.wall, 0)} |`)
   }
   L.push('')
-  L.push('> **mmproj enc** is parsed from llama.cpp\'s native stderr. On Android (Device Farm) that ' +
-    'stream is not captured in logcat, so it shows `—` there; TTFT on mobile already includes the ' +
-    'vision-encode + prompt-eval time and is the cross-platform proxy.\n')
+  L.push('> **mmproj enc** is parsed from llama.cpp\'s native stderr. On mobile (Device Farm) that ' +
+    'stream is not captured (Android logcat / iOS console), so it shows `—` there; TTFT on mobile ' +
+    'already includes the vision-encode + prompt-eval time and is the cross-platform proxy.\n')
   // ── 3 · Test results (Device-Farm-style Metric | Count, per platform) ──────
   L.push('# 3 · Test Results (per platform)\n')
   L.push('| Platform | Metric | Count |')
