@@ -98,6 +98,13 @@ struct OcrConfig {
   // (measured), while CPU detection is ~1.3s; running detection on CPU and
   // recognition on Vulkan ("hybrid") is the fastest config on that device.
   std::optional<BackendDevice> detectionBackendDevice;
+  // Optional toggle for the DocTR recognizer's CPU-assist worker (mapped from
+  // `params.recognizerCpuAssist`). When recognition runs on a GPU backend, a
+  // second CPU feature-extractor instance steals crop chunks and computes them
+  // concurrently with the GPU. Unset = auto (enabled on Mali/Immortalis Vulkan,
+  // where the CPU is idle during the GPU compute wait and the two are of
+  // comparable speed). Ignored when recognition already runs on CPU.
+  std::optional<bool> recognizerCpuAssist;
 };
 // NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 

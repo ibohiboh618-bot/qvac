@@ -154,6 +154,7 @@ class OcrGgml {
       'pipelineType',
       'backendDevice',
       'detectionBackendDevice',
+      'recognizerCpuAssist',
       'gpuDevice'
     ]
     for (const field of optionalFields) {

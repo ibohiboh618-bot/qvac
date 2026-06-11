@@ -13,6 +13,7 @@
 #include <ggml.h>
 #include <opencv2/opencv.hpp>
 
+#include "model-interface/doctr/DoctrProf.hpp"
 #include "model-interface/easyocr/pipeline/qlog.hpp"
 #include "model-interface/easyocr/pipeline/steps.hpp"
 
@@ -170,7 +171,9 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
   CV_Assert(preprocessed.isContinuous());
 
   // Build (or reuse) the graph for this canvas size.
+  const auto tGraph = prof::Clock::now();
   ensureGraph(W, H);
+  const double graphBuildMs = prof::msSince(tGraph);
 
   // Deinterleave HWC -> CHW directly into the reusable inputBuffer_.
   // Previously this path used `cv::split` + a per-channel `memcpy`, which
@@ -197,6 +200,7 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
       0,
       inputBuffer_.size() * sizeof(float));
 
+  const auto tCompute = prof::Clock::now();
   const ggml_status status =
       ggml_backend_graph_compute(backends_[0], computeGraph_.graph);
   if (status != GGML_STATUS_SUCCESS) {
@@ -204,6 +208,7 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
         "ggml_backend_graph_compute failed with status " +
         std::to_string(static_cast<int>(status)));
   }
+  const double computeMs = prof::msSince(tCompute);
 
   // The graph applies sigmoid on-device, so output_4 is already the probability
   // map; read it back directly.
@@ -212,6 +217,11 @@ cv::Mat StepDoctrDetectionGGML::runInference(const cv::Mat& preprocessed) {
   logitBuffer_.resize(nElems);
   ggml_backend_tensor_get(
       computeGraph_.output_4, logitBuffer_.data(), 0, nElems * sizeof(float));
+
+  prof::log(
+      "[DETPROF] canvas=" + std::to_string(W) + "x" + std::to_string(H) +
+      " graph_build=" + std::to_string(static_cast<int>(graphBuildMs)) +
+      "ms compute=" + std::to_string(static_cast<int>(computeMs)) + "ms");
 
   // GGML WHCN [W=1024, H=1024, C=1, N=1] lays out as [W*y + x] in memory
   // which matches OpenCV row-major [H, W] — direct wrap is safe.
@@ -315,11 +325,16 @@ StepDoctrDetectionGGML::process(const Input& input) {
       "[DoctrDetectionGGML] processing " + std::to_string(input.origImg.cols) +
           "x" + std::to_string(input.origImg.rows));
 
+  const auto tPre = prof::Clock::now();
   auto [preprocessed, scale, paddedW, paddedH, padLeft, padTop] =
       preprocessImage(input.origImg);
+  const double preMs = prof::msSince(tPre);
 
+  const auto tInfer = prof::Clock::now();
   cv::Mat probMap = runInference(preprocessed);
+  const double inferMs = prof::msSince(tInfer);
 
+  const auto tPost = prof::Clock::now();
   auto [polygons, confidences] = extractPolygons(
       probMap,
       scale,
@@ -329,6 +344,12 @@ StepDoctrDetectionGGML::process(const Input& input) {
       padTop,
       input.origImg.cols,
       input.origImg.rows);
+
+  prof::log(
+      "[DETPROF] pre=" + std::to_string(static_cast<int>(preMs)) +
+      "ms infer=" + std::to_string(static_cast<int>(inferMs)) +
+      "ms post=" + std::to_string(static_cast<int>(prof::msSince(tPost))) +
+      "ms boxes=" + std::to_string(polygons.size()));
 
   Output output;
   output.context = input;

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <sstream>
@@ -864,13 +865,13 @@ WeightsBundle loadWeights(
   addFcWeightFp16("classifier.3.weight", kClassifierHidden, kNumClasses);
   addFcBiasFp16("classifier.3.bias", kNumClasses);
 
-  // KleidiAI/NHWC prepack for regular Conv2D weights (CPU acceleration on Mali).
-  // Route regular Conv2D kernels through the CPU device's "extra" prepack buffer
-  // type (KleidiAI) so they get NHWC-packed at upload; the graph then uses the
-  // fused GGML_OP_CONV_2D for those convs, which dispatches to KleidiAI's
-  // accelerated conv2d. Depthwise (ne[2]==1) and ConvTranspose weights MUST stay
-  // in the default buft — the prepack buft mangles any F32/F16 tensor it owns,
-  // and those ops never dispatch through KleidiAI.
+  // KleidiAI/NHWC prepack for regular Conv2D weights (CPU acceleration on
+  // Mali). Route regular Conv2D kernels through the CPU device's "extra"
+  // prepack buffer type (KleidiAI) so they get NHWC-packed at upload; the graph
+  // then uses the fused GGML_OP_CONV_2D for those convs, which dispatches to
+  // KleidiAI's accelerated conv2d. Depthwise (ne[2]==1) and ConvTranspose
+  // weights MUST stay in the default buft — the prepack buft mangles any
+  // F32/F16 tensor it owns, and those ops never dispatch through KleidiAI.
   ggml_backend_buffer_type_t prepackBuft = nullptr;
   {
     ggml_backend_dev_t dev = ggml_backend_get_device(backends[0]);
@@ -878,8 +879,8 @@ WeightsBundle loadWeights(
         dev != nullptr ? ggml_backend_dev_backend_reg(dev) : nullptr;
     if (reg != nullptr) {
       using GetExtras = ggml_backend_buffer_type_t* (*)(ggml_backend_dev_t);
-      auto* getExtras = reinterpret_cast<GetExtras>(
-          ggml_backend_reg_get_proc_address(
+      auto* getExtras =
+          reinterpret_cast<GetExtras>(ggml_backend_reg_get_proc_address(
               reg, "ggml_backend_dev_get_extra_bufts"));
       auto probeIt = tensors.find("features.0.0.weight");
       if (getExtras != nullptr && probeIt != tensors.end()) {
@@ -899,7 +900,7 @@ WeightsBundle loadWeights(
   static const std::unordered_set<std::string> kConvTransposeWeights = {
       "dbnet.prob_head.3.weight", "dbnet.prob_head.6.weight"};
   auto isPrepackable = [&](const std::string& name,
-                          const struct ggml_tensor* t) {
+                           const struct ggml_tensor* t) {
     return name.ends_with(".weight") && !kConvTransposeWeights.contains(name) &&
            t->ne[2] != 1;
   };
@@ -1197,8 +1198,8 @@ ComputeGraph buildGraph(
   cg.input = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, inputW, inputH, 3, 1);
   ggml_set_name(cg.input, "input");
 
-  // Detect Vulkan to pick the fused conv path (much faster there; see
-  // GraphBuilder::conv2d). The compute backend is backends[0].
+  // Detect the backend to pick the conv lowering (see GraphBuilder::conv2d).
+  // The compute backend is backends[0].
   bool isVulkan = false;
   if (!backends.empty() && backends[0] != nullptr) {
     const char* backendName = ggml_backend_name(backends[0]);
@@ -1212,12 +1213,20 @@ ComputeGraph buildGraph(
     }
   }
 
-  // Fused GGML_OP_CONV_2D on Vulkan, or on CPU when conv weights were
-  // NHWC-prepacked for KleidiAI's accelerated conv2d (see loadWeights).
+  // Fused GGML_OP_CONV_2D on Vulkan (avoids the per-conv im2col dispatch).
+  // CPU keeps the explicit im2col + mul_mat lowering: measured on Mali-G715's
+  // CPU (Pixel 9 Pro, warm) explicit is ~1.0s vs ~1.15s fused for the DBNet
+  // detector (the fused kernel's statically-split inner im2col straggles on
+  // asymmetric big.LITTLE cores), and on Metal the tuned GEMM favours
+  // explicit by ~2x. OCR_DOCTR_FUSED_CONV=0/1 overrides the non-Vulkan
+  // choice at graph-build time for on-device A/B measurement.
+  bool useFusedConv = isVulkan || weights.prepacked;
+  if (const char* fusedEnv = std::getenv("OCR_DOCTR_FUSED_CONV");
+      fusedEnv != nullptr && !isVulkan) {
+    useFusedConv = fusedEnv[0] == '1';
+  }
   GraphBuilder gb{
-      .ctx = ctx,
-      .w = weights.tensors,
-      .useFusedConv = isVulkan || weights.prepacked};
+      .ctx = ctx, .w = weights.tensors, .useFusedConv = useFusedConv};
 
   // Stem.
   struct ggml_tensor* x = gb.convBnAct(

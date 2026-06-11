@@ -176,6 +176,19 @@ Pipeline::Pipeline(
     detectionDevice = detectionInfo.device;
   }
 
+  // Recognizer CPU-assist: when recognition runs on a GPU, a second CPU
+  // feature-extractor instance can steal crop chunks and compute them
+  // concurrently (the CPU is idle during the GPU compute wait). Auto-enabled
+  // on Mali/Immortalis (where GPU and CPU recognition speeds are comparable);
+  // explicit `recognizerCpuAssist` wins both ways.
+  ggml_backend_dev_t recognizerAssistDevice = nullptr;
+  if (config_.mode == PipelineMode::DOCTR && !backendInfo_.selectedIsCpu() &&
+      config_.recognizerCpuAssist.value_or(isMaliVulkan)) {
+    const auto assistInfo =
+        ocr_backend_selection::selectBackendDevice(BackendDevice::CPU);
+    recognizerAssistDevice = assistInfo.device;
+  }
+
   if (config_.mode == PipelineMode::DOCTR) {
     doctrDetector_ =
         std::make_unique<doctr::ggml::pipeline::StepDoctrDetectionGGML>(
@@ -187,7 +200,8 @@ Pipeline::Pipeline(
             doctrRecognizerBatch,
             doctr::ggml::pipeline::DecodingMethod::CTC,
             selectedDevice,
-            config_.nThreads);
+            config_.nThreads,
+            recognizerAssistDevice);
   } else {
     easyDetector_ =
         std::make_unique<easyocr::ggml::pipeline::StepDetectionInference>(

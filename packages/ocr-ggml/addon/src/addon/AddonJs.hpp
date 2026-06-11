@@ -150,6 +150,14 @@ void applyBackendDevice(
         "backendDevice must be 'cpu', 'vulkan', or 'metal'"};
   }
 
+  // Optional toggle for the DocTR recognizer CPU-assist worker. When omitted,
+  // Pipeline decides automatically (on for Mali/Immortalis Vulkan).
+  auto optCpuAssist =
+      params.getOptionalProperty<js::Boolean>(env, "recognizerCpuAssist");
+  if (optCpuAssist) {
+    config.recognizerCpuAssist = optCpuAssist->as<bool>(env);
+  }
+
   // Optional per-stage override: detection backend (DocTR). When omitted,
   // detection uses the same backend as recognition.
   auto optDetBackend =
