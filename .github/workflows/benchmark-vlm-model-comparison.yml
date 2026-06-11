@@ -540,20 +540,28 @@ jobs:
           # iPhone_17_Pro→iphone17pro) — it matches the matrix_mobile device
           # token, and same-device cpu/gpu legs merge under one host with the
           # row's device field telling them apart.
+          # `|| true`: a name with no device match must yield '' (grep exits 1 and
+          # this script runs under set -e -o pipefail), not kill the combine.
           host_of () {
             basename "$1" | grep -oE 'Galaxy_S[0-9]+|Pixel_[0-9]+|iPhone_[0-9]+(_Pro(_Max)?)?' \
-              | head -1 | tr '[:upper:]' '[:lower:]' | sed 's/galaxy_//' | tr -d '_'
+              | head -1 | tr '[:upper:]' '[:lower:]' | sed 's/galaxy_//' | tr -d '_' || true
           }
-          # Android: the device's full logcat carries the [VLMROW] markers.
+          # Android: the device's full logcat carries the [VLMROW] markers. The
+          # collect step also emits a generic platform-labelled copy
+          # (Android_logcat_full.txt) of the same log — no device in the name →
+          # host_of '' → skip it, or its rows would duplicate under a bogus host.
           for f in $(find matrix-logs -name '*logcat_full*' 2>/dev/null | sort); do
             H=$(host_of "$f")
-            ARGS="$ARGS --in ${H:-android} $f"
+            [ -z "$H" ] && continue
+            ARGS="$ARGS --in $H $f"
           done
           # iOS: no logcat — the on-device console capture (<device>_bare_console.log,
-          # extracted from Customer_Artifacts.zip) carries the markers.
+          # extracted from Customer_Artifacts.zip) carries the markers. Same
+          # generic-copy skip as Android.
           for f in $(find matrix-logs -path '*iOS*' -name '*bare_console*' 2>/dev/null | sort); do
             H=$(host_of "$f")
-            ARGS="$ARGS --in ${H:-iphone} $f"
+            [ -z "$H" ] && continue
+            ARGS="$ARGS --in $H $f"
           done
           # HW/SW provenance: desktop legs ship prov-<host>-*.md; synthesize one
           # per mobile device below (deduped per host — cpu/gpu legs share it).
@@ -566,10 +574,11 @@ jobs:
           # (model / Android / ABI from the Play-store UA line, RAM from the JS
           # totalMemory line, GPU from the Adreno-Vulkan driver load).
           for f in $(find matrix-logs -name '*logcat_full*' 2>/dev/null | sort); do
-            H=$(host_of "$f"); H=${H:-android}
+            H=$(host_of "$f")
+            [ -z "$H" ] && continue
             case "$SEEN_HOSTS" in *" $H "*) continue ;; esac
             SEEN_HOSTS="$SEEN_HOSTS$H "
-            DEVNAME=$(basename "$f" | grep -oE '(Samsung|Google)_[A-Za-z0-9_]*' | head -1 | tr '_' ' ')
+            DEVNAME=$(basename "$f" | grep -oE '(Samsung|Google)_[A-Za-z0-9_]*' | head -1 | sed 's/_logcat_full.*//' | tr '_' ' ')
             MODEL=$(grep -oE 'model=[A-Za-z0-9-]+' "$f" | head -1 | cut -d= -f2)
             ANDROID=$(grep -oE 'platformVersionRelease=[0-9]+' "$f" | head -1 | cut -d= -f2)
             ABI=$(grep -oE 'supportedAbis=[a-z0-9-]+' "$f" | head -1 | cut -d= -f2)
@@ -587,7 +596,8 @@ jobs:
           # iOS hardware provenance: the Device Farm device name is baked into
           # the extracted log's filename (<run>_<device>_bare_console.log).
           for f in $(find matrix-logs -path '*iOS*' -name '*bare_console*' 2>/dev/null | sort); do
-            H=$(host_of "$f"); H=${H:-iphone}
+            H=$(host_of "$f")
+            [ -z "$H" ] && continue
             case "$SEEN_HOSTS" in *" $H "*) continue ;; esac
             SEEN_HOSTS="$SEEN_HOSTS$H "
             DEV=$(basename "$f" | grep -oE 'Apple_[A-Za-z0-9_]*' | head -1 | sed 's/_bare_console.*//' | tr '_' ' ')
