@@ -25,33 +25,17 @@ test('DocTR warm profile [VULKAN] - cold vs warm runs', { timeout: DOCTR_TEST_TI
   const os = require('bare-os')
   // NOTE: use bare-os setEnv/unsetEnv directly — `delete process.env.X` throws
   // in strict mode (bare-env's Proxy deleteProperty trap returns undefined).
-  // Passes: default (explicit CPU conv lowering, CPU-assist recognition), then
-  // LSTM GPU/CPU split-share calibration. All passes log the fabric per-op
-  // profiler ([CPUPROF] in logcat).
+  // Confirmation profile: everything at defaults (auto-hybrid + CPU-assist
+  // recognition + LSTM split), with the fabric per-op profiler in logcat.
   os.setEnv('OCR_CPU_PROF', '1')
   try {
     await runDoctrWarmProfile(t, {
       label: ':auto',
       params: { pathDetector: detector, pathRecognizer: recognizer },
       imagePath,
-      runs: 3
-    })
-    os.setEnv('OCR_DOCTR_LSTM_SPLIT', '0.3')
-    await runDoctrWarmProfile(t, {
-      label: ':lstm30',
-      params: { pathDetector: detector, pathRecognizer: recognizer },
-      imagePath,
-      runs: 2
-    })
-    os.setEnv('OCR_DOCTR_LSTM_SPLIT', '0.45')
-    await runDoctrWarmProfile(t, {
-      label: ':lstm45',
-      params: { pathDetector: detector, pathRecognizer: recognizer },
-      imagePath,
-      runs: 2
+      runs: 5
     })
   } finally {
     os.unsetEnv('OCR_CPU_PROF')
-    os.unsetEnv('OCR_DOCTR_LSTM_SPLIT')
   }
 })

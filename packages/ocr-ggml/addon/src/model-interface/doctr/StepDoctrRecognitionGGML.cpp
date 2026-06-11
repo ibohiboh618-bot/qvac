@@ -1844,16 +1844,19 @@ StepDoctrRecognitionGGML::Output StepDoctrRecognitionGGML::process(
   double profLstmCpuMs = 0.0;
   double profDecodeMs = 0.0;
   if (decodeCount > 0 && std::getenv("OCR_DOCTR_LSTM_CPU") == nullptr) {
-    // Optional GPU/CPU split of the LSTM tail (crops are independent): the
-    // assist backend computes the last `lstmCpuShare` fraction concurrently
-    // with the primary backend. OCR_DOCTR_LSTM_SPLIT sets the CPU share
-    // (0..0.9); 0/unset = all on the primary backend.
+    // GPU/CPU split of the LSTM tail (crops are independent): the assist
+    // backend computes the last `share` fraction concurrently with the
+    // primary backend. Default 0.4 when the assist exists — calibrated on
+    // Pixel 9 Pro (Mali-G715), where the two LSTM rates are nearly equal
+    // (share 0.45: GPU 171ms || CPU 169ms, vs 242ms GPU-only).
+    // OCR_DOCTR_LSTM_SPLIT overrides (0..0.9; 0 disables).
     int lstmCpuCount = 0;
     if (assistImpl_) {
+      double share = 0.4;
       if (const char* shareEnv = std::getenv("OCR_DOCTR_LSTM_SPLIT")) {
-        const double share = std::clamp(std::atof(shareEnv), 0.0, 0.9);
-        lstmCpuCount = static_cast<int>(decodeCount * share);
+        share = std::clamp(std::atof(shareEnv), 0.0, 0.9);
       }
+      lstmCpuCount = static_cast<int>(decodeCount * share);
     }
     const int lstmGpuCount = decodeCount - lstmCpuCount;
     const size_t logitStride =
