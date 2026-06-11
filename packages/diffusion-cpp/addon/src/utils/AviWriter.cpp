@@ -72,10 +72,7 @@ extern "C" void jpegSinkWriteCb(void* context, void* data, int size) {
 // ---------------------------------------------------------------------------
 
 std::vector<uint8_t> encodeFramesToAvi(
-    const sd_image_t* frames,
-    int numFrames,
-    int fps,
-    int jpegQuality,
+    const sd_image_t* frames, int numFrames, int fps, int jpegQuality,
     const sd_audio_t* audio) {
   // -- Input validation ------------------------------------------------------
   if (!frames) {
@@ -218,10 +215,10 @@ std::vector<uint8_t> encodeFramesToAvi(
   // Audio adds one strl (+102 bytes of header) and a single 01wb data chunk
   // plus its idx1 entry. Fold it into the estimate so the 4 GB pre-check and
   // the reserve both account for it.
-  const size_t audioOverhead =
-      hasAudio ? (static_cast<size_t>(audioByteSize) + 102 + kChunkOverhead +
-                  16 /*idx1 entry*/)
-               : 0;
+  const size_t audioOverhead = hasAudio
+                                   ? (static_cast<size_t>(audioByteSize) + 102 +
+                                      kChunkOverhead + 16 /*idx1 entry*/)
+                                   : 0;
   const size_t estimated =
       kHeaderBytes + framesSz * perFrameWithOverhead + audioOverhead;
   // AVI 1.0 stores RIFF/LIST sizes as uint32 -- anything past 4 GB cannot
@@ -310,7 +307,7 @@ std::vector<uint8_t> encodeFramesToAvi(
 
   // -- Audio stream descriptor (LIST strl: strh 'auds' + strf WAVEFORMATEX) --
   if (hasAudio) {
-    const uint32_t blockAlign = audioChannels * 4u;       // bytes per frame
+    const uint32_t blockAlign = audioChannels * 4u; // bytes per frame
     const uint32_t avgBytesPerSec = audioSampleRate * blockAlign;
 
     // LIST strl (size = 4 "strl" + (8+56) strh + (8+18) strf = 94)
@@ -321,29 +318,29 @@ std::vector<uint8_t> encodeFramesToAvi(
     // strh (stream header, 56 bytes) -- same field layout as the video strh
     appendFourCC(out, "strh");
     appendU32LE(out, 56);
-    appendFourCC(out, "auds");                  // stream type: audio
-    appendU32LE(out, 0);                        // fccHandler (0 for PCM)
-    appendU32LE(out, 0);                        // flags
-    appendU16LE(out, 0);                        // priority
-    appendU16LE(out, 0);                        // language
-    appendU32LE(out, 0);                        // initial frames
-    appendU32LE(out, 1);                        // scale
-    appendU32LE(out, audioSampleRate);          // rate (rate/scale = Hz)
-    appendU32LE(out, 0);                        // start
+    appendFourCC(out, "auds");         // stream type: audio
+    appendU32LE(out, 0);               // fccHandler (0 for PCM)
+    appendU32LE(out, 0);               // flags
+    appendU16LE(out, 0);               // priority
+    appendU16LE(out, 0);               // language
+    appendU32LE(out, 0);               // initial frames
+    appendU32LE(out, 1);               // scale
+    appendU32LE(out, audioSampleRate); // rate (rate/scale = Hz)
+    appendU32LE(out, 0);               // start
     appendU32LE(
         out, static_cast<uint32_t>(audioSampleCount)); // length (sample frames)
-    appendU32LE(out, audioByteSize);            // suggested buffer size
-    appendU32LE(out, 0xFFFFFFFFu);              // quality (-1 default)
-    appendU32LE(out, blockAlign);               // sample size (block align)
-    appendU16LE(out, 0);                        // rcFrame.left
-    appendU16LE(out, 0);                        // rcFrame.top
-    appendU16LE(out, 0);                        // rcFrame.right
-    appendU16LE(out, 0);                        // rcFrame.bottom
+    appendU32LE(out, audioByteSize);                   // suggested buffer size
+    appendU32LE(out, 0xFFFFFFFFu);                     // quality (-1 default)
+    appendU32LE(out, blockAlign); // sample size (block align)
+    appendU16LE(out, 0);          // rcFrame.left
+    appendU16LE(out, 0);          // rcFrame.top
+    appendU16LE(out, 0);          // rcFrame.right
+    appendU16LE(out, 0);          // rcFrame.bottom
 
     // strf (WAVEFORMATEX, 18 bytes) -- IEEE float, cbSize = 0
     appendFourCC(out, "strf");
     appendU32LE(out, 18);
-    appendU16LE(out, 0x0003);                            // WAVE_FORMAT_IEEE_FLOAT
+    appendU16LE(out, 0x0003); // WAVE_FORMAT_IEEE_FLOAT
     appendU16LE(out, static_cast<uint16_t>(audioChannels));
     appendU32LE(out, audioSampleRate);                   // nSamplesPerSec
     appendU32LE(out, avgBytesPerSec);                    // nAvgBytesPerSec
@@ -445,8 +442,7 @@ std::vector<uint8_t> encodeFramesToAvi(
   // -- Write idx1 index ------------------------------------------------------
   appendFourCC(out, "idx1");
   appendU32LE(
-      out,
-      (static_cast<uint32_t>(numFrames) + (hasAudio ? 1u : 0u)) * 16);
+      out, (static_cast<uint32_t>(numFrames) + (hasAudio ? 1u : 0u)) * 16);
   for (const auto& entry : index) {
     appendFourCC(out, "00dc");
     appendU32LE(out, 0x10); // AVIIF_KEYFRAME

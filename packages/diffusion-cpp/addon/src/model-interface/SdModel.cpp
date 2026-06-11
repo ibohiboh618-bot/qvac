@@ -203,8 +203,7 @@ void SdModel::load() {
   params.taesd_path = optPath(config_.taesdPath);
   // LTX-2 (LTXAV) extras. Null for every non-LTX model.
   params.audio_vae_path = optPath(config_.audioVaePath);
-  params.embeddings_connectors_path =
-      optPath(config_.embeddingsConnectorsPath);
+  params.embeddings_connectors_path = optPath(config_.embeddingsConnectorsPath);
 
   // -- Compute ----------------------------------------------------------------
   params.n_threads = config_.nThreads;
@@ -971,8 +970,7 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
 
   if (!genOk)
     throw StatusError(
-        general_error::InternalError,
-        "processVideo: generate_video() failed");
+        general_error::InternalError, "processVideo: generate_video() failed");
 
   if (frames.empty())
     throw StatusError(
@@ -1040,8 +1038,7 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
   // LTX-2 audio: 0/1 flag + sample rate (0 when no audio track was produced).
   lastStats_.emplace_back("hasAudio", audio ? 1 : 0);
   lastStats_.emplace_back(
-      "audioSampleRate",
-      audio ? static_cast<int64_t>(audio->sample_rate) : 0);
+      "audioSampleRate", audio ? static_cast<int64_t>(audio->sample_rate) : 0);
 
   return std::any{};
 }

@@ -55,10 +55,7 @@ namespace qvac_lib_inference_addon_sd {
  *         1.0 uint32 size fields).
  */
 std::vector<uint8_t> encodeFramesToAvi(
-    const sd_image_t* frames,
-    int numFrames,
-    int fps,
-    int jpegQuality = 90,
+    const sd_image_t* frames, int numFrames, int fps, int jpegQuality = 90,
     const sd_audio_t* audio = nullptr);
 
 } // namespace qvac_lib_inference_addon_sd
