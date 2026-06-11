@@ -354,7 +354,9 @@ jobs:
               echo "- cpu: $(sysctl -n machdep.cpu.brand_string 2>/dev/null) ($(sysctl -n hw.ncpu 2>/dev/null) cores)"
               echo "- ram: $(awk -v b="$(sysctl -n hw.memsize 2>/dev/null)" 'BEGIN{ if (b>0) printf "%.0f GB", b/1073741824; else printf "?" }')"
               if [ "${{ matrix.backend }}" = "gpu" ]; then
-                echo "- gpu: $(system_profiler SPDisplaysDataType 2>/dev/null | sed -n 's/^ *Chipset Model: //p' | head -1 || echo '?') (Metal)"
+                # system_profiler reports no chipset on the virtualized runner GPU
+                GPU_NAME=$(system_profiler SPDisplaysDataType 2>/dev/null | sed -n 's/^ *Chipset Model: //p' | head -1)
+                echo "- gpu: ${GPU_NAME:-Apple virtualized} (Metal)"
               fi
             else
               echo "- os: $(. /etc/os-release 2>/dev/null; echo "$PRETTY_NAME") $(uname -m)"
@@ -404,6 +406,9 @@ jobs:
       fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
       # Samsung S25 (Android) only — the benchmark targets the S25 device pool; skip iOS.
       platforms: Android
+      # One run on the S25 only (no Pixel sibling): a second device adds Device Farm
+      # queue/concurrency contention and its results aren't surfaced anyway.
+      scheduling_mode: single-flagship
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
@@ -412,9 +417,11 @@ jobs:
 
   # ── Matrix mode: iPhone (AWS Device Farm) ──────────────────────────
   # Same bootstrap as matrix-s25, but on the iOS leg of the reusable mobile
-  # workflow (iOS device pool). On iOS there is no logcat — the on-device
-  # console capture (bare_console.log inside Customer_Artifacts.zip) carries
-  # the [VLMROW] markers and is uploaded as console-logs-…-iOS.
+  # workflow, scheduled on a single iPhone 17 via device filter (the full iOS
+  # pool fans out to extra devices that can sit in the Device Farm queue past
+  # this job's ceiling). On iOS there is no logcat — the on-device console
+  # capture (bare_console.log inside Customer_Artifacts.zip) carries the
+  # [VLMROW] markers and is uploaded as console-logs-…-iOS.
   matrix-iphone:
     needs: context
     # iPhone runs the addon only; several-sources (native CLIs) is Linux-only.
@@ -427,6 +434,7 @@ jobs:
       pre_build_script: benchmarks/vlm-benchmark/stage.cjs
       fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
       platforms: iOS
+      scheduling_mode: single-flagship
       qvac_perf_only: false
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
 

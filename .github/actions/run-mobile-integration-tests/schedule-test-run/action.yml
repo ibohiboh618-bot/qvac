@@ -20,6 +20,12 @@ description: |
        iPhone 17 (iOS). Used by Whisper, NMT, TTS, Diffusion, Parakeet,
        Decoder.
 
+  4. Single-flagship (test-specs has 1 entry AND scheduling-mode=single-flagship):
+       Schedule ONE run on ONE flagship device via filter — the Samsung S25
+       Ultra (Android) / iPhone 17 (iOS) half of dual-flagship. Used by the
+       VLM benchmark: a second device only adds Device Farm queue/concurrency
+       contention and can outwait the caller's job ceiling.
+
 inputs:
   platform:
     description: "Android | iOS"
@@ -47,7 +53,7 @@ inputs:
       Length 1 => default mode (single spec), length >1 => sharded mode.
     required: true
   scheduling-mode:
-    description: "dual-flagship | single-pool (only honored when test-specs has 1 entry)"
+    description: "dual-flagship | single-pool | single-flagship (only honored when test-specs has 1 entry)"
     required: false
     default: "dual-flagship"
   job-timeout-minutes:
@@ -153,6 +159,19 @@ runs:
           fi
           SPEC_ARN=$(echo "$TEST_SPECS_JSON" | jq -r '.[0].arn')
           RUN_ARN=$(schedule_run_with_pool "$POOL_ARN" "$RUN_NAME_BASE" "$SPEC_ARN")
+          echo "  $RUN_NAME_BASE -> $RUN_ARN"
+          RUN_ARNS_JSON=$(echo "$RUN_ARNS_JSON" | jq --arg arn "$RUN_ARN" '. + [$arn]')
+        elif [ "$SCHEDULING_MODE" = "single-flagship" ]; then
+          # One run on one flagship device (the S25-Ultra / iPhone-17 half of
+          # dual-flagship below).
+          SPEC_ARN=$(echo "$TEST_SPECS_JSON" | jq -r '.[0].arn')
+          if [ "$PLATFORM" = "Android" ]; then
+            FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Samsung"]},{"attribute":"MODEL","operator":"CONTAINS","values":["S25 Ultra"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["ANDROID"]}],"maxDevices":1}'
+            RUN_ARN=$(schedule_run_with_filter "${RUN_NAME_BASE}-Samsung" "$FILTER" "$SPEC_ARN")
+          else
+            FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Apple"]},{"attribute":"MODEL","operator":"CONTAINS","values":["iPhone 17"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["IOS"]}],"maxDevices":1}'
+            RUN_ARN=$(schedule_run_with_filter "${RUN_NAME_BASE}-iPhone17" "$FILTER" "$SPEC_ARN")
+          fi
           echo "  $RUN_NAME_BASE -> $RUN_ARN"
           RUN_ARNS_JSON=$(echo "$RUN_ARNS_JSON" | jq --arg arn "$RUN_ARN" '. + [$arn]')
         else

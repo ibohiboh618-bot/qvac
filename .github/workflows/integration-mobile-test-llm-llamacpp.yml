@@ -56,6 +56,11 @@ on:
         type: string
         required: false
         default: ""
+      scheduling_mode:
+        description: "Optional single-spec Device Farm scheduling mode: dual-flagship | single-pool | single-flagship. Default '' = dual-flagship (unchanged for existing callers)."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -221,6 +226,7 @@ jobs:
           device-farm-project-arn: ${{ secrets.LLM_AWS_DEVICE_FARM_PROJECT_ARN }}
           android-device-pool-arn: ${{ secrets.LLM_ANDROID_DEVICE_POOL_ARN }}
           ios-device-pool-arn: ${{ secrets.LLM_IOS_DEVICE_POOL_ARN }}
+          scheduling-mode: ${{ inputs.scheduling_mode || 'dual-flagship' }}
           app-upload-arn: ${{ steps.upload.outputs.app-upload-arn }}
           test-package-upload-arn: ${{ steps.upload.outputs.test-package-upload-arn }}
           test-specs: ${{ steps.upload.outputs.test-specs }}
