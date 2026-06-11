@@ -1,7 +1,10 @@
 #include "Pipeline.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include <opencv2/imgcodecs.hpp>
@@ -137,10 +140,39 @@ Pipeline::Pipeline(
   // Per-stage backend: the detector may run on a different backend than the
   // recognizer (e.g. CPU detection + Vulkan recognition on Mali). Defaults to
   // the same resolved device as recognition.
+  //
+  // Auto-hybrid on Mali: the DBNet detector's many conv2d dispatches carry
+  // ~3.4s of Vulkan GPU-side overhead on Mali-G715 (measured: only ~236ms is
+  // real compute), while CPU detection is ~1.5s. Other GPUs (NVIDIA / Intel /
+  // PowerVR / Apple) run Vulkan detection fast, so this is scoped to Mali by
+  // device description. An explicit `detectionBackendDevice` always wins; set
+  // it to 'vulkan' to force full-Vulkan detection on Mali too.
+  auto containsCaseInsensitive = [](const std::string& haystack,
+                                    const std::string& needle) {
+    auto it = std::search(
+        haystack.begin(),
+        haystack.end(),
+        needle.begin(),
+        needle.end(),
+        [](char a, char b) {
+          return std::tolower(static_cast<unsigned char>(a)) ==
+                 std::tolower(static_cast<unsigned char>(b));
+        });
+    return it != haystack.end();
+  };
+  const bool isMaliVulkan =
+      selectedIsVulkan &&
+      (containsCaseInsensitive(backendInfo_.backendDescription, "mali") ||
+       containsCaseInsensitive(backendInfo_.backendDescription, "immortalis"));
+
   ggml_backend_dev_t detectionDevice = selectedDevice;
   if (config_.detectionBackendDevice.has_value()) {
     const auto detectionInfo = ocr_backend_selection::selectBackendDevice(
         *config_.detectionBackendDevice, config_.gpuDevice);
+    detectionDevice = detectionInfo.device;
+  } else if (config_.mode == PipelineMode::DOCTR && isMaliVulkan) {
+    const auto detectionInfo =
+        ocr_backend_selection::selectBackendDevice(BackendDevice::CPU);
     detectionDevice = detectionInfo.device;
   }
 

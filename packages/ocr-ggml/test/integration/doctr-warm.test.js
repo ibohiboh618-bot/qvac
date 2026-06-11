@@ -22,22 +22,23 @@ test('DocTR warm profile [VULKAN] - cold vs warm runs', { timeout: DOCTR_TEST_TI
     return
   }
   const imagePath = getImagePath('/test/images/clinical_chemistry.png')
-  // Hybrid FIRST (the key result): detection on CPU (Mali Vulkan conv-dispatch
-  // overhead is ~3.4s), recognition on Vulkan. Expected fastest on Mali (~2.5s).
+  // AUTO: plain backendDevice:'vulkan' with no per-stage override. On Mali the
+  // pipeline should auto-route detection to CPU (det ~1.5s); on other GPUs it
+  // stays full-Vulkan. This is what the normal benchmark exercises.
   await runDoctrWarmProfile(t, {
-    label: ':hybrid',
-    params: {
-      pathDetector: detector,
-      pathRecognizer: recognizer,
-      detectionBackendDevice: 'cpu'
-    },
+    label: ':auto',
+    params: { pathDetector: detector, pathRecognizer: recognizer },
     imagePath,
     runs: 3
   })
-  // Full Vulkan (detection + recognition on Vulkan), for comparison.
+  // Forced full-Vulkan detection (override the auto-hybrid), for comparison.
   await runDoctrWarmProfile(t, {
-    label: ':vulkan',
-    params: { pathDetector: detector, pathRecognizer: recognizer },
+    label: ':fullvk',
+    params: {
+      pathDetector: detector,
+      pathRecognizer: recognizer,
+      detectionBackendDevice: 'vulkan'
+    },
     imagePath,
     runs: 3
   })
