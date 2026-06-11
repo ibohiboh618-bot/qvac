@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -170,6 +171,28 @@ struct GraphBuilder {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
   const std::unordered_map<std::string, struct ggml_tensor*>& w;
 
+  // When true, regular (non-depthwise) convs use the fused GGML_OP_CONV_2D
+  // kernel (`ggml_conv_2d_direct`) instead of im2col + mul_mat. The fused path
+  // avoids materialising the (often huge) im2col buffer and tiles over conv
+  // shapes, so it is much faster on bandwidth-bound GPUs and on convs with a
+  // small output-channel count (where the im2col matmul wastes most of its
+  // tile). It is enabled only on Vulkan: on Metal the tuned GEMM makes
+  // im2col + mul_mat ~2x faster than the fused kernel (measured).
+  bool useFusedConv = false;
+
+  /// Conv2d that picks the fused kernel on Vulkan and im2col + mul_mat
+  /// elsewhere. Args mirror ggml_conv_2d.
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+  struct ggml_tensor* conv2d(
+      struct ggml_tensor* kernelT, struct ggml_tensor* x, int stride,
+      int pad) const {
+    if (useFusedConv) {
+      return ggml_conv_2d_direct(
+          ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+    }
+    return ggml_conv_2d(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+  }
+
   [[nodiscard]] struct ggml_tensor* t(const std::string& name) const {
     auto it = w.find(name);
     if (it == w.end()) {
@@ -192,11 +215,10 @@ struct GraphBuilder {
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
-    // NOTE: ggml_conv_2d_direct (fused GGML_OP_CONV_2D) measured ~2x SLOWER
-    // than im2col + mul_mat on Metal — the matmul path rides the tuned GEMM
-    // kernel.
-    struct ggml_tensor* conv =
-        ggml_conv_2d(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+    // Fused GGML_OP_CONV_2D on Vulkan (no im2col buffer; conv-shaped tiling),
+    // im2col + mul_mat elsewhere — see GraphBuilder::conv2d. The fused kernel
+    // measured ~2x slower than the tuned GEMM on Metal, so it stays Vulkan-only.
+    struct ggml_tensor* conv = conv2d(kernelT, x, stride, pad);
     // BN scale folded into the conv weights at load time; `.shift` carries the
     // combined (conv bias + BN shift) offset. One add instead of add+mul+add.
     conv = ggml_add(ctx, conv, t(bnPrefix + ".shift"));
@@ -302,8 +324,8 @@ struct GraphBuilder {
     struct ggml_tensor* wt = ggml_cont(ctx, ggml_transpose(ctx, wr)); // [IC,P]
     struct ggml_tensor* w1 = ggml_reshape_4d(ctx, wt, 1, 1, ic, p);
 
-    // 1x1 conv: [W, H, IC] -> [W, H, P].
-    struct ggml_tensor* conv = ggml_conv_2d(ctx, w1, input, 1, 1, 0, 0, 1, 1);
+    // 1x1 conv: [W, H, IC] -> [W, H, P]. Fused on Vulkan (see conv2d).
+    struct ggml_tensor* conv = conv2d(w1, input, /*stride=*/1, /*pad=*/0);
 
     const int64_t cw = conv->ne[0];
     const int64_t ch = conv->ne[1];
@@ -1100,7 +1122,21 @@ ComputeGraph buildGraph(
   cg.input = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, inputW, inputH, 3, 1);
   ggml_set_name(cg.input, "input");
 
-  GraphBuilder gb{.ctx = ctx, .w = weights.tensors};
+  // Detect Vulkan to pick the fused conv path (much faster there; see
+  // GraphBuilder::conv2d). The compute backend is backends[0].
+  bool isVulkan = false;
+  if (!backends.empty() && backends[0] != nullptr) {
+    const char* backendName = ggml_backend_name(backends[0]);
+    if (backendName != nullptr) {
+      std::string lower(backendName);
+      std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
+      isVulkan = lower.find("vulkan") != std::string::npos;
+    }
+  }
+
+  GraphBuilder gb{.ctx = ctx, .w = weights.tensors, .useFusedConv = isVulkan};
 
   // Stem.
   struct ggml_tensor* x = gb.convBnAct(
