@@ -996,8 +996,46 @@ async function runDoctrComparison (t, cfg) {
   return pass2
 }
 
+/**
+ * Warm-vs-cold profiler: loads ONE OcrGgml (Vulkan) instance and runs the same
+ * image N times, logging each run's detection/recognition/total. Run 0 is cold
+ * (includes Vulkan pipeline/shader compilation); later runs are warm
+ * steady-state. Separates one-time cold-start cost from real inference.
+ */
+async function runDoctrWarmProfile (t, cfg) {
+  const { OcrGgml } = require('../..')
+  const { params = {}, imagePath, runs = 4 } = cfg
+  const ocrGgml = new OcrGgml({
+    params: {
+      langList: ['en'],
+      pipelineType: 'doctr',
+      nThreads: 4,
+      backendDevice: 'vulkan',
+      ...params
+    },
+    opts: { stats: true }
+  })
+  await ocrGgml.load()
+  const info = typeof ocrGgml.getBackendInfo === 'function' ? ocrGgml.getBackendInfo() : null
+  console.log('[WARM] backend=' + JSON.stringify(info))
+  try {
+    for (let i = 0; i < runs; i++) {
+      const response = await ocrGgml.run({ path: imagePath, options: { paragraph: false } })
+      let boxes = 0
+      await response.onUpdate(o => { boxes = Array.isArray(o) ? o.length : 0 }).onError(() => {}).await()
+      const s = response.stats || {}
+      const ms = (v) => ((v || 0) * 1000).toFixed(0)
+      console.log(`[WARM] run ${i} gpu=${s.backendIsGpu} boxes=${boxes} total=${ms(s.totalTime)}ms det=${ms(s.detectionTime)}ms rec=${ms(s.recognitionTime)}ms`)
+    }
+    t.pass('warm profile complete')
+  } finally {
+    await safeUnload(ocrGgml)
+  }
+}
+
 module.exports = {
   isMobile,
+  runDoctrWarmProfile,
   isWindows,
   platform,
   PERF_RUNS,
