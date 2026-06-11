@@ -59,6 +59,8 @@ So: **the GPU genuinely spends ~3.6 s executing the detector command buffer, but
 | Pipeline recompilation per call | code review | cached by conv config; not recompiled |
 | CPU command recording | `GCPROF` | 2 ms |
 | Op-fusion (conv + bias-add + activation) | `FUSION_PROBE`: skip bias-add + activation | **no change** (~50 ms) → **fusion would NOT help** |
+| CPU-detection: more threads | hybrid nThreads 4 vs 8 | 8 is *worse* (det 2.9s vs 1.5s; A520 efficiency cores) |
+| CPU-detection: KleidiAI GEMM | enabled `kleidiai` feature, rebuilt CPU backend | **no change** (det ~1.47s) — detector is f16; KleidiAI's i8mm path needs int8, and conv cost is im2col/memory not GEMM ALU |
 
 **Conclusion:** the residual ~3.4 s is intrinsic to Mali executing the detector's conv2d dispatches and is not addressable via barriers, submission strategy, op fusion, or pipeline caching. `shader_core_count` is `0` on Mali (ARM falls through to the placeholder), so conv tile selection is also untuned — but since measured conv *compute* is only 236 ms, tile tuning is a long shot for a 3.4 s gap.
 
@@ -131,7 +133,7 @@ would bring cold ≈ warm.
 1. **Hybrid landed, auto-on-Mali, validated (~2.75 s warm on real Mali).**
    - `detectionBackendDevice` param + **auto-policy**: a plain `backendDevice:'vulkan'` request on a Mali/Immortalis GPU auto-routes DocTR detection to CPU and keeps recognition on Vulkan; other GPUs stay full-Vulkan; explicit override wins. Validated: `[WARM:auto] det 1506ms (CPU) + rec 1221ms (Vulkan) = ~2.75s, boxes=197`; `[WARM:fullvk] = ~5.1s`. The normal benchmark now reflects this automatically on Mali.
    - **nThreads:** tested 4 vs 8 for CPU detection — 8 is *worse* (det 2.9s vs 1.5s; the extra cores are slow A520 efficiency cores). 4 (the X4 + A720 cluster) is optimal.
-   - To reach 2.0 s from here: (a) faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) to shave the ~1.5 s detection half; (b) persistent `VkPipelineCache` / load-time warm-up to remove the ~860 ms recognizer cold-start (helps first-inference, not warm).
+   - To reach 2.0 s from here the CPU-detection half (~1.5 s) must drop ~2×. Tried and ruled out: more threads (worse), KleidiAI (no-op for f16). Remaining options are larger changes: **int8-quantize the detector** (then KleidiAI i8mm + half the memory traffic — needs a quantized `.gguf` + accuracy check) or **NHWC convs** (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`). Persistent `VkPipelineCache` / load-time warm-up would remove the ~860 ms recognizer cold-start (helps first inference, not warm).
 2. **Full-Vulkan 2 s is blocked** on a Mali GPU characteristic (per-conv-dispatch overhead, ~9 ms × the heavy convs, invisible to the per-op profiler). Realistic only via deep Mali-driver-level work or upstream Mali ggml-vulkan support — low odds, large effort.
 3. To shave the hybrid toward 2.0 s: faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) and/or further recognizer batching.
 
