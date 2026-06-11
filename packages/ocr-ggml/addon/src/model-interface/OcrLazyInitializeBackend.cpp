@@ -150,7 +150,7 @@ static void installCallbacksInBackendSos() {
 bool OcrLazyInitializeBackend::initialize(const std::string& backendsDir) {
   std::lock_guard<std::mutex> lock(g_initMutex);
 
-#ifdef OCR_VK_PROFILE
+#if defined(OCR_VK_PROFILE) && !defined(_WIN32)
   // Force-enable the ggml-vulkan per-op profiler before any backend device is
   // created (the flag is read at device init via getenv). Per-op timings are
   // emitted at GGML_LOG_LEVEL_DEBUG and routed to logcat by ocrGgmlLogCallback.
