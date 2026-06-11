@@ -51,7 +51,8 @@ Every leg is a dispatch token — pick any combination per run, e.g.
 | token | runner | GPU backend |
 |---|---|---|
 | `linux-cpu` / `linux-gpu` | `qvac-ubuntu2204-x64` / `qvac-ubuntu2404-x64-gpu` | Vulkan |
-| `macos-cpu` / `macos-gpu` | `macos-15-xlarge` (Apple Silicon) | Metal |
+| `macos-cpu` / `macos-gpu` | `macos-15-xlarge` (GitHub-hosted Apple Silicon VM) | Metal |
+| `macmini-cpu` / `macmini-gpu` | `mac-mini-m4-gpu` (self-hosted bare-metal M4) | Metal |
 | `windows-cpu` / `windows-gpu` | `qvac-win25-x64` / `qvac-win25-x64-gpu` | Vulkan |
 
 **Mobile (AWS Device Farm)** — `matrix_mobile`, tokens `<device>[-<backend>]`;
@@ -197,8 +198,8 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
      Keep mobile light (`base` or below); `full` risks the Device Farm session window.
 
 **5. Desktop platforms × backends.**
-   - Dispatch: `-f matrix_desktop=linux-cpu,linux-gpu,macos-cpu,macos-gpu,windows-cpu,windows-gpu`
-     (any subset; gpu = Vulkan on Linux/Windows, Metal on macOS).
+   - Dispatch: `-f matrix_desktop=…` — any subset of `{linux,macos,macmini,windows}-{cpu,gpu}`
+     (gpu = Vulkan on Linux/Windows, Metal on macOS/Mac mini).
    - Config: backends per preset via `devices` (`null` = both); env `NO_GPU=true`.
 
 **6. Mobile devices × backends (AWS Device Farm).**
@@ -223,7 +224,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 | `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (every leg) |
 | `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (every leg) |
 | `matrix_engine` | `config.engine` | two-models fixed engine |
-| `matrix_desktop` | — | desktop legs: `{linux,macos,windows}-{cpu,gpu}` (any subset) |
+| `matrix_desktop` | — | desktop legs: `{linux,macos,macmini,windows}-{cpu,gpu}` (any subset) |
 | `matrix_mobile` | — | mobile legs: `{s25,pixel9,iphone16,iphone17,iphone17pro}[-{cpu,gpu}]` (any subset; empty = none; two-models only) |
 | `matrix_samples` | preset `samplesPerTask` | override samples/task, every leg (empty = default) |
 | `fabric_ref` / `upstream_ref` | — | native CLI versions (several-sources) |

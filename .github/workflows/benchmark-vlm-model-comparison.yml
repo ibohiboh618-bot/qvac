@@ -53,7 +53,7 @@ on:
         type: string
         default: "addon"
       matrix_desktop:
-        description: "  desktop legs, comma-sep <os>-<backend>: linux-cpu,linux-gpu,macos-cpu,macos-gpu,windows-cpu,windows-gpu"
+        description: "  desktop legs, comma-sep <os>-<backend>: linux-cpu,linux-gpu,macos-cpu,macos-gpu,macmini-cpu,macmini-gpu,windows-cpu,windows-gpu (macos = GitHub-hosted VM, macmini = bare-metal M4)"
         required: false
         type: string
         default: "linux-cpu,linux-gpu"
@@ -131,12 +131,16 @@ jobs:
                 # backends — gpu means Metal there, selected by the addon at runtime.
                 macos-cpu)   host=macos;   backend=cpu; runner=macos-15-xlarge;          no_gpu=true ;;
                 macos-gpu)   host=macos;   backend=gpu; runner=macos-15-xlarge;          no_gpu=false ;;
+                # Bare-metal Apple M4 (self-hosted Mac mini) — real-hardware Metal
+                # numbers vs the virtualized macos-* runner above.
+                macmini-cpu) host=macmini; backend=cpu; runner=mac-mini-m4-gpu;          no_gpu=true ;;
+                macmini-gpu) host=macmini; backend=gpu; runner=mac-mini-m4-gpu;          no_gpu=false ;;
                 # Windows x64: the self-hosted runners the LLM integration tests
                 # use (the gpu one is Vulkan-provisioned).
                 windows-cpu) host=windows; backend=cpu; runner=qvac-win25-x64;           no_gpu=true ;;
                 windows-gpu) host=windows; backend=gpu; runner=qvac-win25-x64-gpu;       no_gpu=false ;;
                 "") continue ;;
-                *) echo "::warning::Unknown matrix_desktop token '$sel' (known: {linux,macos,windows}-{cpu,gpu})"; continue ;;
+                *) echo "::warning::Unknown matrix_desktop token '$sel' (known: {linux,macos,macmini,windows}-{cpu,gpu})"; continue ;;
               esac
               cells=$(echo "$cells" | jq -c \
                 --arg h "$host" --arg b "$backend" --arg r "$runner" --arg n "$no_gpu" \
@@ -251,7 +255,7 @@ jobs:
       WORKDIR: packages/llm-llamacpp
     steps:
       - name: Manual Workspace Cleanup
-        if: startsWith(matrix.runner, 'qvac-')
+        if: runner.environment != 'github-hosted'
         shell: bash
         run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
 
@@ -302,6 +306,32 @@ jobs:
         run: |
           echo "VULKAN_SDK=/opt/vulkansdk/x86_64" >> "$GITHUB_ENV"
           echo "/opt/vulkansdk/x86_64/bin" >> "$GITHUB_PATH"
+
+      # The self-hosted mac-mini-m4-gpu runner does not ship the AWS CLI (hosted
+      # macOS runners do). Install it user-local (no sudo) so the S3 fixture
+      # sync below works. Mirrors integration-test-ocr-ggml.yml.
+      - name: Install AWS CLI (self-hosted macOS fallback)
+        if: matrix.host == 'macmini'
+        shell: bash
+        run: |
+          if command -v aws >/dev/null 2>&1; then
+            echo "AWS CLI already on PATH: $(command -v aws)"; aws --version; exit 0
+          fi
+          for p in /opt/homebrew/bin/aws /usr/local/bin/aws "$HOME/.local/aws-cli/aws"; do
+            if [ -x "$p" ]; then
+              echo "AWS CLI at $p; adding $(dirname "$p") to PATH"
+              echo "$(dirname "$p")" >> "$GITHUB_PATH"; "$p" --version; exit 0
+            fi
+          done
+          echo "Installing AWS CLI v2 user-local..."
+          curl -sSL "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o /tmp/AWSCLIV2.pkg
+          rm -rf /tmp/awscli-expanded
+          pkgutil --expand-full /tmp/AWSCLIV2.pkg /tmp/awscli-expanded
+          mkdir -p "$HOME/.local"
+          rm -rf "$HOME/.local/aws-cli"
+          mv /tmp/awscli-expanded/aws-cli.pkg/Payload/aws-cli "$HOME/.local/aws-cli"
+          rm -rf /tmp/awscli-expanded /tmp/AWSCLIV2.pkg
+          echo "$HOME/.local/aws-cli" >> "$GITHUB_PATH"
 
       # Fixture images live in S3 (not committed to git). Pull them into the benchmark's
       # images/ dir so the harness and the several-sources CLI runner read them locally.
@@ -397,7 +427,7 @@ jobs:
             echo "- addon: \`@qvac/llm-llamacpp@${ADDON_VERSION:-?}\` (published prebuild)"
             echo "- git: \`${{ needs.context.outputs.head_sha }}\` (ref \`${{ needs.context.outputs.ref }}\`)"
             echo "- node: $(node -v 2>/dev/null) · bare: $(bare --version 2>/dev/null || echo n/a)"
-            if [ "${{ matrix.host }}" = "macos" ]; then
+            if [ "${{ matrix.host }}" = "macos" ] || [ "${{ matrix.host }}" = "macmini" ]; then
               echo "- os: $(sw_vers -productName 2>/dev/null) $(sw_vers -productVersion 2>/dev/null) $(uname -m)"
               echo "- cpu: $(sysctl -n machdep.cpu.brand_string 2>/dev/null) ($(sysctl -n hw.ncpu 2>/dev/null) cores)"
               echo "- ram: $(awk -v b="$(sysctl -n hw.memsize 2>/dev/null)" 'BEGIN{ if (b>0) printf "%.0f GB", b/1073741824; else printf "?" }')"
