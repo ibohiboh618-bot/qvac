@@ -50,6 +50,12 @@ env:
 permissions:
   contents: read
 
+# Manual benchmark runs compete for scarce self-hosted GPU runners
+# (mac-mini-m4-gpu, qvac-ubuntu2404-x64-gpu); don't cancel an in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   label-gate:
     name: Authorise (label-gate)
@@ -77,11 +83,13 @@ jobs:
     needs: label-gate
     if: needs.label-gate.outputs.authorised == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     name: Resolve device matrix
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
+      platforms: ${{ steps.build.outputs.platforms }}
     steps:
       - name: Build device/backend matrix
         id: build
@@ -109,15 +117,21 @@ jobs:
                   sys.exit(1)
               rows.append(allowed[d])
           print("matrix=" + json.dumps({"include": rows}))
+          # Distinct platforms requested, so each build job runs only when its
+          # platform is actually needed (saves an expensive macOS runner, and
+          # keeps the run from failing on an unrequested platform's build).
+          print("platforms=" + ",".join(sorted({r["platform"] for r in rows})))
           PY
 
   build-linux:
-    needs: label-gate
-    if: needs.label-gate.outputs.authorised == 'true'
+    needs: [label-gate, prepare]
+    if: needs.label-gate.outputs.authorised == 'true' && contains(needs.prepare.outputs.platforms, 'linux')
     runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 120
     name: Build prebuild (linux-x64)
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -209,8 +223,8 @@ jobs:
   # runner; Metal is enabled by the addon build on darwin, so no Vulkan SDK is
   # needed for the GPU path here.
   build-darwin:
-    needs: label-gate
-    if: needs.label-gate.outputs.authorised == 'true'
+    needs: [label-gate, prepare]
+    if: needs.label-gate.outputs.authorised == 'true' && contains(needs.prepare.outputs.platforms, 'darwin')
     runs-on: macos-15
     environment: release
     timeout-minutes: 120
@@ -254,6 +268,13 @@ jobs:
 
       - name: Setup Apple Clang
         uses: tetherto/qvac/.github/actions/setup-apple-clang@6e8d3c306a462a58589396cda428d65e015f0d8b
+
+      - name: Cache npm dependencies
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # 5.0.4
+        with:
+          key: npm-ocr-ggml-darwin-${{ hashFiles('packages/ocr-ggml/package-lock.json') }}
+          path: ~/.npm
+          restore-keys: npm-ocr-ggml-darwin-
 
       - name: Install npm dependencies
         working-directory: ${{ env.PKG_DIR }}
@@ -526,6 +547,8 @@ jobs:
     needs: evaluate
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     if: always()
 
     steps:
