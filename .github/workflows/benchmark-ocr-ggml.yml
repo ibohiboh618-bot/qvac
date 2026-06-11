@@ -27,6 +27,20 @@ on:
         required: false
         default: true
         type: boolean
+      devices:
+        description: 'Comma-separated device/backend targets (linux-x64-cpu, linux-x64-gpu)'
+        required: false
+        default: 'linux-x64-cpu,linux-x64-gpu'
+        type: string
+      kernel_precision:
+        description: 'EasyOCR/CRNN conv-kernel precision (default = backend-aware; f16/f32 = forced override)'
+        required: false
+        default: 'default'
+        type: choice
+        options:
+          - default
+          - f16
+          - f32
 
 env:
   PKG_DIR: packages/ocr-ggml
@@ -58,6 +72,43 @@ jobs:
         uses: ./.github/actions/label-gate
         with:
           github-token: ${{ secrets.PAT_TOKEN }}
+
+  prepare:
+    needs: label-gate
+    if: needs.label-gate.outputs.authorised == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    name: Resolve device matrix
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - name: Build device/backend matrix
+        id: build
+        env:
+          DEVICES: ${{ inputs.devices }}
+        run: |
+          python3 << 'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+          # device -> runner + ggml backend it exercises. Only Linux x64 targets
+          # are wired here (the evaluate steps are Linux-shell specific); Windows
+          # / macOS / mobile accuracy are follow-ups.
+          allowed = {
+              "linux-x64-cpu": {"device": "linux-x64-cpu", "runner": "ubuntu-24.04", "backend": "cpu"},
+              "linux-x64-gpu": {"device": "linux-x64-gpu", "runner": "qvac-ubuntu2404-x64-gpu", "backend": "vulkan"},
+          }
+          requested = [d.strip() for d in os.environ.get("DEVICES", "").split(",") if d.strip()]
+          if not requested:
+              print("::error::no devices requested", file=sys.stderr)
+              sys.exit(1)
+          rows = []
+          for d in requested:
+              if d not in allowed:
+                  print(f"::error::unknown device '{d}' (allowed: {', '.join(allowed)})", file=sys.stderr)
+                  sys.exit(1)
+              rows.append(allowed[d])
+          print("matrix=" + json.dumps({"include": rows}))
+          PY
 
   build:
     needs: label-gate
@@ -158,16 +209,30 @@ jobs:
     needs:
       - build
       - label-gate
+      - prepare
     if: needs.label-gate.outputs.authorised == 'true' && needs.build.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     environment: release
     timeout-minutes: 180
-    name: Run Evaluation
+    name: Evaluate (${{ matrix.device }})
     permissions:
       contents: read
       id-token: write
 
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
     steps:
+      # Self-hosted GPU runners keep their workspace between jobs; wipe it before
+      # checkout so each run starts clean. No-op on GitHub-hosted runners.
+      # See docs/ci/SELF-HOSTED-RUNNERS.md.
+      - name: Manual Workspace Cleanup
+        run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
+        shell: bash
+        working-directory: .
+        if: runner.environment != 'github-hosted'
+
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
         with:
@@ -197,7 +262,11 @@ jobs:
         working-directory: ${{ env.PKG_DIR }}
         run: npm install
 
+      # GitHub-hosted runners have no GPU, so install Mesa (software Vulkan) for
+      # the CPU leg. Self-hosted GPU runners already ship a vendor Vulkan ICD
+      # (e.g. NVIDIA) and must not have it swapped for Mesa.
       - name: Install system dependencies
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers
@@ -244,6 +313,7 @@ jobs:
           ls -la benchmarks/quality_eval/data/OCRBench_v2/ | head -20
 
       - name: Free up disk space
+        if: runner.environment == 'github-hosted'
         run: |
           echo "Disk space before cleanup:"
           df -h
@@ -318,12 +388,17 @@ jobs:
             ${{ steps.eval-args.outputs.doctr_args }} \
             --task-types "full-page OCR en" \
             --dataset-filter "HierText" \
-            --results-dir "results/full-page-ocr" \
+            --results-dir "results/${{ matrix.device }}/full-page-ocr" \
+            --backend "${{ matrix.backend }}" \
             --qvac-addon-path "$(pwd)/../.." \
             ${{ steps.eval-args.outputs.skip_flag }} \
             ${{ steps.eval-args.outputs.limit_arg }}
         env:
           PYTHONUNBUFFERED: 1
+          OCR_GGML_CRAFT_KERNEL_F16: ${{ inputs.kernel_precision == 'f16' && '1' || '' }}
+          OCR_GGML_CRNN_KERNEL_F16: ${{ inputs.kernel_precision == 'f16' && '1' || '' }}
+          OCR_GGML_CRAFT_KERNEL_F32: ${{ inputs.kernel_precision == 'f32' && '1' || '' }}
+          OCR_GGML_CRNN_KERNEL_F32: ${{ inputs.kernel_precision == 'f32' && '1' || '' }}
 
       - name: Run Text Spotting benchmark (IC15)
         if: contains(inputs.tasks, 'spotting')
@@ -337,26 +412,31 @@ jobs:
             ${{ steps.eval-args.outputs.doctr_args }} \
             --task-types "text spotting en" \
             --dataset-filter "IC15" \
-            --results-dir "results/text-spotting" \
+            --results-dir "results/${{ matrix.device }}/text-spotting" \
+            --backend "${{ matrix.backend }}" \
             --qvac-addon-path "$(pwd)/../.." \
             ${{ steps.eval-args.outputs.skip_flag }} \
             ${{ steps.eval-args.outputs.limit_arg }}
         env:
           PYTHONUNBUFFERED: 1
+          OCR_GGML_CRAFT_KERNEL_F16: ${{ inputs.kernel_precision == 'f16' && '1' || '' }}
+          OCR_GGML_CRNN_KERNEL_F16: ${{ inputs.kernel_precision == 'f16' && '1' || '' }}
+          OCR_GGML_CRAFT_KERNEL_F32: ${{ inputs.kernel_precision == 'f32' && '1' || '' }}
+          OCR_GGML_CRNN_KERNEL_F32: ${{ inputs.kernel_precision == 'f32' && '1' || '' }}
 
       - name: Upload evaluation results
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         if: always()
         with:
-          name: ocr-ggml-benchmark-results
-          path: ${{ env.PKG_DIR }}/benchmarks/quality_eval/results/*
+          name: ocr-ggml-benchmark-results-${{ matrix.device }}
+          path: ${{ env.PKG_DIR }}/benchmarks/quality_eval/results
           retention-days: 30
 
       - name: Upload evaluation logs
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         if: failure()
         with:
-          name: ocr-ggml-benchmark-logs
+          name: ocr-ggml-benchmark-logs-${{ matrix.device }}
           path: |
             ${{ env.PKG_DIR }}/benchmarks/quality_eval/*.log
           retention-days: 7
@@ -372,24 +452,35 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
         continue-on-error: true
         with:
-          name: ocr-ggml-benchmark-results
+          pattern: ocr-ggml-benchmark-results-*
+          merge-multiple: true
           path: results
 
       - name: Skip summary if results are missing
         if: ${{ !hashFiles('results/**') }}
         run: |
-          echo "No ocr-ggml-benchmark-results artifact found; skipping summary."
+          echo "No ocr-ggml-benchmark-results-* artifacts found; skipping summary."
           exit 0
 
       - name: Generate results summary
+        env:
+          PIPELINE: ${{ inputs.pipeline }}
+          TASKS: ${{ inputs.tasks }}
+          LIMIT: ${{ inputs.limit }}
+          PRECISION: ${{ inputs.kernel_precision }}
         run: |
-          python3 << 'PYTHON_SCRIPT' >> $GITHUB_STEP_SUMMARY
+          python3 << 'PYTHON_SCRIPT' >> "$GITHUB_STEP_SUMMARY"
           import json
+          import os
           from pathlib import Path
 
-          def load_aggregate(results_dir, backend, task_type):
+          PIPELINE = os.environ.get("PIPELINE", "both")
+          run_easyocr = PIPELINE in ("easyocr", "both")
+          run_doctr = PIPELINE in ("doctr", "both")
+
+          def load_aggregate(base, sub, backend, task_type):
               task_dir = task_type.replace(" ", "_")
-              path = Path(results_dir) / backend / task_dir / "aggregate.json"
+              path = Path(base) / sub / backend / task_dir / "aggregate.json"
               if path.exists():
                   with open(path) as f:
                       return json.load(f)
@@ -398,116 +489,90 @@ jobs:
           def pick_winner(val_a, val_b, name_a, name_b, lower_is_better=True):
               if val_a is None or val_b is None:
                   return "N/A", "N/A", "-"
-              if lower_is_better:
-                  a_wins = val_a < val_b
-              else:
-                  a_wins = val_a > val_b
+              a_wins = (val_a < val_b) if lower_is_better else (val_a > val_b)
               a_str = f"**{val_a:.4f}**" if a_wins else f"{val_a:.4f}"
               b_str = f"**{val_b:.4f}**" if not a_wins else f"{val_b:.4f}"
-              winner = name_a if a_wins else name_b
-              return a_str, b_str, winner
+              return a_str, b_str, (name_a if a_wins else name_b)
 
-          print("# OCR GGML Benchmark Results\n")
+          def ocr_table(qv, ref, qname, rname):
+              if not (qv and ref):
+                  return
+              print(f"#### {qname} vs {rname}\n")
+              print(f"| Metric | {qname} | {rname} | Winner |")
+              print("|--------|---|---|--------|")
+              for label, key, lib in [("CER ↓", "cer", True), ("WER ↓", "wer", True), ("ANLS ↑", "anls", False)]:
+                  a = qv["metrics"].get(key, {}).get("mean")
+                  b = ref["metrics"].get(key, {}).get("mean")
+                  a_s, b_s, w = pick_winner(a, b, qname, rname, lib)
+                  print(f"| {label} | {a_s} | {b_s} | {w} |")
+              if qv.get("speed") and ref.get("speed"):
+                  qs = qv["speed"]["mean_time_per_image"]
+                  rs = ref["speed"]["mean_time_per_image"]
+                  if qs > 0 and rs > 0:
+                      winner = f"{qname} ({rs / qs:.1f}x)" if qs < rs else f"{rname} ({qs / rs:.1f}x)"
+                      print(f"| Speed | {qs:.1f}s/img | {rs:.1f}s/img | {winner} |")
+              print(f"\n*Samples: {qv['total_samples']}*\n")
+
+          def spot_table(qv, ref, qname, rname):
+              if not (qv and ref):
+                  return
+              print(f"#### {qname} vs {rname}\n")
+              print(f"| Metric | {qname} | {rname} | Winner |")
+              print("|--------|---|---|--------|")
+              for label, key, lib in [
+                  ("E2E F1 ↑", "e2e_f1", False),
+                  ("E2E Precision ↑", "e2e_precision", False),
+                  ("E2E Recall ↑", "e2e_recall", False),
+                  ("Detection F1 ↑", "det_f1", False),
+                  ("Avg CER ↓", "avg_cer", True),
+                  ("Avg ANLS ↑", "avg_anls", False),
+              ]:
+                  a = qv["metrics"].get(key, {}).get("mean")
+                  b = ref["metrics"].get(key, {}).get("mean")
+                  a_s, b_s, w = pick_winner(a, b, qname, rname, lib)
+                  print(f"| {label} | {a_s} | {b_s} | {w} |")
+              print(f"\n*Samples: {qv['total_samples']}*\n")
+
+          def summarize_device(base):
+              print("### Full-page OCR (HierText)\n")
+              for task_type in ["full-page OCR en"]:
+                  if run_easyocr:
+                      ocr_table(
+                          load_aggregate(base, "full-page-ocr", "qvac-easyocr", task_type),
+                          load_aggregate(base, "full-page-ocr", "easyocr", task_type),
+                          "QVAC EasyOCR", "EasyOCR Python")
+                  if run_doctr:
+                      ocr_table(
+                          load_aggregate(base, "full-page-ocr", "qvac-doctr", task_type),
+                          load_aggregate(base, "full-page-ocr", "doctr", task_type),
+                          "QVAC DocTR", "DocTR Python")
+              print("### Text Spotting (IC15)\n")
+              for task_type in ["text spotting en"]:
+                  if run_easyocr:
+                      spot_table(
+                          load_aggregate(base, "text-spotting", "qvac-easyocr", task_type),
+                          load_aggregate(base, "text-spotting", "easyocr", task_type),
+                          "QVAC EasyOCR", "EasyOCR Python")
+                  if run_doctr:
+                      spot_table(
+                          load_aggregate(base, "text-spotting", "qvac-doctr", task_type),
+                          load_aggregate(base, "text-spotting", "doctr", task_type),
+                          "QVAC DocTR", "DocTR Python")
+
+          print("# OCR GGML Accuracy Benchmark\n")
           print("**Configuration:**")
-          print("- Pipeline: `${{ inputs.pipeline }}`")
-          print("- Tasks: `${{ inputs.tasks }}`")
-          print("- Sample Limit: `${{ inputs.limit }}`\n")
+          print(f"- Pipeline: `{PIPELINE}`")
+          print(f"- Tasks: `{os.environ.get('TASKS', '')}`")
+          print(f"- Sample Limit: `{os.environ.get('LIMIT', '')}`")
+          print(f"- Kernel precision: `{os.environ.get('PRECISION', 'default')}`\n")
 
-          pipeline = "${{ inputs.pipeline }}"
-          run_easyocr = pipeline in ("easyocr", "both")
-          run_doctr = pipeline in ("doctr", "both")
-
-          # Full-page OCR (HierText)
-          print("## Full-page OCR (HierText)\n")
-          for task_type in ["full-page OCR en"]:
-              if run_easyocr:
-                  qvac_e = load_aggregate("results/full-page-ocr", "qvac-easyocr", task_type)
-                  easyocr = load_aggregate("results/full-page-ocr", "easyocr", task_type)
-                  if qvac_e and easyocr:
-                      print("### EasyOCR pipeline vs Python EasyOCR\n")
-                      print("| Metric | QVAC EasyOCR | EasyOCR Python | Winner |")
-                      print("|--------|-------------|----------------|--------|")
-                      for label, key, lib in [("CER ↓", "cer", True), ("WER ↓", "wer", True), ("ANLS ↑", "anls", False)]:
-                          qv = qvac_e["metrics"].get(key, {}).get("mean")
-                          ev = easyocr["metrics"].get(key, {}).get("mean")
-                          a, b, w = pick_winner(qv, ev, "QVAC EasyOCR", "EasyOCR Python", lib)
-                          print(f"| {label} | {a} | {b} | {w} |")
-                      if qvac_e.get("speed") and easyocr.get("speed"):
-                          qs = qvac_e["speed"]["mean_time_per_image"]
-                          es = easyocr["speed"]["mean_time_per_image"]
-                          speedup = es / qs if qs > 0 else 0
-                          winner = f"QVAC ({speedup:.1f}x)" if qs < es else f"EasyOCR ({1/speedup:.1f}x)"
-                          q_s = f"**{qs:.1f}s**" if qs < es else f"{qs:.1f}s"
-                          e_s = f"**{es:.1f}s**" if es < qs else f"{es:.1f}s"
-                          print(f"| Speed | {q_s}/img | {e_s}/img | {winner} |")
-                      print(f"\n*Samples: {qvac_e['total_samples']}*\n")
-
-              if run_doctr:
-                  qvac_d = load_aggregate("results/full-page-ocr", "qvac-doctr", task_type)
-                  doctr = load_aggregate("results/full-page-ocr", "doctr", task_type)
-                  if qvac_d and doctr:
-                      print("### DocTR pipeline vs python-doctr\n")
-                      print("| Metric | QVAC DocTR | DocTR Python | Winner |")
-                      print("|--------|-----------|--------------|--------|")
-                      for label, key, lib in [("CER ↓", "cer", True), ("WER ↓", "wer", True), ("ANLS ↑", "anls", False)]:
-                          qv = qvac_d["metrics"].get(key, {}).get("mean")
-                          dv = doctr["metrics"].get(key, {}).get("mean")
-                          a, b, w = pick_winner(qv, dv, "QVAC DocTR", "DocTR Python", lib)
-                          print(f"| {label} | {a} | {b} | {w} |")
-                      if qvac_d.get("speed") and doctr.get("speed"):
-                          qs = qvac_d["speed"]["mean_time_per_image"]
-                          ds = doctr["speed"]["mean_time_per_image"]
-                          speedup = ds / qs if qs > 0 else 0
-                          winner = f"QVAC ({speedup:.1f}x)" if qs < ds else f"DocTR ({1/speedup:.1f}x)"
-                          q_s = f"**{qs:.1f}s**" if qs < ds else f"{qs:.1f}s"
-                          d_s = f"**{ds:.1f}s**" if ds < qs else f"{ds:.1f}s"
-                          print(f"| Speed | {q_s}/img | {d_s}/img | {winner} |")
-                      print(f"\n*Samples: {qvac_d['total_samples']}*\n")
-
-          # Text Spotting (IC15)
-          print("## Text Spotting (IC15)\n")
-          for task_type in ["text spotting en"]:
-              if run_easyocr:
-                  qvac_e = load_aggregate("results/text-spotting", "qvac-easyocr", task_type)
-                  easyocr = load_aggregate("results/text-spotting", "easyocr", task_type)
-                  if qvac_e and easyocr:
-                      print("### EasyOCR pipeline vs Python EasyOCR\n")
-                      print("| Metric | QVAC EasyOCR | EasyOCR Python | Winner |")
-                      print("|--------|-------------|----------------|--------|")
-                      for label, key, lib in [
-                          ("E2E F1 ↑", "e2e_f1", False),
-                          ("E2E Precision ↑", "e2e_precision", False),
-                          ("E2E Recall ↑", "e2e_recall", False),
-                          ("Detection F1 ↑", "det_f1", False),
-                          ("Avg CER ↓", "avg_cer", True),
-                          ("Avg ANLS ↑", "avg_anls", False),
-                      ]:
-                          qv = qvac_e["metrics"].get(key, {}).get("mean")
-                          ev = easyocr["metrics"].get(key, {}).get("mean")
-                          a, b, w = pick_winner(qv, ev, "QVAC EasyOCR", "EasyOCR Python", lib)
-                          print(f"| {label} | {a} | {b} | {w} |")
-                      print(f"\n*Samples: {qvac_e['total_samples']}*\n")
-
-              if run_doctr:
-                  qvac_d = load_aggregate("results/text-spotting", "qvac-doctr", task_type)
-                  doctr = load_aggregate("results/text-spotting", "doctr", task_type)
-                  if qvac_d and doctr:
-                      print("### DocTR pipeline vs python-doctr\n")
-                      print("| Metric | QVAC DocTR | DocTR Python | Winner |")
-                      print("|--------|-----------|--------------|--------|")
-                      for label, key, lib in [
-                          ("E2E F1 ↑", "e2e_f1", False),
-                          ("E2E Precision ↑", "e2e_precision", False),
-                          ("E2E Recall ↑", "e2e_recall", False),
-                          ("Detection F1 ↑", "det_f1", False),
-                          ("Avg CER ↓", "avg_cer", True),
-                          ("Avg ANLS ↑", "avg_anls", False),
-                      ]:
-                          qv = qvac_d["metrics"].get(key, {}).get("mean")
-                          dv = doctr["metrics"].get(key, {}).get("mean")
-                          a, b, w = pick_winner(qv, dv, "QVAC DocTR", "DocTR Python", lib)
-                          print(f"| {label} | {a} | {b} | {w} |")
-                      print(f"\n*Samples: {qvac_d['total_samples']}*\n")
+          root = Path("results")
+          device_dirs = sorted([d for d in root.iterdir() if d.is_dir()]) if root.exists() else []
+          if not device_dirs:
+              print("_No results found._")
+          for d in device_dirs:
+              print(f"## Device: `{d.name}`\n")
+              summarize_device(str(d))
           PYTHON_SCRIPT
 
       - name: Upload consolidated results

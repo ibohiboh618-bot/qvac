@@ -27,6 +27,7 @@ class QVACOCRGgmlBackend(OCRBackend):
         bare_path: str = "bare",
         language: str = "en",
         timeout: int = 600,
+        backend_device: Optional[str] = None,
         **kwargs
     ):
         """Initialize QVAC OCR GGML backend.
@@ -39,6 +40,9 @@ class QVACOCRGgmlBackend(OCRBackend):
             bare_path: Path to the bare runtime executable
             language: Language code for OCR (e.g., 'en')
             timeout: Timeout in seconds for batch operations
+            backend_device: ggml backend device to request ('cpu' or 'vulkan').
+                When None, the addon's default backend selection applies. Vulkan
+                falls back to CPU inside the addon when no GPU is available.
             **kwargs: Additional arguments passed to parent
         """
         backend_name = f"qvac-{pipeline}"
@@ -49,6 +53,7 @@ class QVACOCRGgmlBackend(OCRBackend):
         self.bare_path = bare_path
         self.language = language
         self.timeout = timeout
+        self.backend_device = backend_device
 
         # Determine addon path
         if addon_path:
@@ -120,6 +125,8 @@ class QVACOCRGgmlBackend(OCRBackend):
                 "--recognizer", self.recognizer_path,
                 "--pipeline", self.pipeline
             ]
+            if self.backend_device:
+                cmd += ["--backend", self.backend_device]
 
             result = subprocess.run(
                 cmd,

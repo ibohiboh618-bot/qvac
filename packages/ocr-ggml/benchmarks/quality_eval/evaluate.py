@@ -487,6 +487,14 @@ def _boxes_to_serializable(boxes) -> list:
     type=click.Path(),
     help="Path to QVAC OCR GGML addon directory (default: auto-detected)"
 )
+@click.option(
+    "--backend",
+    "backend_device",
+    default="cpu",
+    type=click.Choice(["cpu", "vulkan"]),
+    help="ggml backend device for the QVAC GGML backends. 'vulkan' uses the "
+         "GPU and falls back to CPU inside the addon when none is available."
+)
 def main(
     dataset_path: str,
     pipeline: str,
@@ -501,7 +509,8 @@ def main(
     limit: int,
     gpu: bool,
     dataset_filter: Optional[str],
-    qvac_addon_path: Optional[str]
+    qvac_addon_path: Optional[str],
+    backend_device: str
 ):
     """OCR Quality Evaluation Framework for ocr-ggml.
 
@@ -549,7 +558,8 @@ def main(
                 detector_path=detector,
                 recognizer_path=recognizer,
                 pipeline="easyocr",
-                addon_path=qvac_addon_path
+                addon_path=qvac_addon_path,
+                backend_device=backend_device
             ),
             "qvac-easyocr"
         ))
@@ -564,7 +574,8 @@ def main(
                 detector_path=doctr_detector,
                 recognizer_path=doctr_recognizer,
                 pipeline="doctr",
-                addon_path=qvac_addon_path
+                addon_path=qvac_addon_path,
+                backend_device=backend_device
             ),
             "qvac-doctr"
         ))
