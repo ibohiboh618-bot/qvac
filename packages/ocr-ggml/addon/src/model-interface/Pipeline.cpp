@@ -134,10 +134,20 @@ Pipeline::Pipeline(
   const int easyRecognizerBatch =
       config_.recognizerBatchSize > 0 ? config_.recognizerBatchSize : 4;
 
+  // Per-stage backend: the detector may run on a different backend than the
+  // recognizer (e.g. CPU detection + Vulkan recognition on Mali). Defaults to
+  // the same resolved device as recognition.
+  ggml_backend_dev_t detectionDevice = selectedDevice;
+  if (config_.detectionBackendDevice.has_value()) {
+    const auto detectionInfo = ocr_backend_selection::selectBackendDevice(
+        *config_.detectionBackendDevice, config_.gpuDevice);
+    detectionDevice = detectionInfo.device;
+  }
+
   if (config_.mode == PipelineMode::DOCTR) {
     doctrDetector_ =
         std::make_unique<doctr::ggml::pipeline::StepDoctrDetectionGGML>(
-            pathDetector, config_.nThreads, selectedDevice);
+            pathDetector, config_.nThreads, detectionDevice);
 
     doctrRecognizer_ =
         std::make_unique<doctr::ggml::pipeline::StepDoctrRecognitionGGML>(

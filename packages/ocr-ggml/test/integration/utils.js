@@ -1004,7 +1004,7 @@ async function runDoctrComparison (t, cfg) {
  */
 async function runDoctrWarmProfile (t, cfg) {
   const { OcrGgml } = require('../..')
-  const { params = {}, imagePath, runs = 4 } = cfg
+  const { params = {}, imagePath, runs = 4, label = '' } = cfg
   const ocrGgml = new OcrGgml({
     params: {
       langList: ['en'],
@@ -1017,7 +1017,7 @@ async function runDoctrWarmProfile (t, cfg) {
   })
   await ocrGgml.load()
   const info = typeof ocrGgml.getBackendInfo === 'function' ? ocrGgml.getBackendInfo() : null
-  console.log('[WARM] backend=' + JSON.stringify(info))
+  console.log(`[WARM${label}] backend=` + JSON.stringify(info))
   try {
     for (let i = 0; i < runs; i++) {
       const response = await ocrGgml.run({ path: imagePath, options: { paragraph: false } })
@@ -1025,7 +1025,7 @@ async function runDoctrWarmProfile (t, cfg) {
       await response.onUpdate(o => { boxes = Array.isArray(o) ? o.length : 0 }).onError(() => {}).await()
       const s = response.stats || {}
       const ms = (v) => ((v || 0) * 1000).toFixed(0)
-      console.log(`[WARM] run ${i} gpu=${s.backendIsGpu} boxes=${boxes} total=${ms(s.totalTime)}ms det=${ms(s.detectionTime)}ms rec=${ms(s.recognitionTime)}ms`)
+      console.log(`[WARM${label}] run ${i} gpu=${s.backendIsGpu} boxes=${boxes} total=${ms(s.totalTime)}ms det=${ms(s.detectionTime)}ms rec=${ms(s.recognitionTime)}ms`)
     }
     t.pass('warm profile complete')
   } finally {

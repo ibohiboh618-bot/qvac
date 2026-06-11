@@ -91,6 +91,13 @@ struct OcrConfig {
   // the pipeline falls back to CPU (see `OcrBackendSelection`). Ignored for the
   // CPU backend.
   std::optional<int> gpuDevice;
+  // Optional per-stage backend override for the DocTR detector (mapped from
+  // `params.detectionBackendDevice`). When set, detection runs on this backend
+  // while recognition uses `backendDevice`. Motivation: on Mali-G715 the DBNet
+  // detector's many conv2d dispatches carry ~3.4s of Vulkan GPU-side overhead
+  // (measured), while CPU detection is ~1.3s; running detection on CPU and
+  // recognition on Vulkan ("hybrid") is the fastest config on that device.
+  std::optional<BackendDevice> detectionBackendDevice;
 };
 // NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 

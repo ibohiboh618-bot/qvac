@@ -70,6 +70,15 @@ export interface OcrGgmlParams {
    */
   backendDevice?: 'cpu' | 'vulkan' | 'metal'
   /**
+   * Optional per-stage backend override for the DocTR detector. When set,
+   * detection runs on this backend while recognition uses `backendDevice`.
+   * Use case: on mobile GPUs where the detector's many conv2d dispatches are
+   * pathologically slow on Vulkan (e.g. Mali-G715, ~3.4s of GPU-side overhead),
+   * `detectionBackendDevice: 'cpu'` with `backendDevice: 'vulkan'` ("hybrid")
+   * runs detection on CPU (~1.3s) and recognition on Vulkan (~1.2s). DocTR only.
+   */
+  detectionBackendDevice?: 'cpu' | 'vulkan' | 'metal'
+  /**
    * Explicit GPU device selection for `'vulkan'` / `'metal'`. 0-based index
    * into the GPU/iGPU devices that match the requested backend, in ggml
    * enumeration order (the resolved index is reported as

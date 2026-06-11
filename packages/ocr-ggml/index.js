@@ -153,6 +153,7 @@ class OcrGgml {
       'nThreads',
       'pipelineType',
       'backendDevice',
+      'detectionBackendDevice',
       'gpuDevice'
     ]
     for (const field of optionalFields) {
