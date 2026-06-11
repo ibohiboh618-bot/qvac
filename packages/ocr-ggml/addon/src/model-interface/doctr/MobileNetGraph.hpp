@@ -200,6 +200,12 @@ struct WeightsBundle {
       nullptr, ggml_free};
   std::unordered_map<std::string, struct ggml_tensor*> tensors;
   ggml_backend_buffer_t backendBuffer = nullptr;
+  // Per-tensor buffers for conv weights routed through a prepack buffer type
+  // (e.g. KleidiAI NHWC packing on Mali CPU). Freed with the bundle.
+  std::vector<ggml_backend_buffer_t> auxBuffers;
+  // True when regular Conv2D weights were NHWC-prepacked for an accelerated
+  // CPU conv2d kernel — the graph then uses GGML_OP_CONV_2D for those convs.
+  bool prepacked = false;
 
   WeightsBundle() = default;
   WeightsBundle(const WeightsBundle&) = delete;

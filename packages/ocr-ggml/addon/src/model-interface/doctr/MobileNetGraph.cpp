@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <ggml-alloc.h>
@@ -505,7 +506,8 @@ WeightsBundle::~WeightsBundle() { reset(); }
 
 WeightsBundle::WeightsBundle(WeightsBundle&& other) noexcept
     : ctx(std::move(other.ctx)), tensors(std::move(other.tensors)),
-      backendBuffer(other.backendBuffer) {
+      backendBuffer(other.backendBuffer),
+      auxBuffers(std::move(other.auxBuffers)), prepacked(other.prepacked) {
   other.backendBuffer = nullptr;
 }
 
@@ -515,6 +517,8 @@ WeightsBundle& WeightsBundle::operator=(WeightsBundle&& other) noexcept {
     ctx = std::move(other.ctx);
     tensors = std::move(other.tensors);
     backendBuffer = other.backendBuffer;
+    auxBuffers = std::move(other.auxBuffers);
+    prepacked = other.prepacked;
     other.backendBuffer = nullptr;
   }
   return *this;
@@ -527,6 +531,13 @@ void WeightsBundle::reset() {
     ggml_backend_buffer_free(backendBuffer);
     backendBuffer = nullptr;
   }
+  for (ggml_backend_buffer_t buf : auxBuffers) {
+    if (buf != nullptr) {
+      ggml_backend_buffer_free(buf);
+    }
+  }
+  auxBuffers.clear();
+  prepacked = false;
 }
 
 ComputeGraph::~ComputeGraph() { reset(); }
@@ -853,8 +864,67 @@ WeightsBundle loadWeights(
   addFcWeightFp16("classifier.3.weight", kClassifierHidden, kNumClasses);
   addFcBiasFp16("classifier.3.bias", kNumClasses);
 
-  // Back the newly declared tensors with backend storage so we can write to
-  // them via ggml_backend_tensor_set below.
+  // KleidiAI/NHWC prepack for regular Conv2D weights (CPU acceleration on Mali).
+  // Route regular Conv2D kernels through the CPU device's "extra" prepack buffer
+  // type (KleidiAI) so they get NHWC-packed at upload; the graph then uses the
+  // fused GGML_OP_CONV_2D for those convs, which dispatches to KleidiAI's
+  // accelerated conv2d. Depthwise (ne[2]==1) and ConvTranspose weights MUST stay
+  // in the default buft — the prepack buft mangles any F32/F16 tensor it owns,
+  // and those ops never dispatch through KleidiAI.
+  ggml_backend_buffer_type_t prepackBuft = nullptr;
+  {
+    ggml_backend_dev_t dev = ggml_backend_get_device(backends[0]);
+    ggml_backend_reg_t reg =
+        dev != nullptr ? ggml_backend_dev_backend_reg(dev) : nullptr;
+    if (reg != nullptr) {
+      using GetExtras = ggml_backend_buffer_type_t* (*)(ggml_backend_dev_t);
+      auto* getExtras = reinterpret_cast<GetExtras>(
+          ggml_backend_reg_get_proc_address(
+              reg, "ggml_backend_dev_get_extra_bufts"));
+      auto probeIt = tensors.find("features.0.0.weight");
+      if (getExtras != nullptr && probeIt != tensors.end()) {
+        ggml_backend_buffer_type_t* extras = getExtras(dev);
+        struct ggml_tensor* probe = probeIt->second;
+        for (; extras != nullptr && *extras != nullptr; ++extras) {
+          if (ggml_backend_buft_get_alloc_size(*extras, probe) >
+              ggml_nbytes(probe)) {
+            prepackBuft = *extras;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  static const std::unordered_set<std::string> kConvTransposeWeights = {
+      "dbnet.prob_head.3.weight", "dbnet.prob_head.6.weight"};
+  auto isPrepackable = [&](const std::string& name,
+                          const struct ggml_tensor* t) {
+    return name.ends_with(".weight") && !kConvTransposeWeights.contains(name) &&
+           t->ne[2] != 1;
+  };
+
+  if (prepackBuft != nullptr) {
+    for (auto& [name, dst] : tensors) {
+      if (!isPrepackable(name, dst)) {
+        continue;
+      }
+      const size_t allocSize =
+          ggml_backend_buft_get_alloc_size(prepackBuft, dst);
+      ggml_backend_buffer_t buf =
+          ggml_backend_buft_alloc_buffer(prepackBuft, allocSize);
+      if (buf == nullptr) {
+        raise("Failed to allocate prepack buffer for " + name);
+      }
+      ggml_tallocr talloc = ggml_tallocr_new(buf);
+      ggml_tallocr_alloc(&talloc, dst);
+      bundle.auxBuffers.push_back(buf);
+      bundle.prepacked = true;
+    }
+  }
+
+  // Back the remaining tensors (those without a buffer yet) with the default
+  // backend storage so we can write to them via ggml_backend_tensor_set below.
   ggml_backend_buffer_type_t weightsBuft =
       ggml_backend_get_default_buffer_type(backends[0]);
   bundle.backendBuffer =
@@ -1142,7 +1212,12 @@ ComputeGraph buildGraph(
     }
   }
 
-  GraphBuilder gb{.ctx = ctx, .w = weights.tensors, .useFusedConv = isVulkan};
+  // Fused GGML_OP_CONV_2D on Vulkan, or on CPU when conv weights were
+  // NHWC-prepacked for KleidiAI's accelerated conv2d (see loadWeights).
+  GraphBuilder gb{
+      .ctx = ctx,
+      .w = weights.tensors,
+      .useFusedConv = isVulkan || weights.prepacked};
 
   // Stem.
   struct ggml_tensor* x = gb.convBnAct(
