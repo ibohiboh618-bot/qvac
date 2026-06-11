@@ -107,19 +107,28 @@ Rebuilding the ggml fork through vcpkg is ~20 min. Instead: edit `ggml-vulkan.cp
 
 ---
 
-## 5. Final numbers (real Mali, warm)
+## 5. Final numbers (real Mali — Pixel 9 Pro / Firebase `caiman`, warm)
 
-| | detection | recognition | total |
-|---|---|---|---|
-| Vulkan (committed) | ~3.6 s | ~1.2 s | ~4.8 s warm / 6.0 s cold |
-| CPU | ~1.3 s | ~2.1 s | ~3.4 s |
-| **Hybrid (CPU det + Vulkan rec)** | **1.3 s** | **1.2 s** | **~2.5 s** |
+| | detection | recognition | total | boxes |
+|---|---|---|---|---|
+| baseline Vulkan (run 27284290269) | 5448 | 4871 | 10345 | — |
+| Vulkan (committed: batch + fused conv) | ~3.6 s | ~1.2 s | ~4.8 s warm / 6.0 s cold | 197 ✓ |
+| CPU | ~1.3 s | ~2.1 s | ~3.4 s | 197 ✓ |
+| **Hybrid (CPU det + Vulkan rec) — validated** | **~1.48 s** | **~1.25 s** | **~2.76 s warm** (3.6 s cold) | **197 ✓** |
+
+Hybrid is implemented (`detectionBackendDevice` param) and measured on real Mali:
+`[WARM:hybrid] total 2762–2766 ms, det 1478–1494 (CPU), rec 1233–1259 (Vulkan), boxes=197`.
+**3.7× faster than the Vulkan baseline; recognition stays on Vulkan.** The
+remaining gap to 2.0 s: warm hybrid is 2.76 s (CPU detection is now the larger
+half); cold is 3.6 s due to the Vulkan recognizer's one-time pipeline
+compilation (~860 ms) — a persistent `VkPipelineCache` / load-time warm-up
+would bring cold ≈ warm.
 
 ---
 
 ## 6. Recommendation / next steps
 
-1. **Land the hybrid (~2.5 s)** — run DocTR **detection on CPU** (Mali CPU does it in 1.3 s and sidesteps the Vulkan conv-dispatch problem) and **recognition on Vulkan** (1.2 s). Needs a per-stage backend option in `Pipeline` (`detectionBackendDevice`). Closest achievable to the 2 s target; keeps recognition on Vulkan.
+1. **Hybrid landed & validated (~2.76 s warm on real Mali)** — `detectionBackendDevice` shipped; DocTR detection on CPU + recognition on Vulkan. To reach 2.0 s from here: (a) persistent `VkPipelineCache` / load-time warm-up to remove the ~860 ms recognizer cold-start, and (b) faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) to shave the 1.48 s detection half.
 2. **Full-Vulkan 2 s is blocked** on a Mali GPU characteristic (per-conv-dispatch overhead, ~9 ms × the heavy convs, invisible to the per-op profiler). Realistic only via deep Mali-driver-level work or upstream Mali ggml-vulkan support — low odds, large effort.
 3. To shave the hybrid toward 2.0 s: faster CPU detection (cf. branch `QVAC-19542_DocTR_detection_CPU_optimization`, NHWC convs) and/or further recognizer batching.
 
