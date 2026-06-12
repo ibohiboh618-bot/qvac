@@ -41,6 +41,7 @@ export interface EmbedStats {
   tokens_per_second?: number;
   total_tokens?: number;
   backendDevice?: "cpu" | "gpu";
+  context_size?: number;
 }
 
 export interface EmbedResponse {
@@ -59,6 +60,10 @@ export interface TranscribeStats {
   encoderMs?: number;
   decoderMs?: number;
   melSpecMs?: number;
+  backendDevice?: number;
+  backendId?: number;
+  gpuMemTotalMb?: number;
+  gpuMemFreeMb?: number;
 }
 
 export interface TranscribeAddonSegment {
