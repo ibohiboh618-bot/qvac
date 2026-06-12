@@ -22,6 +22,7 @@ const { ensureModel } = require('../../test/integration/utils')
 const LlmLlamacpp = require('../../index.js')
 const fixture = require('./fixture.data.cjs')
 const config = require('./config.cjs')
+const { parseModels } = require('./models.cjs')
 
 // Resolve a fixture image. Images live in a fixture object store (not git): CI syncs
 // them into this dir's images/ before the run. Desktop reads images/ directly; mobile
@@ -60,6 +61,20 @@ const PRESET = config.presets[env('QVAC_VLM_PRESET') || config.defaultPreset] ||
 const MODE = env('QVAC_VLM_MODE') || config.mode || 'two-models'
 const SOURCE = env('QVAC_VLM_ENGINE') || config.engine || 'addon'
 
+// Active scenario (CONTRACT.md §2): the workload definition — its task list is
+// the task universe for this run. The runner executes the FIRST CSV token;
+// multi-scenario runs are reserved. Unknown/fixtureless scenarios fail fast.
+const SCENARIO_ID = (env('QVAC_VLM_SCENARIOS') || config.defaultScenario || 'vqa-suite')
+  .split(',')[0].trim()
+const SCENARIO = (config.scenarios || {})[SCENARIO_ID]
+if (!SCENARIO) throw new Error(`unknown scenario '${SCENARIO_ID}' (known: ${Object.keys(config.scenarios || {}).join(', ')})`)
+if (SCENARIO.fixturePending) throw new Error(`scenario '${SCENARIO_ID}' has no fixture yet (lands with the scenarios workstream, B1)`)
+
+// Source identity stamped into every marker (CONTRACT.md §1): which build
+// produced the numbers. The workflow leg sets these; sensible fallbacks here.
+const SRC_ID = env('QVAC_VLM_SOURCE_ID') || (MODE === 'several-sources' ? SOURCE : 'addon')
+const SRC_REF = env('QVAC_VLM_SOURCE_REF') || ''
+
 // samples/task precedence: explicit env > preset > (mobile 2 / desktop 5). Mobile
 // defaults low to fit the 30-min Device Farm ceiling; qvac_perf_runs lands here.
 const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') ||
@@ -70,17 +85,20 @@ const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') 
 // mobile to stay under the Device Farm ceiling. Override with QVAC_VLM_REPEATS.
 const REPEATS = intEnv('QVAC_VLM_REPEATS') || PRESET.repeats || (isMobile ? 1 : 3)
 
-// tasks: QVAC_VLM_TASKS (csv) > preset.tasks > all fixture tasks (null = no filter).
+// tasks: QVAC_VLM_TASKS (csv) > preset.tasks > the scenario's task list.
+// preset.maxTasks (e.g. smoke = 1) trims to the first N distinct tasks so the
+// preset stays scenario-agnostic.
 const TASKS = (() => {
   const raw = env('QVAC_VLM_TASKS')
   if (raw) return raw.split(',').map(s => s.trim()).filter(Boolean)
-  return PRESET.tasks || null
+  return PRESET.tasks || SCENARIO.tasks || null
 })()
 
 function selectedItems () {
   const seen = {}
   return fixture.items.filter(it => {
     if (TASKS && !TASKS.includes(it.task)) return false
+    if (!(it.task in seen) && PRESET.maxTasks && Object.keys(seen).length >= PRESET.maxTasks) return false
     seen[it.task] = (seen[it.task] || 0) + 1
     return seen[it.task] <= SAMPLES_PER_TASK
   })
@@ -212,6 +230,26 @@ function emitRow (obj) {
   console.log('[VLMROW]' + JSON.stringify(obj) + '[/VLMROW]')
 }
 
+// Contract-v2 fields stamped into every marker (CONTRACT.md §1). `block` is the
+// measurement round; until the A3 scheduler adds warmup blocks every round is
+// measured, so block = rep + 1 (0 is reserved for warmup).
+function stamp (rep, obj) {
+  const out = { v: 2, scenario: SCENARIO_ID, source_id: SRC_ID, source_ref: SRC_REF }
+  if (rep != null) out.block = rep + 1
+  return Object.assign(out, obj)
+}
+
+// Peak process memory (MB). Linux exposes the high-water mark in
+// /proc/self/status; elsewhere null until the A4 sampler lands.
+function peakRssMb () {
+  try {
+    const txt = String(fs.readFileSync('/proc/self/status'))
+    const m = txt.match(/VmHWM:\s*(\d+)\s*kB/)
+    if (m) return Math.round(parseInt(m[1], 10) / 1024)
+  } catch (_) {}
+  return null
+}
+
 function runModel (spec) {
   // Marker axis: source label in several-sources mode (engine comparison), else the
   // model label. The VLM loaded is always spec (llm + mmproj).
@@ -226,7 +264,7 @@ function runModel (spec) {
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
       // model-origin provenance (stderr, parsed host-side into the report)
-      console.error('[VLMMETA]' + JSON.stringify({
+      console.error('[VLMMETA]' + JSON.stringify(stamp(null, {
         cell: axis,
         source: SOURCE,
         model: spec.label,
@@ -236,7 +274,7 @@ function runModel (spec) {
         mmproj_origin: spec.mmproj.origin,
         mmproj_url: displayUrl(spec.mmproj),
         mmproj_source: sourceType(spec.mmproj)
-      }) + '[/VLMMETA]')
+      })) + '[/VLMMETA]')
       const inference = new LlmLlamacpp({
         files: { model: [path.join(dir, mainName)], projectionModel: path.join(dir, projName) },
         config: {
@@ -261,11 +299,12 @@ function runModel (spec) {
         for (let rep = 0; rep < REPEATS; rep++) {
           // SEG per repeat so each run's `image slice encoded` lines attribute to its
           // own segment (stderr — same stream as the native timing lines).
-          console.error('[VLMSEG]' + JSON.stringify({ cell: axis, source: SOURCE, model: spec.label, device, id: item.id, rep }) + '[/VLMSEG]')
+          console.error('[VLMSEG]' + JSON.stringify(stamp(rep, { cell: axis, source: SOURCE, model: spec.label, device, id: item.id, rep })) + '[/VLMSEG]')
           try {
             const r = await runOne(inference, getMediaPath(item.image), item.prompt)
             const st = r.stats || {}
-            emitRow({
+            emitRow(stamp(rep, {
+              rss_mb: peakRssMb(),
               cell: axis,
               source: SOURCE,
               model: spec.label,
@@ -284,10 +323,10 @@ function runModel (spec) {
               ttft_ms: st.TTFT != null ? st.TTFT : null,
               gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
               prompt_tokens: st.promptTokens != null ? st.promptTokens : null
-            })
+            }))
             ok++
           } catch (e) {
-            emitRow({ cell: axis, source: SOURCE, model: spec.label, device, rep, task: item.task, id: item.id, metric: item.metric, gold: item.gold, error: String((e && e.message) || e) })
+            emitRow(stamp(rep, { rss_mb: peakRssMb(), cell: axis, source: SOURCE, model: spec.label, device, rep, task: item.task, id: item.id, metric: item.metric, gold: item.gold, error: String((e && e.message) || e) }))
           }
         }
       }
@@ -296,11 +335,15 @@ function runModel (spec) {
   }
 }
 
-// One test file -> one mobile test function -> one Device Farm spec -> Samsung S25.
-// two-models loads MODEL_1 then MODEL_2; several-sources loads the one sourcesModel
-// (the other engines run via cli-fixture-runner.cjs and append to the same log).
+// One test file -> one mobile test function -> one Device Farm spec -> one phone.
+// two-models runs the QVAC_VLM_MODELS launch param (catalog names, ad-hoc
+// <llm-url>|<mmproj-url> pairs, or json: specs — see models.cjs / CONTRACT.md §3),
+// falling back to the committed config.models pair; several-sources loads the one
+// sourcesModel (the other engines run via cli-fixture-runner.cjs, same log).
 function runAll () {
-  const models = MODE === 'several-sources' ? [config.sourcesModel] : config.models
+  const models = MODE === 'several-sources'
+    ? [config.sourcesModel]
+    : parseModels(env('QVAC_VLM_MODELS'), config.catalog, config.models)
   for (const spec of models) runModel(spec)
 }
 

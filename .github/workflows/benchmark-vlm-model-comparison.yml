@@ -18,16 +18,16 @@ on:
         description: "  addon ref — qvac branch / tag / SHA (default: current branch)"
         required: false
         type: string
-      fabric_ref:
-        description: "  fabric (qvac fork) llama-mtmd-cli ref for several-sources (default: v8189.0.2)"
+      matrix_sources:
+        description: "  builds under comparison, comma-sep: addon (published, default) | fabric@<ref> | upstream@<ref>; addon@candidate/addon@baseline reserved (A2). See benchmarks/vlm-benchmark/CONTRACT.md"
         required: false
         type: string
-        default: "v8189.0.2"
-      upstream_ref:
-        description: "  upstream llama.cpp CLI ref for several-sources (default: b8189)"
+        default: "addon"
+      matrix_models:
+        description: "  models override, comma-sep: catalog names and/or [label=]<llm-url>|<mmproj-url>[@ctx=N] pairs, or json:[…]. Empty = config defaults. See CONTRACT.md §3"
         required: false
         type: string
-        default: "b8189"
+        default: ""
       # ── Matrix (config-driven quality+speed) ──────
       # Runs the @qvac/llm-llamacpp addon over the frozen fixture (lmms-eval quality +
       # vision-encode speed) on Linux (and S25), driven by
@@ -47,11 +47,11 @@ on:
         required: false
         type: string
         default: "base"
-      matrix_engine:
-        description: "  inference engine (two-models mode): addon | fabric-cli | upstream-cli. CLI engines are desktop-only; addon runs everywhere."
+      matrix_scenarios:
+        description: "  workload scenario (benchmarks/vlm-benchmark/scenarios.cjs): vqa-suite (default) | image-description | ocr-highmp"
         required: false
         type: string
-        default: "addon"
+        default: ""
       matrix_desktop:
         description: "  desktop legs, comma-sep <os>-<backend>: linux-cpu,linux-gpu,macos-cpu,macos-gpu,macmini-cpu,macmini-gpu,windows-cpu,windows-gpu (macos = GitHub-hosted VM, macmini = bare-metal M4)"
         required: false
@@ -90,6 +90,10 @@ jobs:
       desktop_count: ${{ steps.dmatrix.outputs.count }}
       mobile_matrix: ${{ steps.mmatrix.outputs.value }}
       mobile_count: ${{ steps.mmatrix.outputs.count }}
+      engine: ${{ steps.sources.outputs.engine }}
+      fabric_ref: ${{ steps.sources.outputs.fabric_ref }}
+      upstream_ref: ${{ steps.sources.outputs.upstream_ref }}
+      models_b64: ${{ steps.sources.outputs.models_b64 }}
       merge_base: ${{ steps.commits.outputs.merge_base }}
       head_sha: ${{ steps.commits.outputs.head_sha }}
       head_title: ${{ steps.commits.outputs.head_title }}
@@ -192,6 +196,36 @@ jobs:
           echo "value=$cells" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "Mobile matrix ($count entries): $cells"
+      # Parse the matrix_sources tokens (CONTRACT.md §3) into the refs the legs
+      # consume, and base64 the matrix_models value for the on-device transport
+      # (the device-config channel is semicolon-delimited; b64 is delimiter-safe).
+      - id: sources
+        shell: bash
+        env:
+          MATRIX_SOURCES: ${{ inputs.matrix_sources }}
+          MATRIX_MODELS: ${{ inputs.matrix_models }}
+        run: |
+          engine=addon; fabric_ref=v8189.0.2; upstream_ref=b8189
+          IFS=',' read -ra toks <<< "${MATRIX_SOURCES:-addon}"
+          for raw in "${toks[@]}"; do
+            t=$(echo "$raw" | xargs)
+            case "$t" in
+              ""|addon|fabric|upstream) ;;
+              addon@candidate|addon@baseline) echo "::warning::'$t' is reserved (wired by A2) — running the published addon" ;;
+              fabric@*) fabric_ref="${t#fabric@}" ;;
+              upstream@*) upstream_ref="${t#upstream@}" ;;
+              *) echo "::warning::Unknown matrix_sources token '$t' (known: addon[@candidate|@baseline], fabric@<ref>, upstream@<ref>)" ;;
+            esac
+          done
+          models_b64=""
+          if [ -n "$MATRIX_MODELS" ]; then models_b64=$(printf '%s' "$MATRIX_MODELS" | base64 -w0); fi
+          {
+            echo "engine=$engine"
+            echo "fabric_ref=$fabric_ref"
+            echo "upstream_ref=$upstream_ref"
+            echo "models_b64=$models_b64"
+          } >> "$GITHUB_OUTPUT"
+          echo "sources: engine=$engine fabric=$fabric_ref upstream=$upstream_ref models_b64_len=${#models_b64}"
       # Resolve commit metadata so the consolidated report can show what
       # the candidate ref + merge-base actually point at (hash, title,
       # date). Needs a real clone — sparse checkout doesn't give us git
@@ -202,6 +236,13 @@ jobs:
           repository: ${{ steps.ctx.outputs.repository }}
           ref: ${{ steps.ctx.outputs.ref }}
           fetch-depth: 0
+      # Contract guard: config loads, scenarios/models grammar parses, the
+      # sample markers match the v2 schema (see CONTRACT.md). Fails the run
+      # early on a broken contract instead of after expensive legs.
+      - name: Contract selfcheck
+        shell: bash
+        run: node packages/llm-llamacpp/benchmarks/vlm-benchmark/run-desktop.cjs --selfcheck
+
       - id: commits
         shell: bash
         run: |
@@ -357,11 +398,15 @@ jobs:
           QVAC_VLM_ENGINE: addon # this leg is always the 'addon' source
           QVAC_VLM_SAMPLES: ${{ inputs.matrix_samples }} # '' → use the preset's value
           QVAC_VLM_DEVICES: ${{ matrix.backend }}
+          QVAC_VLM_MODELS: ${{ inputs.matrix_models }} # '' → config defaults (CONTRACT.md §3)
+          QVAC_VLM_SCENARIOS: ${{ inputs.matrix_scenarios }} # '' → config.defaultScenario
+          QVAC_VLM_SOURCE_ID: addon
           NO_GPU: ${{ matrix.no_gpu }}
         run: |
           # Point brittle straight at the benchmark dir (no staging needed on desktop),
           # then run it under bare. In several-sources mode this is the addon leg;
           # fabric/upstream CLIs are appended to the same log by the next step.
+          export QVAC_VLM_SOURCE_REF="npm:${ADDON_VERSION:-published}"
           npx brittle -r test/integration/all.js benchmarks/vlm-benchmark/vlm-matrix.test.js
           bare test/integration/all.js --exit 2>&1 | tee "vlm-matrix-${{ matrix.host }}-${{ matrix.backend }}.log"
           exit ${PIPESTATUS[0]}
@@ -375,7 +420,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
-          key: vlm-cli-v3-linux-${{ matrix.backend }}-${{ inputs.fabric_ref }}-${{ inputs.upstream_ref }}
+          key: vlm-cli-v3-linux-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
 
       - name: Build + run fabric/upstream CLIs over the fixture (several-sources)
         if: inputs.matrix_mode == 'several-sources' && matrix.host == 'linux'
@@ -394,7 +439,7 @@ jobs:
           REPEATS=$(node -e "console.log((require('./config.cjs').presets['$PRESET']||{}).repeats||1)")
           SAMPLES="${SAMPLES:-$PRESET_SAMPLES}"
           node build-cli-sources.js --sources=fabric,upstream \
-            --fabric-ref=${{ inputs.fabric_ref }} --upstream-ref=${{ inputs.upstream_ref }} \
+            --fabric-ref=${{ needs.context.outputs.fabric_ref }} --upstream-ref=${{ needs.context.outputs.upstream_ref }} \
             --backend=${{ matrix.backend }}
           FABRIC_BIN=$(node -e "console.log(require('./cli-sources-resolved.json').fabric.binaryPath)")
           UPSTREAM_BIN=$(node -e "console.log(require('./cli-sources-resolved.json').upstream.binaryPath)")
@@ -499,7 +544,7 @@ jobs:
       platforms: ${{ matrix.platform }}
       device_manufacturer: ${{ matrix.manufacturer }}
       device_model: ${{ matrix.model }}
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}"
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_scenarios != '' && format(';QVAC_VLM_SCENARIOS={0}', inputs.matrix_scenarios) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
       artifact_suffix: ${{ matrix.token }}
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
@@ -552,102 +597,19 @@ jobs:
           pattern: console-logs-*
           path: matrix-logs
 
+      # All combine logic (log discovery, host tagging, mobile provenance,
+      # report rendering, and the B4 accuracy gate via exit code) lives in
+      # benchmarks/vlm-benchmark/combine.cjs so report changes never touch
+      # this workflow. See CONTRACT.md for the marker schema it consumes.
       - name: Aggregate matrix logs
         shell: bash
         run: |
-          mkdir -p consolidated
-          # Tag each input with its platform host so mobile/macOS/Windows rows
-          # don't collapse onto the Linux rows ([VLMROW].device is only cpu/gpu).
-          ARGS=""
-          # Desktop legs: one log per host+backend; the host is the filename's
-          # third dash-token (vlm-matrix-<host>-<backend>.log → linux/macos/windows).
-          for f in $(find matrix-logs -name 'vlm-matrix-*.log' 2>/dev/null | sort); do
-            HOST=$(basename "$f" | cut -d- -f3)
-            ARGS="$ARGS --in $HOST $f"
-          done
-          # Mobile legs: the host label is the device-model slug parsed from the
-          # Device Farm file name (Galaxy_S25→s25, Pixel_9→pixel9,
-          # iPhone_17_Pro→iphone17pro) — it matches the matrix_mobile device
-          # token, and same-device cpu/gpu legs merge under one host with the
-          # row's device field telling them apart.
-          # `|| true`: a name with no device match must yield '' (grep exits 1 and
-          # this script runs under set -e -o pipefail), not kill the combine.
-          host_of () {
-            basename "$1" | grep -oE 'Galaxy_S[0-9]+|Pixel_[0-9]+|iPhone_[0-9]+(_Pro(_Max)?)?' \
-              | head -1 | tr '[:upper:]' '[:lower:]' | sed 's/galaxy_//' | tr -d '_' || true
-          }
-          # Android: the device's full logcat carries the [VLMROW] markers. The
-          # collect step also emits a generic platform-labelled copy
-          # (Android_logcat_full.txt) of the same log — no device in the name →
-          # host_of '' → skip it, or its rows would duplicate under a bogus host.
-          for f in $(find matrix-logs -name '*logcat_full*' 2>/dev/null | sort); do
-            H=$(host_of "$f")
-            [ -z "$H" ] && continue
-            ARGS="$ARGS --in $H $f"
-          done
-          # iOS: no logcat — the on-device console capture (<device>_bare_console.log,
-          # extracted from Customer_Artifacts.zip) carries the markers. Same
-          # generic-copy skip as Android.
-          for f in $(find matrix-logs -path '*iOS*' -name '*bare_console*' 2>/dev/null | sort); do
-            H=$(host_of "$f")
-            [ -z "$H" ] && continue
-            ARGS="$ARGS --in $H $f"
-          done
-          # HW/SW provenance: desktop legs ship prov-<host>-*.md; synthesize one
-          # per mobile device below (deduped per host — cpu/gpu legs share it).
-          PROV=""
-          for p in $(find matrix-logs -name 'prov-*.md' 2>/dev/null | sort); do
-            PROV="$PROV --provenance $p"
-          done
-          SEEN_HOSTS=" "
-          # Android hardware provenance, parsed from the device's own logcat
-          # (model / Android / ABI from the Play-store UA line, RAM from the JS
-          # totalMemory line, GPU from the Adreno-Vulkan driver load).
-          for f in $(find matrix-logs -name '*logcat_full*' 2>/dev/null | sort); do
-            H=$(host_of "$f")
-            [ -z "$H" ] && continue
-            case "$SEEN_HOSTS" in *" $H "*) continue ;; esac
-            SEEN_HOSTS="$SEEN_HOSTS$H "
-            DEVNAME=$(basename "$f" | grep -oE '(Samsung|Google)_[A-Za-z0-9_]*' | head -1 | sed 's/_logcat_full.*//' | tr '_' ' ')
-            MODEL=$(grep -oE 'model=[A-Za-z0-9-]+' "$f" | head -1 | cut -d= -f2)
-            ANDROID=$(grep -oE 'platformVersionRelease=[0-9]+' "$f" | head -1 | cut -d= -f2)
-            ABI=$(grep -oE 'supportedAbis=[a-z0-9-]+' "$f" | head -1 | cut -d= -f2)
-            RAMB=$(grep -oE 'totalMemory: [0-9]+' "$f" | head -1 | grep -oE '[0-9]+$')
-            RAMGB=$(awk -v b="${RAMB:-0}" 'BEGIN{ if (b>0) printf "%.1f GB", b/1073741824; else printf "?" }')
-            GPU=$(grep -qiE 'AdrenoVK|vulkan\.adreno' "$f" && echo 'Adreno (Vulkan)' || echo '?')
-            {
-              echo "**${H}** — ${DEVNAME:-Android device} (AWS Device Farm)"
-              echo "- device: ${MODEL:-?} · Android ${ANDROID:-?} · ${ABI:-arm64-v8a}"
-              echo "- ram: ${RAMGB} · gpu: ${GPU}"
-              echo "- engine: \`@qvac/llm-llamacpp\` addon (published prebuild)"
-            } > "prov-${H}.md"
-            PROV="$PROV --provenance prov-${H}.md"
-          done
-          # iOS hardware provenance: the Device Farm device name is baked into
-          # the extracted log's filename (<run>_<device>_bare_console.log).
-          for f in $(find matrix-logs -path '*iOS*' -name '*bare_console*' 2>/dev/null | sort); do
-            H=$(host_of "$f")
-            [ -z "$H" ] && continue
-            case "$SEEN_HOSTS" in *" $H "*) continue ;; esac
-            SEEN_HOSTS="$SEEN_HOSTS$H "
-            DEV=$(basename "$f" | grep -oE 'Apple_[A-Za-z0-9_]*' | head -1 | sed 's/_bare_console.*//' | tr '_' ' ')
-            {
-              echo "**${H}** — ${DEV:-Apple iPhone} (AWS Device Farm)"
-              echo "- engine: \`@qvac/llm-llamacpp\` addon (published prebuild)"
-            } > "prov-${H}.md"
-            PROV="$PROV --provenance prov-${H}.md"
-          done
-          echo "aggregate inputs:$ARGS"
-          echo "provenance:$PROV"
-          if [ -z "$ARGS" ]; then
-            echo "> No VLM matrix logs found for run #${{ github.run_number }}." > consolidated/vlm-matrix-consolidated.md
-          else
-            node packages/llm-llamacpp/benchmarks/vlm-benchmark/aggregate.js \
-              --title "VLM Matrix — ${{ inputs.matrix_mode }} / ${{ inputs.matrix_preset }} (run #${{ github.run_number }})" \
-              --mode "${{ inputs.matrix_mode }}" --engine "${{ inputs.matrix_engine }}" \
-              --out consolidated/vlm-matrix-consolidated.md \
-              $PROV $ARGS
-          fi
+          node packages/llm-llamacpp/benchmarks/vlm-benchmark/combine.cjs \
+            --dir matrix-logs \
+            --out consolidated/vlm-matrix-consolidated.md \
+            --title "VLM Matrix — ${{ inputs.matrix_mode }} / ${{ inputs.matrix_preset }} (run #${{ github.run_number }})" \
+            --mode "${{ inputs.matrix_mode }}" --engine "${{ needs.context.outputs.engine }}" \
+            --run-number "${{ github.run_number }}"
 
       - name: Post step summary
         if: always()

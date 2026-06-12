@@ -170,19 +170,22 @@ There are **two ways to configure a launch**, and each item below shows both:
 Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is measured;
 3–9 decide *how* it runs.
 
-**1. Set the model(s).** *(config only — no dispatch input)*
-   - two-models: edit `MODEL_1` and `MODEL_2`. Two blobs of one model → keep the same
-     `llm`, change the `mmproj` (default: Qwen3.5 F16 vs Q8). Two different models →
-     point the two `llm` blobs at different repos. Give each a distinct `label`.
-   - several-sources: edit `SOURCES_MODEL` (the one VLM run through every engine).
-   - Each blob's bytes come from its `source` (pinned `hf` commit / `url` / `s3`).
+**1. Set the model(s).** *(dispatch or config — see `CONTRACT.md` §3)*
+   - **Dispatch — ANY model, zero code changes:** `-f matrix_models=…`, comma-separated:
+     catalog names (`qwen3.5-f16,qwen3.5-q8`) and/or ad-hoc pairs
+     `[label=]<llm-gguf-url>|<mmproj-gguf-url>[@ctx=N]` (two https URLs are all a model
+     needs; HF resolve-URLs are reported with repo+ref provenance), or `json:[…]` for
+     exotic cases (registry sources — desktop-only). Empty = config `defaultModels`.
+   - **Config:** edit the `catalog` / `MODEL_1`/`MODEL_2` specs in `config.cjs` (two
+     blobs of one model → same `llm`, different `mmproj`; distinct `label` each).
+   - several-sources mode always runs the committed `SOURCES_MODEL`.
 
 **2. Update the source versions.**
-   - **Inference engines** (several-sources): `-f fabric_ref=v8189.0.2`,
-     `-f upstream_ref=b8189` (the native CLI tags); the addon source is the published
-     `@qvac/llm-llamacpp@latest` npm prebuild.
+   - **Builds under comparison:** `-f matrix_sources=addon,fabric@v8189.0.2,upstream@b8189`
+     (the CLI refs ride inside the tokens; `addon` = the published npm prebuild;
+     `addon@candidate`/`addon@baseline` are reserved until A2 lands).
    - **Model version:** bump the pinned commit in `config.cjs` (`SHA.*` / the blob's
-     `source.sha`) — config only.
+     `source.sha`) — or just dispatch the new URL via `matrix_models`.
    - **Fixture images:** stored in a fixture object store (URI configured in the
      benchmark workflow), not git; you may download them separately for local tests.
      Regenerate with `build-fixture.cjs`, then upload `./images/` to that store; CI pulls
@@ -207,42 +210,45 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
      optionally suffixed `-cpu`/`-gpu` (bare = both in one session). Empty = no mobile;
      two-models only — ignored for several-sources.
 
-**7. Engine / sources.**
-   - two-models engine — Config: `engine: 'addon'`; Dispatch: `-f matrix_engine=addon`.
-   - several-sources set — Config only: `engines: ['addon','fabric-cli','upstream-cli']`.
+**7. Scenario** — the kind of workload (`scenarios.cjs`): `vqa-suite` (default) ·
+   `image-description` · `ocr-highmp`.
+   - Dispatch: `-f matrix_scenarios=…` (every leg; forwarded to phones as device env).
 
 **8. Samples / repeats / tasks.**
    - Samples — Config: preset `samplesPerTask`; Dispatch: `-f matrix_samples=N`.
    - Repeats / tasks — Config: preset `repeats` / `tasks`; (local env
      `QVAC_VLM_REPEATS` / `QVAC_VLM_TASKS` — no dispatch input).
 
-**Dispatch inputs reference**
+**Dispatch inputs reference** (GitHub caps `workflow_dispatch` at 10 inputs — the set is full)
 
 | input | overrides | purpose |
 |---|---|---|
 | `run_matrix` | — | **must be true** to run the matrix at all |
 | `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (every leg) |
 | `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (every leg) |
-| `matrix_engine` | `config.engine` | two-models fixed engine |
+| `matrix_models` | `config.defaultModels` | catalog names / `[label=]<llm-url>\|<mmproj-url>[@ctx=N]` / `json:[…]` (CONTRACT.md §3) |
+| `matrix_sources` | — | builds under comparison: `addon` \| `fabric@<ref>` \| `upstream@<ref>` (`addon@candidate/baseline` reserved, A2) |
+| `matrix_scenarios` | `config.defaultScenario` | workload: `vqa-suite` \| `image-description` \| `ocr-highmp` |
 | `matrix_desktop` | — | desktop legs: `{linux,macos,macmini,windows}-{cpu,gpu}` (any subset) |
 | `matrix_mobile` | — | mobile legs: `{s25,pixel9,iphone16,iphone17,iphone17pro}[-{cpu,gpu}]` (any subset; empty = none; two-models only) |
 | `matrix_samples` | preset `samplesPerTask` | override samples/task, every leg (empty = default) |
-| `fabric_ref` / `upstream_ref` | — | native CLI versions (several-sources) |
 
-**Example** — two-models, mixed leg selection, base preset:
+**Example** — two-models, mixed leg selection, base preset, one ad-hoc model:
 
 ```bash
 gh workflow run benchmark-vlm-model-comparison.yml --ref <branch> \
   -f run_matrix=true -f matrix_mode=two-models -f matrix_preset=base \
-  -f matrix_engine=addon \
+  -f matrix_models="qwen3.5-q8,challenger=https://huggingface.co/org/NewVLM-GGUF/resolve/<sha>/NewVLM-Q4_K_M.gguf|https://huggingface.co/org/NewVLM-GGUF/resolve/<sha>/mmproj-F16.gguf" \
   -f matrix_desktop=linux-cpu,linux-gpu,macos-gpu \
   -f matrix_mobile=s25-cpu,s25-gpu,iphone17
 ```
 
 **Locally** you can run the harness directly under `bare` (desktop) by exporting
 `QVAC_VLM_MATRIX=1` plus any `QVAC_VLM_*` overrides (`QVAC_VLM_MODE`, `QVAC_VLM_PRESET`,
-`QVAC_VLM_SAMPLES`, `QVAC_VLM_REPEATS`, `QVAC_VLM_DEVICES`, `QVAC_VLM_TASKS`, `NO_GPU`);
-the several-sources CLIs are built and driven by `cli-fixture-runner.cjs`.
+`QVAC_VLM_MODELS`, `QVAC_VLM_SCENARIOS`, `QVAC_VLM_SAMPLES`, `QVAC_VLM_REPEATS`,
+`QVAC_VLM_DEVICES`, `QVAC_VLM_TASKS`, `NO_GPU`); the several-sources CLIs are built and
+driven by `cli-fixture-runner.cjs`. `node run-desktop.cjs --selfcheck` validates the
+config/contract wiring without running any model.
 
 ---
 
@@ -314,13 +320,32 @@ The benchmark is meant to grow. The three common changes:
 
 ---
 
+## Contract & parallel development
+
+Active development (QVAC-19371 umbrella) is split into two independent workstreams —
+**runner** (sources, methodology, metrics: `harness.cjs`, `models.cjs`, `sources.cjs`,
+`methodology.cjs`, `run-desktop.cjs`, `config.cjs`, the workflow run jobs) and
+**report** (scenarios, scoring, gate, views: `scenarios.cjs`, `aggregate.js`,
+`combine.cjs`, `fixture*`, `score-check.cjs`, the workflow inputs + combine job).
+They meet only at the frozen interface in **`CONTRACT.md`** (marker schema v2, env
+vars, launch grammar); `markers-v2.sample.log` is its executable sample — the report
+side develops against it, `node run-desktop.cjs --selfcheck` validates it.
+
+---
+
 ## Files
 
 All in `packages/llm-llamacpp/benchmarks/vlm-benchmark/` unless noted:
 
 | | |
 |---|---|
-| `config.cjs` | the single source of truth: modes, presets, model catalog |
+| `CONTRACT.md`, `markers-v2.sample.log` | **the frozen runner↔report contract** (marker schema v2, env vars, launch grammar) + its executable sample |
+| `config.cjs` | run-side source of truth: modes, presets, model catalog, sources, methodology |
+| `scenarios.cjs` | workload definitions (tasks, scoring set, gate tolerance) — report-side owned |
+| `models.cjs` | `matrix_models` grammar → canonical model specs (any model via two URLs) |
+| `sources.cjs`, `methodology.cjs` | source tokens + measurement methodology helpers (A2/A3 build on these) |
+| `run-desktop.cjs` | desktop run driver scaffold + `--selfcheck` contract guard |
+| `combine.cjs` | combine driver: log discovery, host tagging, provenance, report, gate (B4) |
 | `vlm-matrix.test.js`, `harness.cjs` | harness (loads models, emits markers) |
 | `aggregate.js` | parses markers → report |
 | `cli-fixture-runner.cjs` | runs the fixture through a native CLI (several-sources) |

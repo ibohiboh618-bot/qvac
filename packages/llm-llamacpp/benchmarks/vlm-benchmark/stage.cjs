@@ -18,8 +18,11 @@ const ASSETS = path.resolve(HERE, '..', '..', 'test', 'mobile', 'testAssets')
 const IMAGES = path.join(HERE, 'images')
 
 // The entry + the modules it requires must sit together in test/integration so the
-// entry's `./harness.cjs` / harness's `./config.cjs` `./fixture.data.cjs` resolve.
-const CODE = ['vlm-matrix.test.js', 'harness.cjs', 'config.cjs', 'fixture.data.cjs']
+// entry's `./harness.cjs` / harness's `./config.cjs` etc. resolve. Stage EVERY
+// .cjs sibling (plus the entry) instead of a hand-kept list, so adding a module
+// to this folder never requires touching this file — unreferenced copies are
+// inert (the mobile bundler only follows requires from the entry).
+const CODE = fs.readdirSync(HERE).filter(f => f.endsWith('.cjs') || f === 'vlm-matrix.test.js')
 
 fs.mkdirSync(INTEG, { recursive: true })
 fs.mkdirSync(ASSETS, { recursive: true })

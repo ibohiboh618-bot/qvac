@@ -82,9 +82,10 @@ const SOURCES_MODEL = {
     { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
 }
 
-// Open-licensed fixture tasks (regenerate/curate via build-fixture.cjs;
-// per-image attribution in fixture.NOTICE.md).
-const TASKS = ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d']
+// Scenario definitions (the workload axis — which fixture tasks run, how they
+// are scored) live in their own file so the scenarios/reporting workstream
+// owns them without touching this one. The task lists live there too.
+const SCENARIOS = require('./scenarios.cjs')
 
 module.exports = {
   // ════════════════════════ MODE — what is compared ════════════════════════
@@ -103,6 +104,44 @@ module.exports = {
   base: MODEL_1.label,
   candidate: MODEL_2.label,
 
+  // ════════════════════════ MODEL CATALOG — known-good short names ════════════════════════
+  // Convenience only — the matrix_models launch param also accepts ad-hoc
+  // <llm-url>|<mmproj-url> pairs for ANY model with no catalog entry (see
+  // CONTRACT.md §3 and models.cjs). Add entries for regulars; a catalog entry
+  // may carry a per-model `baseline` override for the gate.
+  catalog: {
+    'qwen3.5-f16': MODEL_1,
+    'qwen3.5-q8': MODEL_2,
+    'qwen3.5-0.8b-q8': SOURCES_MODEL
+    // 'gemma4-2b': … — pending the B1 runnability spike (SHA.gemmaBart is pinned above)
+  },
+  // What runs when matrix_models is empty (two-models mode).
+  defaultModels: ['qwen3.5-f16', 'qwen3.5-q8'],
+
+  // ════════════════════════ SOURCES — builds under comparison ════════════════════════
+  // Tokens for the matrix_sources launch param (parsed by sources.cjs).
+  // addon@candidate/addon@baseline are wired by A2; fabric/upstream run via the
+  // several-sources CLI path (Linux-only).
+  sources: {
+    'addon@candidate': { type: 'addon', ref: 'branch' },
+    'addon@baseline': { type: 'addon', ref: 'npm' },
+    fabric: { type: 'fabric-cli', ref: 'v8189.0.2' },
+    upstream: { type: 'upstream-cli', ref: 'b8189' }
+  },
+  // The published addon version the gate compares candidates against when a
+  // model has no per-catalog-entry `baseline` pin. Bump deliberately.
+  defaultBaseline: { npm: '0.24.0' },
+
+  // ════════════════════════ SCENARIOS — what kind of work ════════════════════════
+  scenarios: SCENARIOS,
+  defaultScenario: 'vqa-suite',
+
+  // ════════════════════════ METHODOLOGY — how rounds run (A3) ════════════════════════
+  // warmup + measured blocks per source, median reported, blocks interleaved
+  // across sources, stability guard between blocks ('auto': temperature sensor
+  // on macmini, timing-probe elsewhere). Consumed by methodology.cjs.
+  methodology: { warmupBlocks: 1, measuredBlocks: 3, statistic: 'median', interleave: true, stability: 'auto' },
+
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of
   // the mode. The fallback on every target when QVAC_VLM_PRESET is unset (the workflow
@@ -114,11 +153,13 @@ module.exports = {
   defaultPreset: 'base',
 
   presets: {
-    // smoke — 1 task, 1 image, 1 repeat: a single inference per config (wiring check).
-    smoke: { tasks: ['textvqa'], samplesPerTask: 1, repeats: 1, devices: null },
-    // base — DEFAULT eval: 5 tasks × 3 samples × 1 repeat.
-    base: { tasks: TASKS, samplesPerTask: 3, repeats: 1, devices: null },
-    // full — 5 tasks × 5 samples × 1 repeat (the complete fixture).
-    full: { tasks: TASKS, samplesPerTask: 5, repeats: 1, devices: null }
+    // smoke — first task of the active scenario, 1 image, 1 repeat: a single
+    // inference per config (wiring check). maxTasks (not a task list) so it
+    // works under any scenario, not just vqa-suite.
+    smoke: { tasks: null, maxTasks: 1, samplesPerTask: 1, repeats: 1, devices: null },
+    // base — DEFAULT eval: all the active scenario's tasks × 3 samples × 1 repeat.
+    base: { tasks: null, samplesPerTask: 3, repeats: 1, devices: null },
+    // full — all scenario tasks × 5 samples × 1 repeat (the complete fixture).
+    full: { tasks: null, samplesPerTask: 5, repeats: 1, devices: null }
   }
 }

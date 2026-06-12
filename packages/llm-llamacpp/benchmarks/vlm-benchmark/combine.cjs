@@ -1,0 +1,131 @@
+'use strict'
+// QVAC-19371 (A1): combine driver — everything the workflow's matrix-combine job
+// does after downloading artifacts, moved into this folder so report changes
+// never touch the workflow YAML. Discovers per-leg logs, tags each with its
+// platform host, synthesizes mobile provenance, renders the consolidated report
+// via aggregate.js, and (B4) enforces the accuracy gate via the exit code.
+//
+//   node combine.cjs --dir matrix-logs --out consolidated/report.md \
+//     --title "…" --mode two-models --engine addon --run-number 7
+//
+// OWNERSHIP: report workstream (Dev B). Host-tagging rules:
+//   • desktop logs vlm-matrix-<host>-<backend>.log → host from the filename
+//   • Android logcat_full / iOS bare_console      → host = device-model slug
+//     (Galaxy_S25→s25, Pixel_9→pixel9, iPhone_17_Pro→iphone17pro); files with
+//     no device in the name are the collector's generic duplicates → skipped.
+
+const fs = require('fs')
+const path = require('path')
+const { parseLog, build } = require('./aggregate.js')
+
+const DEVICE_RE = /Galaxy_S[0-9]+|Pixel_[0-9]+|iPhone_[0-9]+(_Pro(_Max)?)?/
+
+function hostOf (file) {
+  const m = path.basename(file).match(DEVICE_RE)
+  if (!m) return null
+  return m[0].toLowerCase().replace(/^galaxy_/, '').replace(/_/g, '')
+}
+
+function walk (dir) {
+  const out = []
+  let entries = []
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch (_) { return out }
+  for (const e of entries) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) out.push(...walk(p))
+    else out.push(p)
+  }
+  return out
+}
+
+function parseArgs (argv) {
+  const a = { dir: 'matrix-logs', out: null, title: 'VLM Matrix', mode: '', engine: '', runNumber: '' }
+  for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === '--dir') a.dir = argv[++i]
+    else if (argv[i] === '--out') a.out = argv[++i]
+    else if (argv[i] === '--title') a.title = argv[++i]
+    else if (argv[i] === '--mode') a.mode = argv[++i]
+    else if (argv[i] === '--engine') a.engine = argv[++i]
+    else if (argv[i] === '--run-number') a.runNumber = argv[++i]
+  }
+  return a
+}
+
+function main () {
+  const args = parseArgs(process.argv)
+  const files = walk(args.dir).sort()
+  const lc = f => path.basename(f).toLowerCase()
+
+  // ── inputs: [host label, file] pairs ────────────────────────────────────
+  const inputs = []
+  for (const f of files) {
+    const m = path.basename(f).match(/^vlm-matrix-([a-z0-9]+)-[a-z]+\.log$/)
+    if (m) inputs.push({ label: m[1], file: f })
+  }
+  for (const f of files) {
+    if (!lc(f).includes('logcat_full')) continue
+    const h = hostOf(f)
+    if (h) inputs.push({ label: h, file: f })
+  }
+  for (const f of files) {
+    if (!(f.includes('iOS') && lc(f).includes('bare_console'))) continue
+    const h = hostOf(f)
+    if (h) inputs.push({ label: h, file: f })
+  }
+
+  // ── provenance: desktop prov-*.md as-is + synthesized mobile blocks ─────
+  const prov = []
+  for (const f of files) if (/^prov-.*\.md$/.test(path.basename(f))) prov.push(fs.readFileSync(f, 'utf8'))
+  const seen = new Set()
+  for (const f of files) {
+    if (!lc(f).includes('logcat_full')) continue
+    const h = hostOf(f)
+    if (!h || seen.has(h)) continue
+    seen.add(h)
+    const txt = fs.readFileSync(f, 'utf8')
+    const pick = (re) => { const m = txt.match(re); return m ? m[1] : null }
+    const devName = (path.basename(f).match(/(Samsung|Google)_[A-Za-z0-9_]*/) || [''])[0]
+      .replace(/_logcat_full.*/, '').replace(/_/g, ' ')
+    const ramB = parseInt(pick(/totalMemory: (\d+)/) || '0', 10)
+    prov.push([
+      `**${h}** — ${devName || 'Android device'} (AWS Device Farm)`,
+      `- device: ${pick(/model=([A-Za-z0-9-]+)/) || '?'} · Android ${pick(/platformVersionRelease=(\d+)/) || '?'} · ${pick(/supportedAbis=([a-z0-9-]+)/) || 'arm64-v8a'}`,
+      `- ram: ${ramB ? (ramB / 1073741824).toFixed(1) + ' GB' : '?'} · gpu: ${/AdrenoVK|vulkan\.adreno/i.test(txt) ? 'Adreno (Vulkan)' : '?'}`,
+      '- engine: `@qvac/llm-llamacpp` addon (published prebuild)'
+    ].join('\n'))
+  }
+  for (const f of files) {
+    if (!(f.includes('iOS') && lc(f).includes('bare_console'))) continue
+    const h = hostOf(f)
+    if (!h || seen.has(h)) continue
+    seen.add(h)
+    const dev = (path.basename(f).match(/Apple_[A-Za-z0-9_]*/) || [''])[0]
+      .replace(/_bare_console.*/, '').replace(/_/g, ' ')
+    prov.push([
+      `**${h}** — ${dev || 'Apple iPhone'} (AWS Device Farm)`,
+      '- engine: `@qvac/llm-llamacpp` addon (published prebuild)'
+    ].join('\n'))
+  }
+
+  console.error('combine inputs: ' + (inputs.map(i => `[${i.label}] ${i.file}`).join('\n                ') || '(none)'))
+
+  let md
+  if (!inputs.length) {
+    md = `> No VLM matrix logs found for run #${args.runNumber || '?'}.`
+  } else {
+    const { rows, vision, meta } = parseLog(inputs)
+    md = build(rows, vision, meta, prov.join('\n\n'), args.title,
+      { mode: args.mode, engine: args.engine })
+  }
+  process.stdout.write(md + '\n')
+  if (args.out) {
+    fs.mkdirSync(path.dirname(args.out), { recursive: true })
+    fs.writeFileSync(args.out, md + '\n')
+  }
+
+  // TODO(B4): accuracy gate — compare addon@candidate vs addon@baseline per
+  // scenario against scenarios.cjs tolerances and process.exit(1) on FAIL.
+  process.exit(0)
+}
+
+if (require.main === module) main()

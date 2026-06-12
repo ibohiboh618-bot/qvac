@@ -1,0 +1,76 @@
+# VLM Benchmark — Contract v2 (A1)
+
+The frozen interface between the two parallel workstreams:
+
+- **Runner side (Dev A)** — *produces* markers: `harness.cjs`, `models.cjs`, `sources.cjs`,
+  `methodology.cjs`, `run-desktop.cjs`, `build-cli-sources.js`/`cli-*`, `config.cjs`,
+  the workflow's `context`/`matrix-desktop`/`matrix-mobile`/`prebuild` jobs.
+- **Report side (Dev B)** — *consumes* markers: `aggregate.js`, `scorers` (B2), `combine.cjs`,
+  `scenarios.cjs`, `fixture*`/`build-fixture.cjs`, `score-check.cjs`, the workflow's
+  `inputs:` block and `matrix-combine` job.
+
+**Change rule:** the runner may *add* marker fields, never rename/remove; the report must
+*ignore* unknown fields and unknown `[VLM*]` marker kinds. Any change to THIS file after the
+freeze requires a sync between both devs. `markers-v2.sample.log` is the executable
+half of this contract — Dev B builds report views against it; `node run-desktop.cjs
+--selfcheck` validates it (and the config wiring) without running any model.
+
+## 1 · Marker schema v2 (additive over v1)
+
+`[VLMROW]{json}[/VLMROW]` — one inference. v1 fields unchanged (`cell`, `source`, `model`,
+`device`, `rep`, `task`, `id`, `metric`, `gold`, `pred`, `img`, `img_w/h`, `ms`,
+`decode_tps`, `ttft_ms`, `gen_tokens`, `prompt_tokens`, `error`). New:
+
+| field | meaning |
+|---|---|
+| `v` | schema version (`2`); absent = legacy v1 row (still parsed) |
+| `scenario` | active workload, key into `scenarios.cjs` (e.g. `vqa-suite`) |
+| `source_id` | which build produced the row: `addon`, `addon@candidate`, `addon@baseline`, `fabric@<ref>`, `upstream@<ref>` |
+| `source_ref` | resolved version: `npm:<ver>` \| `git:<sha>` \| tag |
+| `block` | measurement round: `0` = warmup (excluded from stats), `1..N` = measured; report takes the **median** across blocks |
+| `rss_mb` | peak process memory so far (MB); `null` where unavailable (phones until A4 lands beyond Linux) |
+
+`[VLMSEG]`/`[VLMMETA]` gain `v`, `scenario`, `source_id`, `source_ref` (SEG also `block`).
+New optional `[VLMBLOCK]{json}` — one per measurement round: `{scenario, source_id,
+source_ref, model, device, block, stability:{kind:'temp'|'probe', value_ms?, waited_ms}}`.
+
+## 2 · Env contract (desktop: workflow env · phones: the pushed device-config file)
+
+| var | value |
+|---|---|
+| `QVAC_VLM_MODELS` | models grammar (§3); may be wrapped `b64:<base64(utf8)>` (used for the on-device transport). Empty = config defaults |
+| `QVAC_VLM_SCENARIOS` | CSV of scenario names; **the runner currently executes the first token** (multi-scenario reserved). Empty = `config.defaultScenario` |
+| `QVAC_VLM_SOURCE_ID` / `QVAC_VLM_SOURCE_REF` | stamped into markers by the leg that knows what build it runs |
+| existing | `QVAC_VLM_MODE/PRESET/DEVICES/SAMPLES/REPEATS/TASKS`, `NO_GPU`, `QVAC_VLM_MATRIX` — unchanged |
+
+## 3 · Launch grammar (`gh workflow run` inputs)
+
+**`matrix_models`** — comma-separated, three forms, freely mixed; empty = config `defaultModels`:
+
+```
+qwen3.5-q8                                        # catalog name (config.cjs catalog)
+[label=]<llm-url>|<mmproj-url>[@ctx=N]            # ANY new model: two https URLs, zero code changes
+json:[{label, ctx_size, llm:{source}, mmproj:{source}}, …]   # escape hatch (registry sources etc.)
+```
+
+`|` separates the blobs (never appears unencoded in URLs). `huggingface.co/...resolve/<ref>/...`
+URLs are reported as Source=HF with repo+ref (unpinned refs flagged); other URLs as URL/S3.
+Registry-type sources: `json:` form only, desktop-only (no registry client in the mobile app).
+Presigned S3 URLs work for a one-off dispatch but expire — don't commit them to the catalog.
+
+**`matrix_sources`** — comma-separated builds-under-comparison: `addon` (published, default) ·
+`addon@candidate` / `addon@baseline` *(reserved — wired by A2)* · `fabric@<ref>` ·
+`upstream@<ref>` (CLI sources are Linux-only, several-sources mode).
+
+**`matrix_scenarios`** — scenario name(s) from `scenarios.cjs`; empty = `vqa-suite`.
+
+**`matrix_desktop` / `matrix_mobile` / `matrix_preset` / …** — unchanged (see README).
+GitHub caps `workflow_dispatch` at **10 inputs** — the set is exactly full; adding one means
+folding another.
+
+## 4 · Gate (consumed by B4)
+
+Per scenario, `scenarios.cjs` `tolerance` = max allowed accuracy drop of `addon@candidate`
+vs `addon@baseline`. The baseline addon version: per-model `baseline` pin in the catalog,
+else `config.defaultBaseline`. Ad-hoc (URL) models use `defaultBaseline` automatically.
+`combine.cjs` exits non-zero on a gate failure (turns the CI run red).
