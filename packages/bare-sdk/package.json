@@ -1,6 +1,6 @@
 {
   "name": "@qvac/bare-sdk",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "license": "Apache-2.0",
   "description": "Bare-targeted slim assembly of the QVAC SDK. Consumers install only the addon packages they need and register plugins explicitly. No addon dependencies pulled in by default.",
   "repository": {
@@ -164,7 +164,7 @@
     "bare-abort-controller": "^1.0.0",
     "bare-crypto": "^1.13.4",
     "bare-events": "^2.8.0",
-    "bare-fetch": "^2.5.1",
+    "bare-fetch": "^3.0.1",
     "bare-fs": "^4.5.1",
     "bare-net": "^2.2.0",
     "bare-os": "^3.6.2",
