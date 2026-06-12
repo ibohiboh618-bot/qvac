@@ -193,7 +193,6 @@ async function runGpuModelTest (t, modelType, modelPath, audio, expectations) {
 }
 
 test('CTC GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (platform === 'android') { t.pass('Android: GPU disabled at engine boundary pending Vulkan/Mali + OpenCL/Adreno upstream fixes'); return }
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'ctc')
@@ -207,7 +206,6 @@ test('CTC GPU smoke — useGPU=true must engage the GPU backend on GPU-capable p
 })
 
 test('TDT GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (platform === 'android') { t.pass('Android: GPU disabled at engine boundary pending Vulkan/Mali + OpenCL/Adreno upstream fixes'); return }
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'tdt')
@@ -225,7 +223,6 @@ test('TDT GPU smoke — useGPU=true must engage the GPU backend on GPU-capable p
 // the zero-token regression triggered by ggml-metal's Q-variant
 // mul_mv + bias/residual fusion on the EOU q8_0 joint network.
 test('EOU GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (platform === 'android') { t.pass('Android: GPU disabled at engine boundary pending Vulkan/Mali + OpenCL/Adreno upstream fixes'); return }
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'eou')
@@ -239,7 +236,6 @@ test('EOU GPU smoke — useGPU=true must engage the GPU backend on GPU-capable p
 })
 
 test('Sortformer GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (platform === 'android') { t.pass('Android: GPU disabled at engine boundary pending Vulkan/Mali + OpenCL/Adreno upstream fixes'); return }
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'sortformer')
