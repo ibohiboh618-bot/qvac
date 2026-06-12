@@ -328,7 +328,7 @@ Active development (QVAC-19371 umbrella) is split into two independent workstrea
 **report** (scenarios, scoring, gate, views: `scenarios.cjs`, `aggregate.js`,
 `combine.cjs`, `fixture*`, `score-check.cjs`, the workflow inputs + combine job).
 They meet only at the frozen interface in **`CONTRACT.md`** (marker schema v2, env
-vars, launch grammar); `markers-v2.sample.log` is its executable sample — the report
+vars, launch grammar); `markers-v2.sample.txt` is its executable sample — the report
 side develops against it, `node run-desktop.cjs --selfcheck` validates it.
 
 ---
@@ -339,7 +339,7 @@ All in `packages/llm-llamacpp/benchmarks/vlm-benchmark/` unless noted:
 
 | | |
 |---|---|
-| `CONTRACT.md`, `markers-v2.sample.log` | **the frozen runner↔report contract** (marker schema v2, env vars, launch grammar) + its executable sample |
+| `CONTRACT.md`, `markers-v2.sample.txt` | **the frozen runner↔report contract** (marker schema v2, env vars, launch grammar) + its executable sample |
 | `config.cjs` | run-side source of truth: modes, presets, model catalog, sources, methodology |
 | `scenarios.cjs` | workload definitions (tasks, scoring set, gate tolerance) — report-side owned |
 | `models.cjs` | `matrix_models` grammar → canonical model specs (any model via two URLs) |

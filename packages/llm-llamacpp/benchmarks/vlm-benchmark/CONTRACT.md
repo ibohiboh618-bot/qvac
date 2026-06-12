@@ -11,7 +11,7 @@ The frozen interface between the two parallel workstreams:
 
 **Change rule:** the runner may *add* marker fields, never rename/remove; the report must
 *ignore* unknown fields and unknown `[VLM*]` marker kinds. Any change to THIS file after the
-freeze requires a sync between both devs. `markers-v2.sample.log` is the executable
+freeze requires a sync between both devs. `markers-v2.sample.txt` is the executable
 half of this contract — Dev B builds report views against it; `node run-desktop.cjs
 --selfcheck` validates it (and the config wiring) without running any model.
 

@@ -39,7 +39,8 @@ function selfcheck () {
   if (planBlocks(['a', 'b'], config.methodology).length < 2) problems.push('planBlocks produced no plan')
 
   // sample markers conform to the v2 contract
-  const sample = fs.readFileSync(path.join(__dirname, 'markers-v2.sample.log'), 'utf8')
+  // .txt, not .log — the package-level .gitignore swallows *.log
+  const sample = fs.readFileSync(path.join(__dirname, 'markers-v2.sample.txt'), 'utf8')
   const need = ['v', 'scenario', 'source_id', 'source_ref', 'block', 'cell', 'model', 'device', 'task', 'metric']
   let rows = 0
   for (const line of sample.split(/\r?\n/)) {
