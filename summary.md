@@ -3,7 +3,7 @@
 **Goal (phase 1):** Reach ~2 s inference for DocTR (`db_mobilenet_v3_large` detector + `crnn_mobilenet_v3_small` recognizer) on the `clinical_chemistry` test image on a Pixel 9 Pro, preferably on Vulkan.
 **Goal (phase 2):** ~1.5 s warm, same image/device, no resolution or accuracy change.
 
-**Status:** **10.3 s → ~1.7 s warm** on real Mali (**~6×**, best run 1.65 s; runs 1.65–1.74 s under device DVFS). Phase 1 (10.3 → 2.6 s) landed the Vulkan op-level fixes and the **auto-hybrid** (CPU detection + Vulkan recognition on Mali). Phase 2 (2.6 → ~1.7 s) parallelised recognition across CPU+GPU and fixed a series of ggml CPU kernels for the detector (see §8). Accuracy is unchanged and now guarded per device run: boxes=197 and 12/12 clinical-chemistry keywords on every warm run. The remaining gap to 1.5 s is detector CPU conv compute (~0.95 s); the known levers left are int8 (Q8_0/i8mm) detector quantization (previously declined for medical-OCR accuracy risk) or a channels-contiguous (CWHN) graph re-plumb (large effort) — see §9.
+**Status: goal reached.** **10.3 s → ~1.55 s warm** on real Mali (**~6.7×**; best runs 1.54–1.55 s, typical 1.55–1.67 s under device DVFS). Phase 1 (10.3 → 2.6 s) landed the Vulkan op-level fixes and the **auto-hybrid** (CPU detection + Vulkan recognition on Mali). Phase 2 (2.6 → ~1.55 s, ten Firebase rounds) parallelised recognition across CPU+GPU and fixed a series of ggml CPU kernels for the detector (see §8). Accuracy is unchanged and guarded per device run: boxes=197 and 12/12 clinical-chemistry keywords on every warm run; the full recognized-token set is unchanged (verified at token level for every lever, incl. the opt-in Q8 path). Final warm split: detection ~0.81–0.86 s (CPU) + recognition ~0.70–0.79 s (Vulkan ∥ CPU).
 
 Work branch: `perf/doctr-vulkan-mali` (off `ocr-ggml-doctr-bn-fold`).
 
@@ -148,9 +148,9 @@ The per-op GPU profiler (236 ms) vs the real GPU wait (~3.6 s) discrepancy is th
 
 ---
 
-## 8. Phase 2: 2.6 s → ~1.7 s warm (the 1.5 s push)
+## 8. Phase 2: 2.6 s → ~1.55 s warm (the 1.5 s push)
 
-Eight Firebase Test Lab rounds on `caiman`, each driven by per-stage
+Ten Firebase Test Lab rounds on `caiman`, each driven by per-stage
 (`[DETPROF]`/`[RECPROF]`) and per-op (`[CPUPROF]`, new env-gated profiler in
 the fabric CPU backend) breakdowns. Warm baseline at start: det 1.42 s
 (all graph compute) + rec 1.19 s (feat 930 ms Vulkan + LSTM 242 ms GPU).
@@ -168,7 +168,7 @@ the fabric CPU backend) breakdowns. Warm baseline at start: det 1.42 s
 4. Ruled out: scalar-CPU LSTM (1.6–2.0 s), recognizer batch ≠ 32, nThreads=8
    (A520 efficiency-core stragglers; det 2.8 s).
 
-### 8.2 Detection: 1.42 s → ~0.95 s (ggml/fabric CPU kernels, patch pending upstream)
+### 8.2 Detection: 1.42 s → ~0.83 s (ggml/fabric CPU kernels, patch pending upstream)
 `[CPUPROF]` showed the CPU detector graph (explicit im2col+mul_mat lowering;
 the phase-1 KleidiAI prepack never actually engaged) spending:
 MUL_MAT 600 + IM2COL 460 + ADD 100 + scalar-depthwise 100 + CONT 75 + UPSCALE 60 ms.
@@ -178,8 +178,9 @@ Fabric fixes (in `ggml-cpu`):
   graph-compute loop (bias+activation applied in one pass; bit-identical
   formulas): ADD+UNARY ~135 → ~70 ms.
 - **Row-parallel im2col** (was channel-strided across threads → false sharing)
-  plus a **NEON-tiled 1×1 im2col transpose** (vectorised f32→f16, paired-
-  channel 32-bit stores): IM2COL 460 → ~380 ms.
+  plus a **NEON-tiled, two-level-blocked 1×1 im2col transpose** (vectorised
+  f32→f16, paired-channel 32-bit stores, 64-pixel × 64-channel L1-resident
+  tiles): IM2COL 460 → ~320 ms.
 - Parallelised `conv_transpose_2d` + contiguous-row UPSCALE fast path.
 - Conv-lowering A/B on device settled: **explicit im2col+mul_mat beats the
   fused GGML_OP_CONV_2D on ARM CPU** (0.95 s vs 1.15 s all-fused vs 1.0 s
@@ -193,23 +194,31 @@ The fabric changes live in
 **They must land as a qvac-fabric PR before CI prebuilds reflect these
 numbers** — locally they were hand-built into the test APKs.
 
-### 8.3 Final numbers (real Mali, Firebase `caiman`, warm, defaults)
+### 8.3 Q8_0 detector experiment (opt-in, not default)
+Eligible 1×1 conv weights (IC % 32 == 0) can be quantised to Q8_0 at load
+(`OCR_DOCTR_DET_Q8=1`, CPU detection only), quantised *after* the BN fold.
+Accuracy verified at token level: output identical to F16 except one
+already-unstable low-confidence token (which flips between the existing F16
+CPU and GPU backends as well); 31/31 integration asserts. On the Pixel 9 Pro
+the int8 GEMM gain is offset by the on-the-fly activation-quantise pass —
+warm totals within noise of F16 (1.54–1.61 s both) — so F16 stays the
+default and Q8 remains an experiment knob.
+
+### 8.4 Final numbers (real Mali, Firebase `caiman`, warm, defaults)
 | | detection | recognition | total | boxes / keywords |
 |---|---|---|---|---|
 | phase-1 result | 1.35–1.45 s | 1.19–1.22 s | **2.6 s** | 197 / 12-12 |
-| phase-2 result | 0.89–0.99 s | 0.70–0.77 s | **1.65–1.74 s** | 197 / 12-12 (guarded every run) |
+| phase-2 result | 0.81–0.86 s | 0.70–0.79 s | **1.54–1.67 s** (best 1.54) | 197 / 12-12 (guarded every run) |
 
-Cold run ~2.4–2.5 s (first-run Vulkan pipeline compile + LSTM warm-up,
-unchanged from phase 1). Desktop paths re-validated: Intel Vulkan 12/12,
-x64 CPU 12/12, full clinical-chemistry integration test 31/31 asserts.
+Cold run ~2.4–2.7 s (first-run Vulkan pipeline compile + LSTM warm-up,
+unchanged from phase 1; a persistent VkPipelineCache remains the known fix).
+Desktop paths re-validated: Intel Vulkan 12/12, x64 CPU 12/12, full
+clinical-chemistry integration test 31/31 asserts.
 
-## 9. Remaining ideas toward 1.5 s
-1. **Int8 (Q8_0 + i8mm) detector weights** for the eligible convs — the only
-   sizeable CPU-GEMM lever left (~150–250 ms). Previously declined for
-   medical-OCR accuracy risk; would need keyword/box/text-level verification.
-2. **CWHN (channels-contiguous) detector graph** — removes the im2col
+## 9. If even more is needed later
+1. **CWHN (channels-contiguous) detector graph** — removes the im2col
    transpose entirely for 1×1 convs and uses the vectorised cwhn depthwise
-   path (~250–300 ms), but touches every op in the graph (multi-day, needs
-   per-op layout audit).
-3. Mali driver-level work for full-Vulkan detection remains unattractive
+   path (est. ~200–300 ms), but touches every op in the graph (multi-day,
+   needs per-op layout audit).
+2. Mali driver-level work for full-Vulkan detection remains unattractive
    (phase-1 conclusion unchanged).
