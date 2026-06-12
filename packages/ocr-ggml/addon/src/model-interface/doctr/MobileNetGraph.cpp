@@ -195,6 +195,34 @@ struct GraphBuilder {
   struct ggml_tensor* conv2d(
       struct ggml_tensor* kernelT, struct ggml_tensor* x, int stride,
       int pad) const {
+    // Q8_0 twin present (CPU, OCR_DOCTR_DET_Q8=1): same im2col + mul_mat
+    // lowering as ggml_conv_2d but with the quantised 2D weight as the GEMM's
+    // src0 (quantised operands must be src0; the f16 im2col rows are
+    // quantised to Q8_0 on the fly inside mul_mat). The F16 4D tensor only
+    // provides the kernel dims for im2col.
+    if (auto qIt = w.find(std::string(ggml_get_name(kernelT)) + ".q8");
+        qIt != w.end()) {
+      struct ggml_tensor* im = ggml_im2col(
+          ctx,
+          kernelT,
+          x,
+          stride,
+          stride,
+          pad,
+          pad,
+          1,
+          1,
+          true,
+          GGML_TYPE_F16); // [IC*KH*KW, OW, OH, N]
+      struct ggml_tensor* im2 = ggml_reshape_2d(
+          ctx, im, im->ne[0], im->ne[1] * im->ne[2] * im->ne[3]);
+      struct ggml_tensor* r =
+          ggml_mul_mat(ctx, qIt->second, im2); // [OC, OW*OH*N]
+      r = ggml_reshape_4d(
+          ctx, r, qIt->second->ne[1], im->ne[1], im->ne[2], im->ne[3]);
+      // [OC, OW, OH, N] -> [OW, OH, OC, N]
+      return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));
+    }
     if (useFusedConv || (fusedSpatialConv && kernelT->ne[0] > 1)) {
       return ggml_conv_2d_direct(
           ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
@@ -727,6 +755,22 @@ WeightsBundle loadWeights(
     tensors.emplace(brName, broadcastBias);
   };
 
+  // Q8_0 weight quantization for eligible 1x1 convs (opt-in via
+  // OCR_DOCTR_DET_Q8=1, CPU backend only): the GEMM then runs int8 dot
+  // products (sdot/i8mm) instead of fp16 FMA. Only 1x1 kernels with
+  // IC % 32 == 0 qualify (Q8_0 blocks are 32 wide and the quantised weight
+  // is stored 2D [IC, OC]); spatial convs keep F16 (their f32 im2col would
+  // double the dominant im2col traffic). The twin tensor "<name>.q8" is
+  // quantised AFTER the BN scale fold, from the folded F16 weights.
+  bool detQ8 = false;
+  if (const char* q8Env = std::getenv("OCR_DOCTR_DET_Q8");
+      q8Env != nullptr && q8Env[0] == '1' && !backends.empty() &&
+      backends[0] != nullptr) {
+    const char* backendName = ggml_backend_name(backends[0]);
+    detQ8 = backendName != nullptr &&
+            std::string(backendName).find("CPU") != std::string::npos;
+  }
+
   auto addConvWeight = [&](const std::string& name) {
     if (!name.ends_with(".weight")) {
       raise(
@@ -742,6 +786,15 @@ WeightsBundle loadWeights(
                    bundle.ctx.get(), name.c_str(), ggml_n_dims(srcW), srcW->ne)
              : cloneRaw(bundle.ctx.get(), gguf, ggmlCtx, name.c_str());
     registerTensor(weightTensor);
+    if (detQ8 && !isDw && srcW != nullptr && srcW->ne[0] == 1 &&
+        srcW->ne[1] == 1 && srcW->ne[2] % 32 == 0 &&
+        weightTensor->type == GGML_TYPE_F16) {
+      const std::string q8Name = name + ".q8";
+      struct ggml_tensor* q8 = ggml_new_tensor_2d(
+          bundle.ctx.get(), GGML_TYPE_Q8_0, srcW->ne[2], srcW->ne[3]);
+      ggml_set_name(q8, q8Name.c_str());
+      tensors.emplace(q8Name, q8);
+    }
     addBiasBroadcast(
         name.substr(0, name.size() - std::string(".weight").size()) + ".bias");
     return weightTensor;
@@ -944,10 +997,10 @@ WeightsBundle loadWeights(
   // Copy raw tensor bytes (for cloneRaw) into the backend buffer.
   for (auto& [name, dst] : tensors) {
     if (name.ends_with(".scale") || name.ends_with(".shift") ||
-        name.ends_with(".bias_br") || name == "classifier.0.weight" ||
-        name == "classifier.0.bias" || name == "classifier.3.weight" ||
-        name == "classifier.3.bias") {
-      continue; // handled in the second pass
+        name.ends_with(".bias_br") || name.ends_with(".q8") ||
+        name == "classifier.0.weight" || name == "classifier.0.bias" ||
+        name == "classifier.3.weight" || name == "classifier.3.bias") {
+      continue; // handled in the second pass (.q8 after the BN fold)
     }
     struct ggml_tensor* src = ggml_get_tensor(ggmlCtx, name.c_str());
     if (src == nullptr) {
@@ -1181,6 +1234,44 @@ WeightsBundle loadWeights(
   // uploadClassifierTensor("classifier.0.bias");
   // uploadClassifierTensor("classifier.3.weight");
   // uploadClassifierTensor("classifier.3.bias");
+
+  // Quantise the Q8_0 twins from the (BN-scale-folded) F16 conv weights —
+  // must run after every fold pass above so the quantised weights carry the
+  // same effective values as the F16 ones they replace in the graph.
+  int q8Count = 0;
+  for (auto& [name, dst] : tensors) {
+    if (!name.ends_with(".q8")) {
+      continue;
+    }
+    const std::string baseName =
+        name.substr(0, name.size() - std::string(".q8").size());
+    auto bIt = tensors.find(baseName);
+    if (bIt == tensors.end() || bIt->second->type != GGML_TYPE_F16) {
+      raise("Q8 quantisation: missing or non-F16 base weight for " + name);
+    }
+    struct ggml_tensor* base = bIt->second;
+    const int64_t nPerRow = dst->ne[0]; // IC
+    const int64_t nRows = dst->ne[1];   // OC
+    if (ggml_nelements(base) != nPerRow * nRows) {
+      raise("Q8 quantisation: element-count mismatch for " + name);
+    }
+    std::vector<ggml_fp16_t> half(static_cast<size_t>(nPerRow * nRows));
+    ggml_backend_tensor_get(
+        base, half.data(), 0, half.size() * sizeof(ggml_fp16_t));
+    std::vector<float> full(half.size());
+    fp16ToFp32(half.data(), full.data(), half.size());
+    std::vector<uint8_t> qbuf(ggml_nbytes(dst));
+    ggml_quantize_chunk(
+        GGML_TYPE_Q8_0, full.data(), qbuf.data(), 0, nRows, nPerRow, nullptr);
+    ggml_backend_tensor_set(dst, qbuf.data(), 0, qbuf.size());
+    ++q8Count;
+  }
+  if (q8Count > 0) {
+    QLOG(
+        qvac_lib_inference_addon_cpp::logger::Priority::INFO,
+        "[MobileNetGraph] quantised " + std::to_string(q8Count) +
+            " 1x1 conv weights to Q8_0");
+  }
 
   return bundle;
 }

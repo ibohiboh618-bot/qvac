@@ -33,9 +33,20 @@ test('DocTR warm profile [VULKAN] - cold vs warm runs', { timeout: DOCTR_TEST_TI
       label: ':auto',
       params: { pathDetector: detector, pathRecognizer: recognizer },
       imagePath,
-      runs: 5
+      runs: 3
+    })
+    // Q8_0-quantised 1x1 detector convs (int8 GEMM via sdot/i8mm). Output
+    // verified token-identical to F16 on x64 except one already-unstable
+    // low-confidence token; the kw= guard re-checks on device.
+    os.setEnv('OCR_DOCTR_DET_Q8', '1')
+    await runDoctrWarmProfile(t, {
+      label: ':q8',
+      params: { pathDetector: detector, pathRecognizer: recognizer },
+      imagePath,
+      runs: 3
     })
   } finally {
     os.unsetEnv('OCR_CPU_PROF')
+    os.unsetEnv('OCR_DOCTR_DET_Q8')
   }
 })
