@@ -8,7 +8,7 @@ This is a dependency-maintenance patch. `@qvac/sdk` and `@qvac/bare-sdk` adopt `
 
 ## Maintenance
 
-Bump bare-fetch to ^3.0.1 (adopt 3.x; public fetch API unchanged). Bump dev bare-subprocess to ^6.1.0.
+Bump bare-fetch to ^3.0.1 (adopt 3.x; public fetch API unchanged). Bump dev bare-subprocess to ^6.1.0. Bump `@qvac/decoder-audio` floor to ^0.4.0, which drops the deprecated `@qvac/response` (consolidated into `@qvac/infer-base`) and thereby removes its exact `bare-events 2.4.2` pin from the SDK dependency tree.
 
 The bare-fetch 2→3 jump is a transitive-only major: the public fetch API is unchanged. The only 3.x behavior change is 3.0.1 header validation, and every SDK header construction (`new Headers({ 'User-Agent': ... })`, `append('Range', 'bytes=…')`) already builds RFC-valid headers. The bare-subprocess 5→6 bump is dev-only and affects no shipped code.
 
