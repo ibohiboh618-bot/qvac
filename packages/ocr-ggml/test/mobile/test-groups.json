@@ -15,9 +15,12 @@
       "runFullOcrSuiteTest"
     ],
     "regularB": [
+      "runAndroidVulkanTest",
       "runBackendDeviceTest",
+      "runBatchedRecognizerTest",
       "runCanvasSizeTest",
       "runImageFormatsTest",
+      "runKernelPrecisionTest",
       "runLargeImagesTest",
       "runLifecycleTest",
       "runOcrBasicTest",
@@ -43,8 +46,10 @@
     ],
     "regularB": [
       "runBackendDeviceTest",
+      "runBatchedRecognizerTest",
       "runCanvasSizeTest",
       "runImageFormatsTest",
+      "runKernelPrecisionTest",
       "runLargeImagesTest",
       "runLifecycleTest",
       "runOcrBasicTest",

@@ -226,6 +226,42 @@ and the index selection share one code path).
   as an interim lever (e.g. in CI or a launcher script) when you cannot pass
   `gpuDevice` through the API. It does not affect Metal.
 
+### Kernel precision (`OCR_GGML_CRAFT_KERNEL_F32/F16` / `OCR_GGML_CRNN_KERNEL_F32/F16`)
+
+The EasyOCR pipeline can store its convolution kernels as **F16** in the
+weights buffer, which lets ggml take the faster F16 im2col→GEMM conv path (and
+run on GPU backends). Kernels are cast F32→F16 at model-load time from the F32
+GGUF — no separate F16 model file is needed, and biases plus the
+BatchNorm-fold math stay F32 (the recognizer's LSTM / linear / Prediction
+weights also stay F32).
+
+F16 only helps where the **resolved backend** has a fast F16 GEMM, so the
+default is **backend-aware** (decided at model-load time from the selected ggml
+device):
+
+| Resolved backend / device | Default |
+|---|---|
+| GPU / iGPU with fast F16 (NVIDIA, Apple Metal, Intel, AMD…) | **F16** |
+| Mali GPU (Vulkan) | **F32** (its F16 GEMM is ~4× slower) |
+| Apple-Silicon CPU (native FP16) | **F16** |
+| Other CPUs — x86, non-Apple ARM (F16 emulated) | **F32** |
+
+> Adreno Vulkan is already skipped by backend selection (it runs on CPU), so it
+> follows the CPU rule above.
+
+Per-pipeline env vars override the backend-aware default (read once when the
+model is loaded; only the exact value `1` applies; `_F32` wins if both are set):
+
+| Env var | Affects | Effect |
+|---|---|---|
+| `OCR_GGML_CRAFT_KERNEL_F32=1` | CRAFT **detector** conv kernels | force F32 |
+| `OCR_GGML_CRAFT_KERNEL_F16=1` | CRAFT **detector** conv kernels | force F16 |
+| `OCR_GGML_CRNN_KERNEL_F32=1` | CRNN gen-2 **recognizer** feature-extractor conv kernels | force F32 |
+| `OCR_GGML_CRNN_KERNEL_F16=1` | CRNN gen-2 **recognizer** feature-extractor conv kernels | force F16 |
+
+These are useful for A/B-benchmarking the F16 fast path or bisecting an accuracy
+regression. None of them affect the DocTR pipeline.
+
 ### `run(input)` shape
 
 ```ts
@@ -415,6 +451,53 @@ OCR_GGML_BACKEND=vulkan \
 OCR_GGML_DETECTOR=$PWD/models/craft_mlt_25k.gguf \
 OCR_GGML_RECOGNIZER=$PWD/models/latin_g2.gguf \
 npm run test:integration
+```
+
+### Android Vulkan (mobile suite)
+
+Android is the primary mobile Vulkan target, and the `android-arm64` prebuild
+ships the Vulkan backend lib (`libqvac-ggml-vulkan.so`). The mobile suite runs
+on AWS Device Farm (see `test/mobile/test-groups.json`), where the harness
+defaults to **CPU** — so a dedicated test,
+[`test/integration/android-vulkan.test.js`](./test/integration/android-vulkan.test.js)
+(`runAndroidVulkanTest`, in the `android` → `regularB` shard), explicitly
+requests `backendDevice: 'vulkan'`. It asserts the addon either runs on a
+Vulkan device or reports an explicit CPU fallback, **and** — whichever backend
+is resolved — that the OCR output is correct (an accuracy gate, not just an
+"it executed" check). The test runs only on Android and is a clean skip on
+desktop and iOS (iOS has no Vulkan).
+
+> **Adreno caveat.** Adreno Vulkan is numerically broken (cos-sim ~0.73 vs
+> reference on Adreno 830 / Galaxy S25, while Mali / Metal / NVIDIA sit above
+> 0.999 — see `vla-ggml`). `OcrBackendSelection` therefore **auto-skips Adreno
+> GPUs for Vulkan** and falls back to CPU (an explicit `gpuDevice` index still
+> overrides this to force an Adreno device on purpose). The accuracy gate above
+> is the backstop that catches a numerically-broken Vulkan device that slips
+> through.
+
+### CPU-vs-Vulkan benchmark
+
+The `Benchmark Performance (OCR-GGML)` workflow reuses the integration suites,
+which already record **both** a Vulkan (`[GPU]`) and a forced-CPU (`[CPU]`) pass
+for each test on a GPU host (`runOcrComparison` / `runDoctrComparison`, tagged
+via the `backendIsGpu` stat). The shared perf-report aggregator
+(`scripts/perf-report/aggregate.js`) pairs those rows per device + test and
+renders a **"CPU → Vulkan Speedup"** section (markdown + HTML) showing
+`speedup = CPU mean / Vulkan mean` for total / detection / recognition time.
+The section only appears when a test ran on both backends, so non-GPU runs are
+unaffected.
+
+On mobile, Android also attempts Vulkan (see below); Mali devices (e.g. Pixel)
+fill the GPU column, while Adreno devices auto-fall-back to CPU. To compare
+**output quality** (not just speed) across backends, the Python quality
+benchmark takes a `--backend` flag:
+
+```bash
+python benchmarks/quality_eval/benchmark_100.py \
+  --pipeline easyocr \
+  --detector models/craft_mlt_25k.gguf \
+  --recognizer models/latin_g2.gguf \
+  --backend vulkan   # cpu (default) | vulkan — falls back to CPU when unavailable
 ```
 
 ## Repository layout
