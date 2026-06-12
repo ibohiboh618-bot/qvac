@@ -29,7 +29,8 @@
 const SHA = {
   qwenUnsloth: '6ab461498e2023f6e3c1baea90a8f0fe38ab64d0', // registry: Qwen3.5 main + f16 mmproj
   qwenMrader: '9d48fdbc0d8f133716da87ec1d904e5d2c7175a6', //  registry: Qwen3.5 q8 mmproj
-  gemmaBart: 'b5e99bd964eaacc27ba484bb2eb3e9f6160b9143' //    Gemma main + f16 mmproj
+  gemmaBart: 'b5e99bd964eaacc27ba484bb2eb3e9f6160b9143', //   registry: Gemma-4-E2B q4 main (+ f16/bf16 mmproj)
+  gemmaGgml: 'a1dac71d3ab220618f5a7573a52acdc4baf3ae3b' //    registry: Gemma-4-E2B q8 mmproj
 }
 
 // Apache-2.0 Qwen mmproj blobs are published in the QVAC registry; the pinned HF URL
@@ -66,6 +67,22 @@ const MODEL_2 = {
   mmproj: hf('reg-qwen-mradermacher-mmproj-Q8_0.gguf', `mradermacher/Qwen3.5-0.8B-GGUF@${SHA.qwenMrader.slice(0, 10)} · mmproj-Q8_0`,
     'mradermacher/Qwen3.5-0.8B-GGUF', SHA.qwenMrader, 'Qwen3.5-0.8B.mmproj-Q8_0.gguf',
     { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
+}
+
+// Gemma-4-E2B: Q4_K_M main + Q8_0 mmproj — both QVAC-registry-published
+// (registry-server data/models.prod.json); the pinned HF URLs below are the
+// registry entries' canonical sources (byte-identical, work on every target —
+// the mobile app has no P2P registry client).
+const GEMMA4_Q4 = {
+  label: 'gemma4-q4',
+  name: 'Gemma-4-E2B-it · Q4_K_M + mmproj-Q8',
+  ctx_size: '4096',
+  llm: hf('reg-gemma4-e2b-Q4_K_M.gguf', `bartowski/google_gemma-4-E2B-it-GGUF@${SHA.gemmaBart.slice(0, 10)}`,
+    'bartowski/google_gemma-4-E2B-it-GGUF', SHA.gemmaBart, 'google_gemma-4-E2B-it-Q4_K_M.gguf',
+    { license: 'Gemma', link: 'https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF' }),
+  mmproj: hf('reg-gemma4-e2b-mmproj-Q8_0.gguf', `ggml-org/gemma-4-E2B-it-GGUF@${SHA.gemmaGgml.slice(0, 10)} · mmproj-Q8_0`,
+    'ggml-org/gemma-4-E2B-it-GGUF', SHA.gemmaGgml, 'mmproj-gemma-4-E2B-it-Q8_0.gguf',
+    { license: 'Gemma', link: 'https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF' })
 }
 
 // ════════════════════ THE MODEL FOR SOURCE COMPARISON (several-sources mode) ════════════════════
@@ -112,8 +129,8 @@ module.exports = {
   catalog: {
     'qwen3.5-f16': MODEL_1,
     'qwen3.5-q8': MODEL_2,
-    'qwen3.5-0.8b-q8': SOURCES_MODEL
-    // 'gemma4-2b': … — pending the B1 runnability spike (SHA.gemmaBart is pinned above)
+    'qwen3.5-0.8b-q8': SOURCES_MODEL,
+    'gemma4-q4': GEMMA4_Q4
   },
   // What runs when matrix_models is empty (two-models mode).
   defaultModels: ['qwen3.5-f16', 'qwen3.5-q8'],

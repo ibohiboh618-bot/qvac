@@ -114,8 +114,26 @@ function main () {
     md = `> No VLM matrix logs found for run #${args.runNumber || '?'}.`
   } else {
     const { rows, vision, meta } = parseLog(inputs)
+    // Two-models Highlights compare a base cell vs a candidate cell by LABEL.
+    // With launch-time models (matrix_models) the labels can be anything, so
+    // derive them from the rows: the committed config pair when both actually
+    // ran, else the first two distinct cells in marker order. (The B3 view
+    // rework replaces this pairwise selection with per-block tables.)
+    let base, candidate
+    if (args.mode !== 'several-sources') {
+      const cells = [...new Set(rows.map(r => r.cell).filter(Boolean))]
+      let CONFIG = {}
+      try { CONFIG = require('./config.cjs') } catch (_) {}
+      if (cells.includes(CONFIG.base) && cells.includes(CONFIG.candidate)) {
+        base = CONFIG.base
+        candidate = CONFIG.candidate
+      } else {
+        base = cells[0]
+        candidate = cells[1]
+      }
+    }
     md = build(rows, vision, meta, prov.join('\n\n'), args.title,
-      { mode: args.mode, engine: args.engine })
+      { mode: args.mode, engine: args.engine, base, candidate })
   }
   process.stdout.write(md + '\n')
   if (args.out) {
