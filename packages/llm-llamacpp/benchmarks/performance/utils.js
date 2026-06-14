@@ -135,6 +135,7 @@ function buildConfigObject (runtimeConfig) {
   const config = {}
   for (const [key, value] of Object.entries(runtimeConfig)) {
     if (value === null || value === undefined) continue
+    if (key === 'sampling-preset') continue
     if (key === 'flash-attn') {
       if (value === true) {
         config[key] = 'on'

@@ -8,6 +8,7 @@
     "prepare:prompts": "bare ./prepare-prompts.js",
     "verify:prompts": "bare ./verify-prompts.js",
     "run:param-sweep": "node ./run-param-sweep.js",
+    "run:qwen35-preset-sweep": "node ./run-qwen35-preset-sweep.js",
     "run:judge": "node ./prepare-models.js --target addon && bare ./run-judge.js"
   },
   "dependencies": {

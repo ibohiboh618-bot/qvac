@@ -188,3 +188,26 @@ Baseline settings from `llm-parameter-sweep.config.js`:
 | `device` | gpu | |
 
 Model list and quantization files come from `models.manifest.json`.
+
+## Qwen3.5 Sampling Preset Benchmarks
+
+Use `qwen-preset-prompts.json` with a focused prompt-case list to compare QVAC
+defaults with Qwen/Unsloth sampling presets without expanding the full runtime
+grid:
+
+```bash
+npm run run:qwen35-preset-sweep
+```
+
+The wrapper writes results to `./results/qwen3.5-scaled` and accepts additional
+CLI flags after `--`, for example `npm run run:qwen35-preset-sweep -- --force`.
+
+The primary presets are `qvac-current`, `qwen-thinking-general`,
+`qwen-thinking-conservative`, and `qwen-thinking-low-penalty`. The
+`qwen-nonthinking-general` preset is a diagnostic latency and loop bound, not a
+default recommendation.
+
+Tool prompt cases use fake tool definitions only. The benchmark records whether
+the model emitted a parseable tool call with the expected name and required
+arguments; it does not execute commands, MCP tools, network calls, or CLI /
+calendar / Drive / GitHub / Slack / Asana / Gmail / Sheets side effects.

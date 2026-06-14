@@ -1,0 +1,264 @@
+[
+  {
+    "id": "direct-qa",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a concise assistant. Think if useful, then answer the user's question directly."
+      },
+      {
+        "role": "user",
+        "content": "A user asks whether their laptop can charge from a 65W USB-C phone charger. Explain the likely answer, include one caveat, and keep the final answer under 120 words."
+      }
+    ]
+  },
+  {
+    "id": "reasoning-heavy",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a careful assistant. Use reasoning to avoid mistakes, then give a short final answer."
+      },
+      {
+        "role": "user",
+        "content": "Three services start at 09:00. Service A runs every 12 minutes, service B every 18 minutes, and service C every 30 minutes. After 09:00, when is the first time all three run at the same time again? Show the calculation briefly."
+      }
+    ]
+  },
+  {
+    "id": "structured-output",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Return only valid JSON. Do not wrap the answer in markdown."
+      },
+      {
+        "role": "user",
+        "content": "Extract this request into JSON with keys action, target, priority, and blockers: \"Please migrate the registry metrics dashboard this week, but only after the staging scrape target is verified.\""
+      }
+    ]
+  },
+  {
+    "id": "loop-stress",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Answer clearly and stop when the answer is complete."
+      },
+      {
+        "role": "user",
+        "content": "Give exactly three reasons why a small language model might repeat itself during generation. Use one sentence per reason and do not add more than three sentences."
+      }
+    ]
+  },
+  {
+    "id": "tool-run-cli",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. If a tool is needed, emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Check the local git working tree status. Use a safe command only."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "run_cli",
+      "requiredArgs": ["command"],
+      "requiredArgPatterns": {
+        "command": "^\\s*git\\s+status(\\s+--short)?\\s*$"
+      },
+      "forbiddenArgPatterns": {
+        "command": "[;&|`$<>]"
+      }
+    }
+  },
+  {
+    "id": "tool-web-search",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. If current information is needed, emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Look up the latest public release notes for Qwen3.5 small models."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "web_search",
+      "requiredArgs": ["query"],
+      "requiredArgPatterns": {
+        "query": "qwen\\s*3\\.?5.*(release|notes)|((release|notes).*qwen\\s*3\\.?5)"
+      }
+    }
+  },
+  {
+    "id": "tool-google-calendar",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call with the needed calendar fields and stop."
+      },
+      {
+        "role": "user",
+        "content": "Create a 30 minute meeting called Qwen benchmark review on 2026-06-14 at 10:00 with Alex and Priya."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "google_calendar",
+      "requiredArgs": ["operation", "title", "date", "time", "attendees"],
+      "requiredArgPatterns": {
+        "operation": "create|add|schedule|book",
+        "title": "qwen.*benchmark.*review|benchmark.*review.*qwen",
+        "date": "2026-06-14",
+        "time": "10(:00)?|10\\s*am",
+        "attendees": "alex.*priya|priya.*alex"
+      }
+    }
+  },
+  {
+    "id": "tool-google-drive",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Find the architecture advice process document in Google Drive. Prefer markdown or Google Docs results."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "google_drive",
+      "requiredArgs": ["query"],
+      "requiredArgPatterns": {
+        "query": "architecture.*advice.*process|advice.*process.*architecture"
+      }
+    }
+  },
+  {
+    "id": "tool-github",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Inspect pull request 2444 in tetherto/qvac and list the failing checks."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "github",
+      "requiredArgs": ["operation", "repo", "number"],
+      "requiredArgPatterns": {
+        "operation": "get[_ -]?pr|inspect[_ -]?pr|list[_ -]?checks|checks",
+        "repo": "^tetherto/qvac$",
+        "number": "^2444$"
+      }
+    }
+  },
+  {
+    "id": "tool-slack",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Post a Slack update to #sdk-platforms saying: Qwen preset benchmark is ready for review."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "slack",
+      "requiredArgs": ["operation", "channel", "text"],
+      "requiredArgPatterns": {
+        "operation": "post|send|message",
+        "channel": "^#?sdk-platforms$",
+        "text": "qwen.*preset.*benchmark.*ready.*review|qwen.*benchmark.*ready.*review"
+      }
+    }
+  },
+  {
+    "id": "tool-asana",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Create an Asana task in QVAC SDK & Platforms called Investigate Qwen tool-call failures, due 2026-06-17, assigned to Maya."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "asana",
+      "requiredArgs": ["operation", "project", "title", "dueDate", "assignee"],
+      "requiredArgPatterns": {
+        "operation": "create|add",
+        "project": "qvac.*sdk.*platforms",
+        "title": "investigate.*qwen.*tool.*call.*failures",
+        "dueDate": "2026-06-17",
+        "assignee": "maya"
+      }
+    }
+  },
+  {
+    "id": "tool-gmail",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Draft an email to qvac-team@example.com with subject Qwen benchmark summary and body mentioning the scaled preset report."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "gmail",
+      "requiredArgs": ["operation", "to", "subject", "body"],
+      "requiredArgPatterns": {
+        "operation": "draft|create",
+        "to": "^qvac-team@example\\.com$",
+        "subject": "qwen.*benchmark.*summary",
+        "body": "scaled.*preset.*report|preset.*report"
+      }
+    }
+  },
+  {
+    "id": "tool-google-sheets",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a tool-using assistant. Emit a single tool call and stop."
+      },
+      {
+        "role": "user",
+        "content": "Append a row to spreadsheet Qwen Benchmark Results, sheet runs, with model qwen3.5-4b, preset qwen-nonthinking-general, score 100."
+      }
+    ],
+    "tools": "qwen-preset-fake-tools",
+    "expectedTool": {
+      "name": "google_sheets",
+      "requiredArgs": ["operation", "spreadsheet", "sheet", "values"],
+      "requiredArgPatterns": {
+        "operation": "append|add",
+        "spreadsheet": "qwen.*benchmark.*results",
+        "sheet": "^runs$",
+        "values": "qwen3\\.5-4b.*qwen-nonthinking-general.*100|100.*qwen3\\.5-4b"
+      }
+    }
+  }
+]

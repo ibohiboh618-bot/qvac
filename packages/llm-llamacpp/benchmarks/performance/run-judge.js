@@ -11,6 +11,47 @@ const {
   buildConfigObject
 } = require('./utils')
 const { round, average } = require('./math')
+const { toMarkdown } = require('./reporters')
+
+const BASELINE_AGREEMENT_RUBRIC = 'Return only a number between 0 and 1 for semantic agreement.'
+
+function rawCommand (argv) {
+  return argv.join(' ')
+}
+
+function buildJudgeMarkdownReport (records, inputJsonl, outputJsonl, judgeInfo) {
+  const modelsById = new Map()
+  for (const record of records) {
+    const modelId = String(record.modelId || 'unknown')
+    if (!modelsById.has(modelId)) {
+      modelsById.set(modelId, {
+        modelId,
+        source: record.source || null,
+        modelDir: record.modelDir || null,
+        cases: []
+      })
+    }
+    modelsById.get(modelId).cases.push(record)
+  }
+
+  const firstRecord = records[0] || {}
+  return {
+    startedAt: firstRecord.startedAt || null,
+    finishedAt: new Date().toISOString(),
+    repeats: firstRecord.repeats ?? null,
+    promptsCount: firstRecord.promptsCount ?? null,
+    sweep: firstRecord.sweep || null,
+    totalCases: records.length,
+    totalPlannedRuns: firstRecord.totalPlannedRuns ?? null,
+    totalCompletedRuns: records.reduce((acc, record) => acc + Number(record.repeatsAttempted || 0), 0),
+    jsonlPath: outputJsonl,
+    judgedFrom: inputJsonl,
+    benchmarkCommand: firstRecord.benchmarkCommand || null,
+    runtime: firstRecord.runtime || null,
+    judge: judgeInfo,
+    models: [...modelsById.values()]
+  }
+}
 
 function clamp01 (value) {
   if (typeof value !== 'number' || Number.isNaN(value)) return null
@@ -34,7 +75,7 @@ function buildJudgeMessages (reference, candidate) {
   return [
     {
       role: 'system',
-      content: 'Return only a number between 0 and 1 for semantic agreement.'
+      content: BASELINE_AGREEMENT_RUBRIC
     },
     {
       role: 'user',
@@ -67,6 +108,10 @@ function readJsonlRecords (jsonlPath) {
       throw new Error(`Invalid JSONL at ${jsonlPath}:${idx + 1} -> ${error.message || String(error)}`)
     }
   })
+}
+
+function writeJsonlRecords (jsonlPath, records) {
+  fs.writeFileSync(jsonlPath, records.map((record) => JSON.stringify(record)).join('\n') + '\n')
 }
 
 function trimForJudge (value, maxChars) {
@@ -271,6 +316,8 @@ async function main () {
   }
 
   const outFd = fs.openSync(outputJsonl, 'w')
+  const judgedRecords = []
+  const finishedAt = new Date().toISOString()
   try {
     for (const record of records) {
       const modelId = String(record.modelId || '')
@@ -285,41 +332,80 @@ async function main () {
           ? baselineByModelPrompt.get(baselineKey)
           : null
         let qualityJudge = p && p.qualityJudge != null && !forceRescore ? p.qualityJudge : null
+        let baselineAgreementStatus = 'unscored'
 
-        if (record.isBaseline || (p && p.qualityMatch === 1.0)) {
+        if (record.isBaseline) {
+          qualityJudge = null
+          baselineAgreementStatus = 'reference'
+        } else if (p && p.qualityMatch === 1.0) {
           qualityJudge = 1.0
+          baselineAgreementStatus = 'exact-match'
         } else if (p && p.error) {
           qualityJudge = null
+          baselineAgreementStatus = 'prompt-error'
         } else if (qualityJudge == null && baseline != null && candidate != null) {
           qualityJudge = scoredPairs.get(pairKey(baseline, candidate)) ?? null
+          baselineAgreementStatus = qualityJudge == null ? 'judge-null' : 'scored'
+        } else if (baseline == null) {
+          baselineAgreementStatus = 'missing-baseline'
+        } else if (candidate == null) {
+          baselineAgreementStatus = 'missing-candidate'
+        } else {
+          baselineAgreementStatus = 'scored'
         }
 
         judgedPrompts.push({
           ...p,
           baselineReference: baseline,
-          qualityJudge
+          qualityJudge,
+          baselineAgreementStatus
         })
       }
 
       const promptScores = judgedPrompts
-        .filter((p) => !p.error && p.qualityJudge != null)
+        .filter((p) => !record.isBaseline && !p.error && p.qualityJudge != null)
         .map((p) => p.qualityJudge)
       const qualityJudge = round(average(promptScores), 6)
+      const promptStatuses = judgedPrompts
+        .map((p) => p.baselineAgreementStatus)
+        .filter(Boolean)
+      const baselineAgreementStatus = record.isBaseline
+        ? 'reference'
+        : (promptStatuses.some((status) => status === 'scored' || status === 'exact-match')
+            ? 'scored'
+            : (promptStatuses[0] || 'unscored'))
 
       const judgedRecord = {
         ...record,
+        finishedAt,
+        role: record.isBaseline ? 'reference' : (record.role || 'candidate'),
+        baselineAgreementStatus,
         qualityJudge,
         promptResults: judgedPrompts
       }
+      judgedRecords.push(judgedRecord)
       fs.writeSync(outFd, `${JSON.stringify(judgedRecord)}\n`)
     }
   } finally {
     fs.closeSync(outFd)
   }
+  writeJsonlRecords(outputJsonl, judgedRecords)
+
+  const markdownPath = path.join(
+    path.dirname(outputJsonl),
+    `${path.basename(outputJsonl, '.jsonl')}.md`
+  )
+  fs.writeFileSync(markdownPath, toMarkdown(buildJudgeMarkdownReport(judgedRecords, inputJsonl, outputJsonl, {
+    command: rawCommand(process.argv),
+    modelId: judgeModelId,
+    quantization: judgeQuant,
+    rubric: BASELINE_AGREEMENT_RUBRIC
+  })))
 
   console.log('Judge scoring complete.')
   console.log(`Input: ${inputJsonl}`)
   console.log(`Output: ${outputJsonl}`)
+  console.log(`Markdown: ${markdownPath}`)
   console.log(`Judge model: ${judgeModelId} (${judgeQuant})`)
   console.log(`Unique scored pairs: ${scoreTasks.size}`)
   console.log(`Reused existing judge scores: ${reusedCount}`)

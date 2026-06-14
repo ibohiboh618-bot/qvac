@@ -40,6 +40,69 @@ const BENCH_DEFAULT_RUNTIME = {
 const MODEL_RUNTIME_OVERRIDES = {
 }
 
+const SAMPLING_PRESETS = {
+  'qvac-current': {
+    description: 'Current benchmark baseline.',
+    config: {
+      temp: '0.1',
+      'top-p': '0.9',
+      'top-k': '40',
+      'repeat-penalty': '1.1',
+      'presence-penalty': '0',
+      'frequency-penalty': '0',
+      'reasoning-budget': '-1'
+    }
+  },
+  'qwen-thinking-general': {
+    description: 'Qwen/Unsloth recommended thinking preset for general tasks.',
+    config: {
+      temp: '1.0',
+      'top-p': '0.95',
+      'top-k': '20',
+      'repeat-penalty': '1.0',
+      'presence-penalty': '1.5',
+      'frequency-penalty': '0',
+      'reasoning-budget': '-1'
+    }
+  },
+  'qwen-thinking-conservative': {
+    description: 'Lower entropy Qwen sampling while keeping reasoning enabled.',
+    config: {
+      temp: '0.7',
+      'top-p': '0.8',
+      'top-k': '20',
+      'repeat-penalty': '1.0',
+      'presence-penalty': '1.5',
+      'frequency-penalty': '0',
+      'reasoning-budget': '-1'
+    }
+  },
+  'qwen-thinking-low-penalty': {
+    description: 'Qwen thinking preset with presence penalty disabled.',
+    config: {
+      temp: '1.0',
+      'top-p': '0.95',
+      'top-k': '20',
+      'repeat-penalty': '1.0',
+      'presence-penalty': '0',
+      'frequency-penalty': '0',
+      'reasoning-budget': '-1'
+    }
+  },
+  'qwen-nonthinking-general': {
+    description: 'Diagnostic latency/loop bound with reasoning disabled.',
+    config: {
+      temp: '0.7',
+      'top-p': '0.8',
+      'top-k': '20',
+      'repeat-penalty': '1.0',
+      'presence-penalty': '1.5',
+      'frequency-penalty': '0',
+      'reasoning-budget': '0'
+    }
+  }
+}
+
 function getDefaultSweepDevices () {
   const platform = os.platform()
   // Default to GPU on desktop and most platforms; keep CPU in Android defaults.
@@ -60,8 +123,10 @@ function buildQuantizationFiles (manifestModel, resolvedModelEntry) {
   }
 
   const fallback = {}
+  const repoName = String(manifestModel.gguf && manifestModel.gguf.repo).split('/').slice(-1)[0]
+  const stem = repoName.toUpperCase().endsWith('-GGUF') ? repoName.slice(0, -5) : repoName
   for (const quantization of manifestQuants) {
-    fallback[quantization] = null
+    fallback[quantization] = `${stem}-${String(quantization).toUpperCase()}.gguf`
   }
   return fallback
 }
@@ -87,6 +152,7 @@ function loadModelsFromManifest () {
       modelDir: DEFAULT_MODELS_DIR,
       quantizations: Array.isArray(model.gguf.quantizations) ? model.gguf.quantizations : [],
       quantizationFiles,
+      samplingPresets: SAMPLING_PRESETS,
       defaults
     }
   })
@@ -97,6 +163,7 @@ const MODELS = loadModelsFromManifest()
 // Parameter sweep: full factorial (cartesian product)
 const PARAMETER_SWEEP = {
   quantization: ['Q4_0', 'Q4_K_M', 'Q8_0', 'F16'],
+  'sampling-preset': ['qvac-current'],
   device: getDefaultSweepDevices(),
   'ctx-size': DEFAULT_SWEEP_CTX_SIZES.map(String),
   threads: ['2', '4', '8'],
@@ -117,6 +184,7 @@ module.exports = {
   DEFAULT_PROMPTS_FILE,
   BENCH_DEFAULT_RUNTIME,
   MODEL_RUNTIME_OVERRIDES,
+  SAMPLING_PRESETS,
   MODELS,
   PARAMETER_SWEEP
 }

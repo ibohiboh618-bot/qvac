@@ -35,6 +35,7 @@ function quantizationPatterns (quantization) {
   if (q === 'F16') patterns.push('f16', 'fp16', 'bf16')
   else if (q === 'F32') patterns.push('f32', 'fp32')
   else if (q === 'Q8_0') patterns.push('q8_0', 'q8-0', 'q8.0', 'q80')
+  else if (q === 'Q6_K') patterns.push('q6_k', 'q6-k', 'q6k')
   else if (q === 'Q4_0') patterns.push('q4_0', 'q4-0', 'q4.0', 'q40')
   else if (q === 'Q4_K_M') patterns.push('q4_k_m', 'q4-k-m', 'q4km')
   return [...new Set(patterns)]

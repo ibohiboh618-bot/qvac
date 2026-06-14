@@ -3,6 +3,7 @@
 const fs = require('bare-fs')
 const path = require('bare-path')
 const process = require('bare-process')
+const os = require('bare-os')
 const {
   parseAddonSource,
   resolveAddonCtor,
@@ -22,6 +23,8 @@ const {
   isAdaptivePromptId,
   selectPromptForCase,
   getAdaptiveBaselineKey,
+  buildPromptMessages,
+  evaluatePromptOutput,
   aggregateRunMetrics,
   loadPromptsFromFile,
   loadPreviousCaseRecords,
@@ -35,6 +38,45 @@ const {
   MODELS,
   PARAMETER_SWEEP
 } = require('./llm-parameter-sweep.config')
+
+function rawCommand (argv) {
+  return argv.join(' ')
+}
+
+function runtimeMetadata (addonSource) {
+  let cpuModel = null
+  try {
+    const cpus = os.cpus()
+    if (Array.isArray(cpus) && cpus[0] && cpus[0].model) cpuModel = cpus[0].model
+  } catch {}
+  return {
+    addonSource,
+    platform: os.platform(),
+    arch: os.arch(),
+    cpuModel
+  }
+}
+
+function finalizeJsonlFinishedAt (jsonlPath, finishedAt) {
+  let raw = ''
+  try {
+    raw = fs.readFileSync(jsonlPath, 'utf8')
+  } catch {
+    return
+  }
+  const lines = raw.split('\n').filter(Boolean)
+  const nextLines = []
+  for (const line of lines) {
+    try {
+      const record = JSON.parse(line)
+      record.finishedAt = finishedAt
+      nextLines.push(JSON.stringify(record))
+    } catch {
+      nextLines.push(line)
+    }
+  }
+  fs.writeFileSync(jsonlPath, `${nextLines.join('\n')}\n`)
+}
 
 async function main () {
   const args = parseArgs(process.argv)
@@ -144,6 +186,8 @@ async function main () {
     finishedAt: null,
     repeats,
     promptsCount: PROMPTS_PER_CASE,
+    benchmarkCommand: rawCommand(process.argv),
+    runtime: runtimeMetadata(addonSource),
     sweep,
     selectedModelIds,
     jsonlPath,
@@ -188,6 +232,8 @@ async function main () {
         sweep: report.sweep,
         totalCases: report.totalCases,
         totalPlannedRuns: report.totalPlannedRuns,
+        benchmarkCommand: report.benchmarkCommand,
+        runtime: report.runtime,
         modelId: modelDef.id,
         source: modelDef.source,
         modelDir: modelDef.modelDir,
@@ -199,6 +245,7 @@ async function main () {
         modelName: caseResult.modelName,
         runtimeConfig: caseResult.runtimeConfig,
         isBaseline: caseResult.isBaseline,
+        role: caseResult.isBaseline ? 'reference' : 'candidate',
         metrics: caseResult.metrics,
         qualityMatch: caseResult.qualityMatch,
         promptResults: caseResult.promptResults || [],
@@ -331,7 +378,8 @@ async function main () {
         const caseMetricSamples = {
           runMs: [],
           ttftMs: [],
-          tps: []
+          tps: [],
+          runMsPerGeneratedToken: []
         }
         let firstPromptTokens = null
         let firstGeneratedTokens = null
@@ -340,6 +388,7 @@ async function main () {
 
           // Run repeats for this prompt
           const runMetrics = []
+          const repeatResults = []
           let firstOutput = null
           let promptError = null
 
@@ -348,7 +397,7 @@ async function main () {
               const runStart = process.hrtime()
               let timeToFirstToken = null
               const chunks = []
-              const response = await model.run(prompt.messages)
+              const response = await model.run(buildPromptMessages(prompt))
               await response.onUpdate((data) => {
                 if (timeToFirstToken === null) {
                   timeToFirstToken = elapsedMs(runStart)
@@ -367,13 +416,22 @@ async function main () {
                 ttftMs: round(ttftMs, 3),
                 tps: round(stats.TPS != null ? stats.TPS : null, 3),
                 promptTokens: stats.promptTokens ?? null,
-                generatedTokens: stats.generatedTokens ?? null
+                generatedTokens: stats.generatedTokens ?? null,
+                runMsPerGeneratedToken: stats.generatedTokens != null && Number(stats.generatedTokens) > 0
+                  ? round(runMs / Number(stats.generatedTokens), 6)
+                  : null
               }
 
               runMetrics.push(metrics)
+              repeatResults.push({
+                repeat,
+                metrics,
+                qualityChecks: evaluatePromptOutput(prompt, outputText, metrics, testCase.runtimeConfig)
+              })
               caseMetricSamples.runMs.push(metrics.runMs)
               if (metrics.ttftMs != null) caseMetricSamples.ttftMs.push(metrics.ttftMs)
               if (metrics.tps != null) caseMetricSamples.tps.push(metrics.tps)
+              if (metrics.runMsPerGeneratedToken != null) caseMetricSamples.runMsPerGeneratedToken.push(metrics.runMsPerGeneratedToken)
               if (firstPromptTokens == null && metrics.promptTokens != null) firstPromptTokens = metrics.promptTokens
               if (firstGeneratedTokens == null && metrics.generatedTokens != null) firstGeneratedTokens = metrics.generatedTokens
               caseRepeatsAttempted += 1
@@ -442,6 +500,7 @@ async function main () {
 
             let qualityMatch = null
             let baselineReference = null
+            const qualityChecks = evaluatePromptOutput(prompt, firstOutput, aggregated, testCase.runtimeConfig)
             if (isAdaptivePromptId(prompt.id)) {
               const adaptiveKey = getAdaptiveBaselineKey(prompt.id)
               if (adaptiveKey) {
@@ -473,6 +532,8 @@ async function main () {
               promptId: prompt.id,
               metrics: aggregated,
               qualityMatch,
+              qualityChecks,
+              repeatResults,
               outputText: firstOutput,
               baselineReference
             })
@@ -538,7 +599,9 @@ async function main () {
               tpsMean: round(average(caseMetricSamples.tps), 3),
               tpsStd: round(stddev(caseMetricSamples.tps), 3),
               promptTokens: firstPromptTokens,
-              generatedTokens: firstGeneratedTokens
+              generatedTokens: firstGeneratedTokens,
+              runMsPerGeneratedTokenMean: round(average(caseMetricSamples.runMsPerGeneratedToken), 6),
+              runMsPerGeneratedTokenStd: round(stddev(caseMetricSamples.runMsPerGeneratedToken), 6)
             }
           : null
 
@@ -565,6 +628,8 @@ async function main () {
             promptId: p.promptId,
             metrics: p.metrics,
             qualityMatch: p.qualityMatch,
+            qualityChecks: p.qualityChecks || null,
+            repeatResults: Array.isArray(p.repeatResults) ? p.repeatResults : [],
             outputText: typeof p.outputText === 'string' ? p.outputText : null,
             baselineReference: typeof p.baselineReference === 'string' ? p.baselineReference : null,
             error: p.error || null,
@@ -644,6 +709,7 @@ async function main () {
   }
 
   report.finishedAt = new Date().toISOString()
+  finalizeJsonlFinishedAt(jsonlPath, report.finishedAt)
   report.totalCompletedRuns = report.models.reduce((acc, model) => {
     const modelRuns = (model.cases || []).reduce((sum, item) => sum + Number(item.repeatsAttempted || 0), 0)
     return acc + modelRuns

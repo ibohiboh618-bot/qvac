@@ -2,6 +2,42 @@
   "version": 1,
   "models": [
     {
+      "id": "qwen3.5-0.8b",
+      "gguf": {
+        "repo": "unsloth/Qwen3.5-0.8B-GGUF",
+        "revision": "main",
+        "quantizations": ["Q4_K_M", "Q6_K", "Q8_0"]
+      },
+      "pytorch": {
+        "repo": "Qwen/Qwen3.5-0.8B",
+        "revision": "main"
+      }
+    },
+    {
+      "id": "qwen3.5-2b",
+      "gguf": {
+        "repo": "unsloth/Qwen3.5-2B-GGUF",
+        "revision": "main",
+        "quantizations": ["Q4_K_M", "Q8_0"]
+      },
+      "pytorch": {
+        "repo": "Qwen/Qwen3.5-2B",
+        "revision": "main"
+      }
+    },
+    {
+      "id": "qwen3.5-4b",
+      "gguf": {
+        "repo": "unsloth/Qwen3.5-4B-GGUF",
+        "revision": "main",
+        "quantizations": ["Q4_K_M", "Q8_0"]
+      },
+      "pytorch": {
+        "repo": "Qwen/Qwen3.5-4B",
+        "revision": "main"
+      }
+    },
+    {
       "id": "qwen3-1.7b",
       "gguf": {
         "repo": "unsloth/Qwen3-1.7B-GGUF",
