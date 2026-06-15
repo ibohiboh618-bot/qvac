@@ -31,12 +31,13 @@ namespace {
 // load() registers ggml backends (registration happens once per process). This
 // lets a Mali device attempt OpenCL first; it rejects the narrow subgroup at
 // ggml_cl2_init and falls through to Vulkan, logging the reason en route.
-// Harmless on Metal (no OpenCL backend) and on Adreno/iOS selection (Adreno
-// uses its own OpenCL tier, tried before the prefer-OpenCL block; iOS has no
-// non-Adreno OpenCL devices).
+// Android-only: this matters only for the on-device Mali run, and POSIX setenv
+// is unavailable under MSVC (clang-cl) on win32. No-op / harmless elsewhere.
 [[maybe_unused]] const int FORCE_OPENCL_ENV_INIT = [] {
+#if defined(__ANDROID__)
   ::setenv("GGML_OPENCL_FORCE_LOAD", "1", 1);
   ::setenv("GGML_OPENCL_ALLOW_UNKNOWN_GPU", "1", 1);
+#endif
   return 0;
 }();
 
