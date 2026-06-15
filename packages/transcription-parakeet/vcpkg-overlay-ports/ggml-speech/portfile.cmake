@@ -1,23 +1,25 @@
-# ggml-speech: tetherto/qvac-ext-ggml@speech HEAD 44fd4817 (PR #22,
-# "bci-whispercpp OpenCL correctness on Android GPUs (Adreno + Samsung
-# Xclipse)"). On top of the previous pin (1189e4ce, PR #19) it adds:
+# ggml-speech: tetherto/qvac-ext-ggml pinned at d8e138e6 -- the registry
+# ggml-speech pin 44fd4817 (PR #22, "bci-whispercpp OpenCL correctness on
+# Android GPUs (Adreno + Samsung Xclipse)") plus ONE ggml-vulkan change:
 #
-#   8bf760f4  ggml-vulkan: Parakeet on Adreno 740 Vulkan + Adreno guards
-#   e6578d01  ggml-vulkan: grow the descriptor-set pool on demand
-#   44fd4817  ggml-opencl: bci-whispercpp OpenCL correctness on Android
-#             GPUs (Adreno + Samsung Xclipse)
+#   d8e138e6  ggml-vulkan: route depthwise conv2d (GGML_OP_CONV_2D_DW) to
+#             CPU on ARM Mali -- the Valhall Vulkan driver miscomputes that
+#             op (non-deterministic inf), corrupting the parakeet subsampler;
+#             im2col + mul_mat stay on the GPU, so the rest of the encoder
+#             keeps running on Vulkan.
 #
-# These land the Adreno-740 Vulkan + Android OpenCL-correctness fixes the
-# tts-ggml (QVAC-20557) and transcription-parakeet (QVAC-20556) addons
-# need to run their graphs on the GPU on Android. The Android backend
-# packaging (GGML_BACKEND_DL=ON per-arch CPU variants + MODULE GPU .so)
-# is unchanged from the previous pin.
+# DO-NOT-MERGE diagnostic pin: device-farm validation that the dw-conv->CPU
+# gate fixes the Mali-Vulkan parakeet miscompute (the parakeet-cpp overlay's
+# per-stage bisect proves sub_conv1_dw relL2 drops from inf to ~0). The clean
+# ship rolls this commit through the qvac-registry-vcpkg ggml-speech port.
+# Android backend packaging (GGML_BACKEND_DL=ON per-arch CPU variants +
+# MODULE GPU .so) is unchanged from 44fd4817.
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF 44fd4817dd1dc5872053927200e2824b8a0ced86
-    SHA512 7d83537e5346fc1a1470e6b7ef191c55b02459ac139a841f39d319e7a5e11aea8e3ed0178cbbb0f0b9f2016e0b79c081411d31707368ccb637940fde3496ec14
+    REF d8e138e66b4892150096fa98924cad8b0ac91e9e
+    SHA512 76b6ca24cdfda6e1ce577ec3c4a90b461a9edfaf20364d00ee9fc375f3be66d76a6eb78d00f6c7d4cc640744fcf9eaf7b589d9ca77be5b0ce28af864b68e909d
     HEAD_REF speech
 )
 
