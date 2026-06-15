@@ -130,6 +130,7 @@ jobs:
           platform: ${{ matrix.platform }}
           addon-workdir: 'packages/embed-llamacpp'
           addon-npm-name: '@qvac/embed-llamacpp'
+          npm-token: ${{ secrets.NPM_TOKEN }}
           ios-build-cert-base64: ${{ secrets.TEST_APP_APPLE_DISTRIBUTION_CERTIFICATE }}
           ios-build-cert-password: ${{ secrets.APPLE_P12_PASSWORD }}
           ios-keychain-password: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
