@@ -1,8 +1,10 @@
-# tts-cpp — LOCAL OVERLAY PORT (Android GPU validation; DO NOT MERGE).
+# tts-cpp — LOCAL OVERLAY PORT (MALI-VULKAN PROBE; DO NOT MERGE).
 #
-# Replaces the registry tts-cpp port so the tts-ggml prebuild builds the
-# Android-GPU fixes not yet published to qvac-registry-vcpkg. Pins
-# tetherto/qvac-ext-lib-whisper.cpp @ aa2c9056 (4 commits on master ed749556):
+# THROWAWAY probe branch: pins tetherto/qvac-ext-lib-whisper.cpp @ 0aa594a6 =
+# the QVAC-20557 stack (below) + one extra commit that allowlists ARM Mali so
+# the device farm (Pixel 9 / Mali) attempts Mali Vulkan and surfaces its failure
+# mode (abort vs garbage) in the logs. The real PR (#2605) pins aa2c9056 (no
+# Mali). Builds the Android-GPU fixes not yet published to qvac-registry-vcpkg:
 #   1. dlopen reroute: Supertonic's direct CPU-backend calls are unlinkable
 #      under GGML_BACKEND_DL=ON; route ggml_get_type_traits_cpu(...)->from_float
 #      to ggml_quantize_chunk() and ggml_backend_is_cpu() to the registry shim
@@ -25,8 +27,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF aa2c9056c425aec7bacab70d79ea3d66b531ba1f
-    SHA512 2fc32d81e4ce9e759fd18544d8eb1f6e900628cd8806a7a679420a80bcb980dc5b70514afacf8f3302b0d4aa67ba336e76f8e117a06ccea971a4ff4df0de8686
+    REF 0aa594a6fa18bd61271c07197fbe2178f750f3d2
+    SHA512 9df14ca4b0174ccfc3aa99c62041f1a34c2be6bbf03c4ee4fc6778745455aadb9142152276b36cb9e1c8f2fc1ed511c22ac35baaf10da966424cee356f75abdf
     HEAD_REF master
 )
 
