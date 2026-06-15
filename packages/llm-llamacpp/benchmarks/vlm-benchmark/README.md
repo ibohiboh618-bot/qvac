@@ -210,9 +210,12 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
      optionally suffixed `-cpu`/`-gpu` (bare = both in one session). Empty = no mobile;
      two-models only — ignored for several-sources.
 
-**7. Scenario** — the kind of workload (`scenarios.cjs`): `vqa-suite` (default) ·
-   `image-description` · `ocr-highmp`.
-   - Dispatch: `-f matrix_scenarios=…` (every leg; forwarded to phones as device env).
+**7. Task set** — `scenarios.cjs` defines one `default` set: the 5 VQA tasks
+   (textvqa/vizwiz/gqa/docvqa/ai2d) + the OCR tasks (ocr-line/ocr-page). Quality is
+   reported per task, **not gated** (different models are compared, so there's no
+   candidate-vs-baseline accuracy regression to gate on). OCR tasks score by CER/WER/BLEU
+   in a separate table.
+   - Dispatch: `-f matrix_scenarios=…` (single set today; forwarded to phones as device env).
 
 **8. Samples / repeats / tasks.**
    - Samples — Config: preset `samplesPerTask`; Dispatch: `-f matrix_samples=N`.
@@ -228,7 +231,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 | `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (every leg) |
 | `matrix_models` | `config.defaultModels` | catalog names / `[label=]<llm-url>\|<mmproj-url>[@ctx=N]` / `json:[…]` (CONTRACT.md §3) |
 | `matrix_sources` | — | builds under comparison: `addon` \| `fabric@<ref>` \| `upstream@<ref>` (`addon@candidate/baseline` reserved, A2) |
-| `matrix_scenarios` | `config.defaultScenario` | workload: `vqa-suite` \| `image-description` \| `ocr-highmp` |
+| `matrix_scenarios` | `config.defaultScenario` | task set (single `default` today) |
 | `matrix_desktop` | — | desktop legs: `{linux,macos,macmini,windows}-{cpu,gpu}` (any subset) |
 | `matrix_mobile` | — | mobile legs: `{s25,pixel9,iphone16,iphone17,iphone17pro}[-{cpu,gpu}]` (any subset; empty = none; two-models only) |
 | `matrix_samples` | preset `samplesPerTask` | override samples/task, every leg (empty = default) |
@@ -341,7 +344,7 @@ All in `packages/llm-llamacpp/benchmarks/vlm-benchmark/` unless noted:
 |---|---|
 | `CONTRACT.md`, `markers-v2.sample.txt` | **the frozen runner↔report contract** (marker schema v2, env vars, launch grammar) + its executable sample |
 | `config.cjs` | run-side source of truth: modes, presets, model catalog, sources, methodology |
-| `scenarios.cjs` | workload definitions (tasks, scoring set, gate tolerance) — report-side owned |
+| `scenarios.cjs` | the task set (VQA + OCR) the benchmark runs — report-side owned |
 | `models.cjs` | `matrix_models` grammar → canonical model specs (any model via two URLs) |
 | `sources.cjs`, `methodology.cjs` | source tokens + measurement methodology helpers (A2/A3 build on these) |
 | `run-desktop.cjs` | desktop run driver scaffold + `--selfcheck` contract guard |

@@ -140,10 +140,10 @@ function main () {
     fs.mkdirSync(path.dirname(args.out), { recursive: true })
     fs.writeFileSync(args.out, md + '\n')
   }
-
-  // TODO(B4): accuracy gate — compare addon@candidate vs addon@baseline per
-  // scenario against scenarios.cjs tolerances and process.exit(1) on FAIL.
-  process.exit(0)
+  // No quality gate: this benchmark reports how good the models are per task (and one
+  // model across sources); it does not compare a candidate vs a baseline of the SAME
+  // model, so there's nothing to gate on. The run is green as long as it produced a
+  // report. (Speed candidate/baseline comparison, if any, is the runner workstream's.)
 }
 
 if (require.main === module) main()

@@ -24,7 +24,7 @@ half of this contract — Dev B builds report views against it; `node run-deskto
 | field | meaning |
 |---|---|
 | `v` | schema version (`2`); absent = legacy v1 row (still parsed) |
-| `scenario` | active workload, key into `scenarios.cjs` (e.g. `vqa-suite`) |
+| `scenario` | active task set, key into `scenarios.cjs` (currently just `default`) |
 | `source_id` | which build produced the row: `addon`, `addon@candidate`, `addon@baseline`, `fabric@<ref>`, `upstream@<ref>` |
 | `source_ref` | resolved version: `npm:<ver>` \| `git:<sha>` \| tag |
 | `block` | measurement round: `0` = warmup (excluded from stats), `1..N` = measured; report takes the **median** across blocks |
@@ -62,15 +62,22 @@ Presigned S3 URLs work for a one-off dispatch but expire — don't commit them t
 `addon@candidate` / `addon@baseline` *(reserved — wired by A2)* · `fabric@<ref>` ·
 `upstream@<ref>` (CLI sources are Linux-only, several-sources mode).
 
-**`matrix_scenarios`** — scenario name(s) from `scenarios.cjs`; empty = `vqa-suite`.
+**`matrix_scenarios`** — task-set name from `scenarios.cjs`; empty = `default` (the only set today).
 
 **`matrix_desktop` / `matrix_mobile` / `matrix_preset` / …** — unchanged (see README).
 GitHub caps `workflow_dispatch` at **10 inputs** — the set is exactly full; adding one means
 folding another.
 
-## 4 · Gate (consumed by B4)
+## 4 · Quality reporting (no gate)
 
-Per scenario, `scenarios.cjs` `tolerance` = max allowed accuracy drop of `addon@candidate`
-vs `addon@baseline`. The baseline addon version: per-model `baseline` pin in the catalog,
-else `config.defaultBaseline`. Ad-hoc (URL) models use `defaultBaseline` automatically.
-`combine.cjs` exits non-zero on a gate failure (turns the CI run red).
+This benchmark is **descriptive**: it reports how good each model is per task (and one
+model across sources). It does **not** gate on accuracy — it compares *different* models,
+not a candidate vs a baseline of the same model, so there's nothing to regress against.
+`combine.cjs` is green whenever it produced a report.
+
+Scoring families (each fixture item carries its own `metric`):
+- `vqa` / `anls` / `relaxed` / `mc` → higher-better, shown as `%` (Overall % = equal-weight mean).
+- `ocr` → **CER ↓ / WER ↓ / BLEU ↑**, shown in a **separate OCR table** (never blended into `%`).
+
+OCR fixture items (`ocr-line`, `ocr-page`) are hand-curated from S3 images — see
+`fixture/README.md`.

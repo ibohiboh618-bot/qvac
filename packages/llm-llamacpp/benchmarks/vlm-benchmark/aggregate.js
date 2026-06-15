@@ -13,7 +13,6 @@ const fs = require('fs')
 let CONFIG = {}
 try { CONFIG = require('./config.cjs') } catch (_) {}
 
-const TASKS = ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d']
 const ARTICLES = new Set(['a', 'an', 'the'])
 const PUNCT = /[;/[\]"{}()=+\\_\-><@`,?!.]/g
 
@@ -107,6 +106,54 @@ const SCORERS = {
 }
 function score (metric, pred, golds) { return (SCORERS[metric] || (() => 0))(pred, golds) }
 
+// ── OCR metrics ───────────────────────────────────────────────────────────
+// Classical-OCR scoring per VLM_General_Benchmark.md: CER/WER are error rates
+// (↓ lower better, 0 = perfect, >1 = worse-than-empty), BLEU is overlap (↑).
+// These live on their OWN path and feed a SEPARATE table — they are never mixed
+// into the higher-better "Overall %" quality table (mixing ↑ and ↓ is meaningless).
+const OCR_METRICS = new Set(['ocr', 'cer'])
+const ocrNorm = s => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim()
+const cerOne = (p, g) => g.length ? lev(p, g) / g.length : (p.length ? 1 : 0)
+// lev() compares by index + !==, so it works on word arrays too (word-level edits).
+const werOne = (p, g) => { const pw = p ? p.split(' ') : []; const gw = g ? g.split(' ') : []; return gw.length ? lev(pw, gw) / gw.length : (pw.length ? 1 : 0) }
+function ngrams (a, n) { const o = []; for (let i = 0; i + n <= a.length; i++) o.push(a.slice(i, i + n).join('')); return o }
+function bleuOne (p, g) {
+  const pw = p ? p.split(' ') : []; const gw = g ? g.split(' ') : []
+  if (!pw.length || !gw.length) return 0
+  let logsum = 0
+  for (let n = 1; n <= 4; n++) {
+    const pn = ngrams(pw, n); const gc = {}
+    for (const x of ngrams(gw, n)) gc[x] = (gc[x] || 0) + 1
+    let hit = 0; const used = {}
+    for (const x of pn) if ((gc[x] || 0) > (used[x] || 0)) { hit++; used[x] = (used[x] || 0) + 1 }
+    logsum += Math.log((hit + 1) / (pn.length + 1)) // add-1 smoothing (short strings)
+  }
+  const bp = pw.length >= gw.length ? 1 : Math.exp(1 - gw.length / pw.length) // brevity penalty
+  return bp * Math.exp(logsum / 4)
+}
+// Best (most charitable) over the gold alternatives: min error, max overlap.
+function ocrScore (pred, golds) {
+  const p = ocrNorm(pred); const gs = (golds || []).map(ocrNorm).filter(Boolean)
+  if (!gs.length) return { cer: null, wer: null, bleu: null }
+  return {
+    cer: Math.min(...gs.map(g => cerOne(p, g))),
+    wer: Math.min(...gs.map(g => werOne(p, g))),
+    bleu: Math.max(...gs.map(g => bleuOne(p, g)))
+  }
+}
+
+// Human-readable task names for the report (fallback to the raw id).
+const TASK_LABELS = {
+  textvqa: 'TextVQA — read text in natural photos',
+  vizwiz: 'VizWiz — blind-user photo questions',
+  gqa: 'GQA — compositional scene reasoning',
+  docvqa: 'DocVQA — document understanding (ANLS)',
+  ai2d: 'AI2D — science-diagram multiple choice',
+  'ocr-line': 'OCR · line — read a single word/line',
+  'ocr-page': 'OCR · page — full-page text recognition'
+}
+const taskLabel = t => TASK_LABELS[t] || t
+
 function parseArgs (argv) {
   const out = { files: [], inputs: [], title: 'VLM Matrix', outFile: null, prov: [], mode: '', engine: '', base: CONFIG.base || 'model_1', candidate: CONFIG.candidate || 'model_2' }
   for (let i = 2; i < argv.length; i++) {
@@ -188,6 +235,9 @@ const fmtNum = (x, d = 1) => x == null ? '—' : Number(x).toFixed(d)
 function build (rows, vision, meta, provText, title, opts = {}) {
   const base = opts.base || 'model_1'
   const candidate = opts.candidate || 'model_2'
+  // Warmup blocks (block 0) are excluded from every stat per CONTRACT.md — the first pass
+  // after a model load carries the JIT/shader spike. Legacy v1 rows (no block field) stay.
+  rows = rows.filter(r => r.block !== 0)
   // Drop the first segment per cell as warmup (Vulkan shader-compile / JIT spike on the
   // first encode after each model load) so the mean reflects steady-state encode cost.
   function visStats (key) {
@@ -216,13 +266,19 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   keys.sort()
   const hosts = [...new Set(rows.map(r => r.__host || ''))].sort()
   const devs = [...new Set(rows.map(r => r.device).filter(Boolean))].sort()
+  const cells = [...new Set(rows.map(r => r.cell).filter(Boolean))] // models (two-models) or sources
+  // Split the task universe by metric family: VQA-family tasks feed the
+  // higher-better "%" tables; OCR tasks (CER/WER/BLEU) get their own table.
+  const allTasks = [...new Set(rows.map(r => r.task).filter(Boolean))]
+  const ocrTasks = allTasks.filter(t => rows.some(r => r.task === t && OCR_METRICS.has(r.metric)))
+  const vqaTasks = allTasks.filter(t => !ocrTasks.includes(t))
 
   // One pass of stats per host|cell|device group, reused across all sections.
   function groupStats (key) {
     const rs = byKey[key]
     if (!rs) return null
     const okRows = rs.filter(r => !r.error)
-    const perTask = TASKS.map(t => {
+    const perTask = vqaTasks.map(t => {
       const sc = rs.filter(r => r.task === t && !r.error).map(r => score(r.metric, r.pred, r.gold))
       return mean(sc)
     })
@@ -339,14 +395,52 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     L.push(provText.trim() + '\n')
   }
   L.push('### Quality (%)\n')
-  L.push('| Config | host | ' + TASKS.join(' | ') + ' | **Overall %** |')
-  L.push('|' + '---|'.repeat(TASKS.length + 3))
+  L.push('| Config | host | ' + vqaTasks.join(' | ') + ' | **Overall %** |')
+  L.push('|' + '---|'.repeat(vqaTasks.length + 3))
   for (const k of keys) {
     const [host, cell, dev] = k.split('|')
     const g = groupStats(k)
     L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ` + g.perTask.map(fmtPct).join(' | ') + ` | **${fmtPct(g.overall)}** |`)
   }
   L.push('')
+
+  // Per-task quality, the way a reader picks a model for a task: human-readable
+  // task name × each model (or each source) as columns, % mean across platforms.
+  if (vqaTasks.length && cells.length) {
+    const pctCellTask = (cell, t) => mean(rows.filter(r => r.cell === cell && r.task === t && !r.error)
+      .map(r => score(r.metric, r.pred, r.gold)))
+    const axis = severalSources ? 'source' : 'model'
+    L.push(`### Quality by task (% — higher better, mean across platforms; one column per ${axis})\n`)
+    L.push('| Task | ' + cells.join(' | ') + ' |')
+    L.push('|' + '---|'.repeat(cells.length + 1))
+    for (const t of vqaTasks) {
+      L.push(`| ${taskLabel(t)} | ` + cells.map(c => fmtPct(pctCellTask(c, t))).join(' | ') + ' |')
+    }
+    L.push('')
+  }
+
+  // OCR tasks get their own table — CER/WER are error rates (↓), BLEU overlap (↑);
+  // never blended into the % above. One row per task × config that produced OCR rows.
+  if (ocrTasks.length) {
+    const ocrAgg = (cell, t, host, dev) => {
+      const rs = rows.filter(r => r.cell === cell && r.task === t && (r.__host || '') === host && r.device === dev && !r.error)
+      const cs = []; const ws = []; const bs = []
+      for (const r of rs) { const o = ocrScore(r.pred, r.gold); if (o.cer != null) { cs.push(o.cer); ws.push(o.wer); bs.push(o.bleu) } }
+      return { cer: mean(cs), wer: mean(ws), bleu: mean(bs), n: rs.length }
+    }
+    L.push('### OCR — text recognition (CER ↓ / WER ↓ lower better · BLEU ↑ higher better)\n')
+    L.push('| Task | Config | host | CER ↓ | WER ↓ | BLEU ↑ |')
+    L.push('|---|---|---|---|---|---|')
+    for (const t of ocrTasks) {
+      for (const k of keys) {
+        const [host, cell, dev] = k.split('|')
+        const o = ocrAgg(cell, t, host, dev)
+        if (!o.n) continue
+        L.push(`| ${taskLabel(t)} | \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${fmtNum(o.cer, 3)} | ${fmtNum(o.wer, 3)} | ${fmtNum(o.bleu, 3)} |`)
+      }
+    }
+    L.push('')
+  }
   L.push('### Speed\n')
   L.push('| Config | host | n | err | **mmproj enc (ms)** | tiles | TTFT (ms) | decode TPS | wall (ms) |')
   L.push('|---|---|---|---|---|---|---|---|---|')

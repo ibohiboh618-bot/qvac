@@ -1,48 +1,27 @@
 'use strict'
-// QVAC-19371 (A1 contract): SCENARIOS — the workload axis of the VLM benchmark.
-// A scenario names a kind of work (which fixture tasks run, how answers are
-// scored, how large the images are) independent of the model, the source build
-// and the platform. Selected per run via QVAC_VLM_SCENARIOS (workflow input
-// `matrix_scenarios`); the first CSV token is the active scenario (multi-
-// scenario runs are reserved in CONTRACT.md, not implemented yet).
+// QVAC-19371: the task set the benchmark runs.
 //
-// OWNERSHIP: this file belongs to the scenarios/reporting workstream (Dev B).
-// The runner side (harness.cjs) only reads it. Fields:
-//   tasks       fixture task ids that make up the scenario (the task universe;
-//               presets/env can narrow it, never widen it)
-//   metricSet   'lmms' (existing per-task lmms-eval scorers) | 'category'
-//               (VLM_General_Benchmark category rubric — scorer lands in B2)
-//   tolerance   max allowed accuracy drop of addon@candidate vs addon@baseline
-//               before the gate FAILs (consumed by the B4 gate)
-//   maxSide     fixture image size cap in px (build-fixture.cjs --max-side)
-//   fixturePending  true until the scenario's fixture exists — selecting such
-//               a scenario fails fast with a clear error instead of running 0 items
+// Originally modelled as several "scenarios"; per the QVAC-19371 direction this is now
+// a SINGLE descriptive set — the five lmms-eval VQA tasks plus the OCR tasks — scored
+// per task. There is NO quality-regression gate: the benchmark compares DIFFERENT
+// models (and one model across inference sources), so a candidate-vs-baseline accuracy
+// gate doesn't apply; quality is reported, not gated.
+//
+// Each fixture item carries its own `metric`, so a single set mixes families freely:
+//   vqa / anls / relaxed / mc  → the higher-better "%" tables
+//   ocr                        → CER / WER / BLEU, shown in a SEPARATE table (aggregate.js)
+//
+// OCR fixture items (tasks `ocr-line`, `ocr-page`) are HAND-CURATED into
+// fixture.data.cjs from S3-hosted images — see fixture/README.md for the item shape and
+// the "read the text" prompt convention. Until those items exist, the OCR task ids here
+// simply select zero items (the VQA suite runs unaffected).
+//
+// The `scenario` axis is kept (one entry) to avoid churn in the shared harness/workflow;
+// it can be fully retired later in coordination with the runner workstream.
 
 module.exports = {
-  // The proven default: the 5 open-licensed lmms-eval tasks shipped today.
-  'vqa-suite': {
-    title: 'VQA suite (low-MP)',
-    tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d'],
-    metricSet: 'lmms',
-    tolerance: 0.02,
-    maxSide: 1024
-  },
-  // V1 target scenario — fixture + category scorer land in B1/B2.
-  'image-description': {
-    title: 'Image description (low-MP)',
-    tasks: ['imgdesc'],
-    metricSet: 'category',
-    tolerance: 0.02,
-    maxSide: 1024,
-    fixturePending: true
-  },
-  // V3 target scenario — exercises the MMPROJ-bound (image-encoder) code path.
-  'ocr-highmp': {
-    title: 'OCR (high-MP)',
-    tasks: ['ocrdoc'],
-    metricSet: 'category',
-    tolerance: 0.02,
-    maxSide: 4096,
-    fixturePending: true
+  default: {
+    title: 'VLM quality suite (VQA + OCR)',
+    tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d', 'ocr-line', 'ocr-page']
   }
 }

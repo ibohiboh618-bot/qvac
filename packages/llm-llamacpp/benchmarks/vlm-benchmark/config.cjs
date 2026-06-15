@@ -149,9 +149,10 @@ module.exports = {
   // model has no per-catalog-entry `baseline` pin. Bump deliberately.
   defaultBaseline: { npm: '0.24.0' },
 
-  // ════════════════════════ SCENARIOS — what kind of work ════════════════════════
+  // ════════════════════════ SCENARIOS — the task set ════════════════════════
+  // One descriptive set (5 VQA tasks + OCR), scored per task; see scenarios.cjs.
   scenarios: SCENARIOS,
-  defaultScenario: 'vqa-suite',
+  defaultScenario: 'default',
 
   // ════════════════════════ METHODOLOGY — how rounds run (A3) ════════════════════════
   // warmup + measured blocks per source, median reported, blocks interleaved
@@ -172,7 +173,7 @@ module.exports = {
   presets: {
     // smoke — first task of the active scenario, 1 image, 1 repeat: a single
     // inference per config (wiring check). maxTasks (not a task list) so it
-    // works under any scenario, not just vqa-suite.
+    // works under any task set, not just the VQA tasks.
     smoke: { tasks: null, maxTasks: 1, samplesPerTask: 1, repeats: 1, devices: null },
     // base — DEFAULT eval: all the active scenario's tasks × 3 samples × 1 repeat.
     base: { tasks: null, samplesPerTask: 3, repeats: 1, devices: null },
