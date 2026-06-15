@@ -291,6 +291,9 @@ private:
   int                                  backend_device_ = 0;
   int                                  backend_id_     = 0;
   std::string                          backend_name_   = "CPU";
+  // 1 when a GPU was present but the engine routed to CPU because the GPU
+  // mis-computes the models (e.g. Mali Vulkan); surfaced as `gpuUnsupported`.
+  int                                  gpu_unsupported_ = 0;
 
   // ── Token / sentinel constants ─────────────────────────────────────────
   // The engine itself uses different vocab IDs internally; we surface only 

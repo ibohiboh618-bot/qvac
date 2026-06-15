@@ -126,6 +126,16 @@ function assertGpuBackend (t, modelType, stats) {
   const name = backendIdToName(id)
   console.log(`[${modelType}/GPU] backendDevice=${dev} backendId=${id} (${name})`)
 
+  // Mali (and any GPU the engine flags as unsupported) is intentionally routed
+  // to CPU because its Vulkan driver mis-computes every parakeet model — a CPU
+  // backend with stats.gpuUnsupported is the correct, expected result there,
+  // not a silent GPU regression. See parakeet-cpp model_gpu_unsupported() and
+  // QVAC-20556 (Pixel 9 / Mali-G715: GPU garbage, CPU correct).
+  if (platform === 'android' && dev === 0 && stats.gpuUnsupported) {
+    t.pass(`${modelType}/android: GPU present but unsupported (e.g. Mali); correctly using CPU`)
+    return
+  }
+
   if (!expectsGpu()) {
     // Platforms with no GPU backend wired into the addon today must
     // resolve to CPU. This catches accidental GPU-on-Linux config drift.

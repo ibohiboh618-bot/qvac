@@ -313,6 +313,7 @@ void ParakeetModel::load() {
         engine_->backend_device() == parakeet::BackendDevice::GPU ? 1 : 0;
     backend_name_   = engine_->backend_name();
     backend_id_     = backendIdFromName(backend_name_);
+    gpu_unsupported_ = engine_->gpu_unsupported() ? 1 : 0;
 
     QLOG(logger::Priority::INFO,
          std::string("Parakeet engine loaded; model_type=") + detected +
@@ -1058,6 +1059,7 @@ RuntimeStats ParakeetModel::runtimeStats() const {
   // side reads them from runtimeStats() (a.k.a. response.stats).
   stats.emplace_back("backendDevice",       static_cast<int64_t>(backend_device_));
   stats.emplace_back("backendId",           static_cast<int64_t>(backend_id_));
+  stats.emplace_back("gpuUnsupported",      static_cast<int64_t>(gpu_unsupported_));
 
   // audioDurationMs derived from samples / sample_rate
   const double sr = sample_rate_ > 0
