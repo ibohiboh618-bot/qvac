@@ -181,7 +181,7 @@ jobs:
           FIXTURE_IMAGES_URI: ${{ inputs.fixture_images_uri }}
         run: |
           if [ -n "$FIXTURE_IMAGES_URI" ]; then
-            aws s3 sync "$FIXTURE_IMAGES_URI" benchmarks/vlm-benchmark/images/
+            aws s3 sync "$FIXTURE_IMAGES_URI" benchmarks/vlm-benchmark/fixture/
           fi
           node "${{ inputs.pre_build_script }}"
           # the test-list generator runs under `bare` and imports bare-fs/bare-path,

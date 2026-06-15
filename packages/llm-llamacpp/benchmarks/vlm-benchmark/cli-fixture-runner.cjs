@@ -42,7 +42,7 @@ function selectedItems () {
   })
 }
 
-const mediaPath = (image) => path.resolve(__dirname, 'images', image)
+const mediaPath = (image) => path.resolve(__dirname, 'fixture', image)
 
 function main () {
   // Same provenance shape the addon harness emits, keyed by the source label.

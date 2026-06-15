@@ -375,7 +375,7 @@ jobs:
           echo "$HOME/.local/aws-cli" >> "$GITHUB_PATH"
 
       # Fixture images live in S3 (not committed to git). Pull them into the benchmark's
-      # images/ dir so the harness and the several-sources CLI runner read them locally.
+      # fixture/ dir so the harness and the several-sources CLI runner read them locally.
       - name: Configure AWS credentials (fixture images)
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
         with:
@@ -385,8 +385,8 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         shell: bash
         run: |
-          aws s3 sync s3://tether-ai-dev/vlm-benchmark/ benchmarks/vlm-benchmark/images/
-          echo "fixture images:"; ls benchmarks/vlm-benchmark/images/
+          aws s3 sync s3://tether-ai-dev/vlm-benchmark/ benchmarks/vlm-benchmark/fixture/
+          echo "fixture images:"; ls benchmarks/vlm-benchmark/fixture/
 
       - name: Run VLM matrix
         working-directory: ${{ env.WORKDIR }}

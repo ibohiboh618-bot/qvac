@@ -25,8 +25,8 @@ const config = require('./config.cjs')
 const { parseModels } = require('./models.cjs')
 
 // Resolve a fixture image. Images live in a fixture object store (not git): CI syncs
-// them into this dir's images/ before the run. Desktop reads images/ directly; mobile
-// uses the bundled asset manifest (stage.cjs copies images/ -> test/mobile/testAssets
+// them into this dir's fixture/ before the run. Desktop reads fixture/ directly; mobile
+// uses the bundled asset manifest (stage.cjs copies fixture/ -> test/mobile/testAssets
 // after that sync).
 function getMediaPath (filename) {
   if ((os.platform() === 'ios' || os.platform() === 'android') && global.assetPaths) {
@@ -34,7 +34,7 @@ function getMediaPath (filename) {
     if (global.assetPaths[key]) return global.assetPaths[key].replace('file://', '')
     throw new Error(`Asset not found in testAssets: ${filename} (rebuild the app)`)
   }
-  return path.join(__dirname, 'images', filename)
+  return path.join(__dirname, 'fixture', filename)
 }
 
 function env (key) {
