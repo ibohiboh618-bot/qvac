@@ -348,8 +348,13 @@ function setupJsLogger (overrideBinding = null) {
     actualBinding.__qvacReleaseLoggerPatched = true
   }
 
-  const shouldEnableNativeLogs = process.env &&
-    process.env.QVAC_TEST_NATIVE_LOGS === '1'
+  // DEBUG (Mali-Vulkan bring-up, DO-NOT-MERGE): force the native log bridge ON
+  // unconditionally. On the device farm QVAC_TEST_NATIVE_LOGS is never set and a
+  // shell env can't reach the on-device Bare process, so without this the native
+  // [gpu-diag]/canary lines route to QLOG and get dropped (JsLogger only flushes
+  // once setLogger() is installed) -- the diagnostic round would be blind.
+  // Installing the bridge here lets those lines reach the console-logs-* artifacts.
+  const shouldEnableNativeLogs = true
 
   if (shouldEnableNativeLogs && !actualBinding.__qvacLoggerSet) {
     const LOG_PRIORITIES = ['ERROR', 'WARNING', 'INFO', 'DEBUG']

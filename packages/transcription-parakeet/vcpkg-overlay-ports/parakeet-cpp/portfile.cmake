@@ -2,14 +2,12 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at bb585eb1 (branch qvac-20556-tdt-opencl-host-decode, off master
-# ed749556): TDT decode on host for Adreno OpenCL (bea13d57) + route Mali Vulkan
-# to CPU (bb585eb1). Adreno OpenCL drops the TDT in-place persistent-state
-# ggml_cpy, so its per-step decode runs on the host; ARM Mali (Valhall) Vulkan
-# mis-computes every model (narrow subgroup), so the engine guards it by name and
-# routes it to CPU, while Adreno OpenCL + Samsung Xclipse Vulkan run on the GPU.
-# Pairs with ggml-speech 44fd4817 so transcription-parakeet runs on the GPU where
-# it computes correctly and on CPU where it does not.
+# Pinned at f224fc21 (DO-NOT-MERGE diagnostic branch off the host-decode commit
+# bb585eb1): removes the Mali->CPU guard so ARM Mali (Valhall) runs on Vulkan,
+# and adds a one-shot per-stage encoder GPU-vs-CPU bisect that logs where Mali
+# Vulkan first diverges from CPU, to localise the narrow-subgroup miscompute in a
+# single device-farm round. Diagnostic-only -- NOT for merge. Pairs with
+# ggml-speech 44fd4817.
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -17,8 +15,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF bb585eb11eadcbe11b480f09209e5d7c543ae9c0
-    SHA512 0fb4e75b4454475d1c03ab46088e27cb991605f7e4b137beefc7362f014383a7358aaedc3ef2637e4450aff37ed4acc35d76f49941a4898f791f4909c6965e75
+    REF f224fc2169b3b0d91119ca55487f426d49838e45
+    SHA512 e3d1660b458c9ca5cadac25b97ae779ccfef3fa4bfbc7f530fc85795c545354a8320b4762ecc7eb302cc87b44c5f7dc9a17a7a35e401a679f814d1369b77ce13
     HEAD_REF master
 )
 

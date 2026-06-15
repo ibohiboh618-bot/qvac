@@ -27,6 +27,19 @@ using namespace qvac_lib_inference_addon_cpp;
 
 namespace {
 
+// DEBUG (Mali-Vulkan bring-up): force the OpenCL env on at dlopen, BEFORE any
+// load() registers ggml backends (registration happens once per process). This
+// lets a Mali device attempt OpenCL first; it rejects the narrow subgroup at
+// ggml_cl2_init and falls through to Vulkan, logging the reason en route.
+// Harmless on Metal (no OpenCL backend) and on Adreno/iOS selection (Adreno
+// uses its own OpenCL tier, tried before the prefer-OpenCL block; iOS has no
+// non-Adreno OpenCL devices).
+[[maybe_unused]] const int FORCE_OPENCL_ENV_INIT = [] {
+  ::setenv("GGML_OPENCL_FORCE_LOAD", "1", 1);
+  ::setenv("GGML_OPENCL_ALLOW_UNKNOWN_GPU", "1", 1);
+  return 0;
+}();
+
 // Stable numeric mapping from parakeet::Engine::backend_name()
 // to the integer code surfaced on JS as `RuntimeStats.backendId`.
 // Match by prefix because ggml_backend_name() returns indexed strings
@@ -131,6 +144,13 @@ void installGgmlLogTrampolineOnce() {
   static std::once_flag once;
   std::call_once(once, [] {
     ggml_log_set(&ggmlLogTrampoline, nullptr);
+    // Also route parakeet-cpp's own PARAKEET_LOG_* sink through the same
+    // trampoline so the per-stage GPU-vs-CPU encoder bisect ([gpu-diag] lines)
+    // and the backend-selection diagnostics reach QLOG -> the JS console ->
+    // the Device-Farm artifacts. parakeet's default sink is fputs(stderr),
+    // which is lost on-device. Global extern "C" symbol from <parakeet/log.h>;
+    // it also forwards to ggml_log_set internally.
+    ::parakeet_log_set(&ggmlLogTrampoline, nullptr);
   });
 }
 
@@ -260,7 +280,9 @@ void ParakeetModel::load() {
     // when n_gpu_layers > 0; we leave it at 0 for back-compat with the
     // legacy CPU-only path and bump only when cfg_.useGPU is true.
     eopts.n_gpu_layers    = cfg_.useGPU ? 999 : 0;
-    eopts.verbose         = false;
+    // DEBUG (Mali-Vulkan bring-up): verbose so the GPU-candidate enumeration
+    // and backend-tier selection lines emit through the routed parakeet logger.
+    eopts.verbose         = true;
     // Compose the actual backends-scan directory from the host-
     // provided prebuilds root plus the cmake-bare per-target subdir
     // (BACKENDS_SUBDIR, e.g. `android-arm64/qvac__transcription-parakeet`).
@@ -294,6 +316,10 @@ void ParakeetModel::load() {
   });
 
   is_loaded_ = true;
+
+  // DEBUG (Mali-Vulkan bring-up): one-line canary -- the first thing to confirm
+  // in the Device-Farm console artifacts that the native log pipe reaches host.
+  QLOG(logger::Priority::INFO, "[gpu-diag] canary: native log reaches host");
 
   // Auto-detect modelType from the loaded GGUF's metadata. The engine
   // returns "ctc" / "tdt" / "eou" / "sortformer" reflecting the
