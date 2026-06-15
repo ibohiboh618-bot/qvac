@@ -20,6 +20,10 @@
 #include "inference-addon-cpp/Errors.hpp"
 #include "inference-addon-cpp/Logger.hpp"
 
+#if defined(__ANDROID__)
+#include <android/log.h>  // DEBUG (Mali-Vulkan bring-up): __android_log_print, see emitDeviceDiag
+#endif
+
 namespace qvac_lib_infer_parakeet {
 
 namespace fs = std::filesystem;
@@ -124,6 +128,24 @@ logger::Priority ggmlLevelToPriority(ggml_log_level level) {
   }
 }
 
+// DEBUG (Mali-Vulkan bring-up, DO-NOT-MERGE): on-device, QLOG is a dead end. QLOG
+// routes to JsLogger, whose delivery rides a uv_async callback on the JS-thread
+// loop; in the embedded Bare-in-app (React-Native host) mobile runtime that async
+// callback never reaches a captured sink, so native [gpu-diag] lines vanish (the
+// whole reason round 1 was blind -- confirmed on Android AND iOS). Only synchronous
+// JS-thread console.log is bridged to logcat. So emit diagnostics STRAIGHT to the
+// platform log: __android_log_print lands unconditionally in the full device logcat
+// artifact (logcat_full.txt). Off-device, stderr keeps the local pre-flight working.
+void emitDeviceDiag(const std::string & line) {
+#if defined(__ANDROID__)
+  __android_log_print(ANDROID_LOG_INFO, "qvac-parakeet", "%s", line.c_str());
+#else
+  std::fputs(line.c_str(), stderr);
+  std::fputc('\n', stderr);
+  std::fflush(stderr);
+#endif
+}
+
 void ggmlLogTrampoline(ggml_log_level level, const char * text, void * /*user_data*/) {
   if (!text) return;
   std::lock_guard<std::mutex> lk(ggml_log_buf_mutex());
@@ -138,6 +160,10 @@ void ggmlLogTrampoline(ggml_log_level level, const char * text, void * /*user_da
     ggml_log_buf().erase(0, nl + 1);
     if (line.empty()) continue;
     QLOG(ggmlLevelToPriority(ggml_log_buf_level()), line);
+    // ggml backend-init/caps lines + (via parakeet_log_set below) the bisect's
+    // [gpu-diag] table both flow here -- mirror them to the device log so they
+    // reach the artifacts on-device.
+    emitDeviceDiag(line);
   }
 }
 
@@ -320,7 +346,9 @@ void ParakeetModel::load() {
 
   // DEBUG (Mali-Vulkan bring-up): one-line canary -- the first thing to confirm
   // in the Device-Farm console artifacts that the native log pipe reaches host.
+  // QLOG is dropped on-device (see emitDeviceDiag), so emit the canary directly too.
   QLOG(logger::Priority::INFO, "[gpu-diag] canary: native log reaches host");
+  emitDeviceDiag("[gpu-diag] canary: native log reaches host");
 
   // Auto-detect modelType from the loaded GGUF's metadata. The engine
   // returns "ctc" / "tdt" / "eou" / "sortformer" reflecting the

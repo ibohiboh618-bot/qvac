@@ -243,6 +243,13 @@ endif()
 # while the same APK loads fine on 4 KB devices like the Samsung S25
 # Ultra. Drop the flag once we move to NDK r28+.
 if(ANDROID)
+  # DEBUG (Mali-Vulkan bring-up, DO-NOT-MERGE): ParakeetModel.cpp's emitDeviceDiag
+  # calls __android_log_print so the [gpu-diag] lines reach the device logcat
+  # artifact. Bare modules link with `-undefined,dynamic_lookup`, so the symbol
+  # would otherwise defer to a load-time lookup that could silently fail
+  # (ADDON_NOT_FOUND) if liblog weren't in the module's namespace. Link it
+  # explicitly to force a DT_NEEDED entry.
+  target_link_libraries(${qvac_lib_infer_parakeet}_module PRIVATE log)
   target_link_options(
     ${qvac_lib_infer_parakeet}_module
     PRIVATE
