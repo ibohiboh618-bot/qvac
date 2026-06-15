@@ -2,14 +2,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <ggml-alloc.h>
@@ -170,6 +173,35 @@ struct GraphBuilder {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
   const std::unordered_map<std::string, struct ggml_tensor*>& w;
 
+  // When true, regular (non-depthwise) convs use the fused GGML_OP_CONV_2D
+  // kernel (`ggml_conv_2d_direct`) instead of im2col + mul_mat. The fused path
+  // avoids materialising the (often huge) im2col buffer and tiles over conv
+  // shapes, so it is much faster on bandwidth-bound GPUs and on convs with a
+  // small output-channel count (where the im2col matmul wastes most of its
+  // tile). It is enabled only on Vulkan: on Metal the tuned GEMM makes
+  // im2col + mul_mat ~2x faster than the fused kernel (measured).
+  bool useFusedConv = false;
+
+  // CPU mixed lowering: spatial (KW>1) convs use the fused kernel — their
+  // materialised im2col is KW*KH times the activation tensor, and the fused
+  // chunked im2col + GEMM avoids that traffic — while 1x1 convs keep the
+  // explicit lowering (their im2col is a cheap NEON-tiled transpose and the
+  // standalone GEMM beats the fused kernel for that shape on big.LITTLE).
+  bool fusedSpatialConv = false;
+
+  /// Conv2d that picks the lowering per backend and kernel size (see the
+  /// flags above). Args mirror ggml_conv_2d.
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+  struct ggml_tensor* conv2d(
+      struct ggml_tensor* kernelT, struct ggml_tensor* x, int stride,
+      int pad) const {
+    if (useFusedConv || (fusedSpatialConv && kernelT->ne[0] > 1)) {
+      return ggml_conv_2d_direct(
+          ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+    }
+    return ggml_conv_2d(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+  }
+
   [[nodiscard]] struct ggml_tensor* t(const std::string& name) const {
     auto it = w.find(name);
     if (it == w.end()) {
@@ -192,11 +224,11 @@ struct GraphBuilder {
       bool useHardswish) const {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
-    // NOTE: ggml_conv_2d_direct (fused GGML_OP_CONV_2D) measured ~2x SLOWER
-    // than im2col + mul_mat on Metal — the matmul path rides the tuned GEMM
-    // kernel.
-    struct ggml_tensor* conv =
-        ggml_conv_2d(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
+    // Fused GGML_OP_CONV_2D on Vulkan (no im2col buffer; conv-shaped tiling),
+    // im2col + mul_mat elsewhere — see GraphBuilder::conv2d. The fused kernel
+    // measured ~2x slower than the tuned GEMM on Metal, so it stays
+    // Vulkan-only.
+    struct ggml_tensor* conv = conv2d(kernelT, x, stride, pad);
     // BN scale folded into the conv weights at load time; `.shift` carries the
     // combined (conv bias + BN shift) offset. One add instead of add+mul+add.
     conv = ggml_add(ctx, conv, t(bnPrefix + ".shift"));
@@ -302,8 +334,8 @@ struct GraphBuilder {
     struct ggml_tensor* wt = ggml_cont(ctx, ggml_transpose(ctx, wr)); // [IC,P]
     struct ggml_tensor* w1 = ggml_reshape_4d(ctx, wt, 1, 1, ic, p);
 
-    // 1x1 conv: [W, H, IC] -> [W, H, P].
-    struct ggml_tensor* conv = ggml_conv_2d(ctx, w1, input, 1, 1, 0, 0, 1, 1);
+    // 1x1 conv: [W, H, IC] -> [W, H, P]. Fused on Vulkan (see conv2d).
+    struct ggml_tensor* conv = conv2d(w1, input, /*stride=*/1, /*pad=*/0);
 
     const int64_t cw = conv->ne[0];
     const int64_t ch = conv->ne[1];
@@ -482,7 +514,8 @@ WeightsBundle::~WeightsBundle() { reset(); }
 
 WeightsBundle::WeightsBundle(WeightsBundle&& other) noexcept
     : ctx(std::move(other.ctx)), tensors(std::move(other.tensors)),
-      backendBuffer(other.backendBuffer) {
+      backendBuffer(other.backendBuffer),
+      auxBuffers(std::move(other.auxBuffers)), prepacked(other.prepacked) {
   other.backendBuffer = nullptr;
 }
 
@@ -492,6 +525,8 @@ WeightsBundle& WeightsBundle::operator=(WeightsBundle&& other) noexcept {
     ctx = std::move(other.ctx);
     tensors = std::move(other.tensors);
     backendBuffer = other.backendBuffer;
+    auxBuffers = std::move(other.auxBuffers);
+    prepacked = other.prepacked;
     other.backendBuffer = nullptr;
   }
   return *this;
@@ -504,6 +539,13 @@ void WeightsBundle::reset() {
     ggml_backend_buffer_free(backendBuffer);
     backendBuffer = nullptr;
   }
+  for (ggml_backend_buffer_t buf : auxBuffers) {
+    if (buf != nullptr) {
+      ggml_backend_buffer_free(buf);
+    }
+  }
+  auxBuffers.clear();
+  prepacked = false;
 }
 
 ComputeGraph::~ComputeGraph() { reset(); }
@@ -830,8 +872,67 @@ WeightsBundle loadWeights(
   addFcWeightFp16("classifier.3.weight", kClassifierHidden, kNumClasses);
   addFcBiasFp16("classifier.3.bias", kNumClasses);
 
-  // Back the newly declared tensors with backend storage so we can write to
-  // them via ggml_backend_tensor_set below.
+  // KleidiAI/NHWC prepack for regular Conv2D weights (CPU acceleration on
+  // Mali). Route regular Conv2D kernels through the CPU device's "extra"
+  // prepack buffer type (KleidiAI) so they get NHWC-packed at upload; the graph
+  // then uses the fused GGML_OP_CONV_2D for those convs, which dispatches to
+  // KleidiAI's accelerated conv2d. Depthwise (ne[2]==1) and ConvTranspose
+  // weights MUST stay in the default buft — the prepack buft mangles any
+  // F32/F16 tensor it owns, and those ops never dispatch through KleidiAI.
+  ggml_backend_buffer_type_t prepackBuft = nullptr;
+  {
+    ggml_backend_dev_t dev = ggml_backend_get_device(backends[0]);
+    ggml_backend_reg_t reg =
+        dev != nullptr ? ggml_backend_dev_backend_reg(dev) : nullptr;
+    if (reg != nullptr) {
+      using GetExtras = ggml_backend_buffer_type_t* (*)(ggml_backend_dev_t);
+      auto* getExtras =
+          reinterpret_cast<GetExtras>(ggml_backend_reg_get_proc_address(
+              reg, "ggml_backend_dev_get_extra_bufts"));
+      auto probeIt = tensors.find("features.0.0.weight");
+      if (getExtras != nullptr && probeIt != tensors.end()) {
+        ggml_backend_buffer_type_t* extras = getExtras(dev);
+        struct ggml_tensor* probe = probeIt->second;
+        for (; extras != nullptr && *extras != nullptr; ++extras) {
+          if (ggml_backend_buft_get_alloc_size(*extras, probe) >
+              ggml_nbytes(probe)) {
+            prepackBuft = *extras;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  static const std::unordered_set<std::string> kConvTransposeWeights = {
+      "dbnet.prob_head.3.weight", "dbnet.prob_head.6.weight"};
+  auto isPrepackable = [&](const std::string& name,
+                           const struct ggml_tensor* t) {
+    return name.ends_with(".weight") && !kConvTransposeWeights.contains(name) &&
+           t->ne[2] != 1;
+  };
+
+  if (prepackBuft != nullptr) {
+    for (auto& [name, dst] : tensors) {
+      if (!isPrepackable(name, dst)) {
+        continue;
+      }
+      const size_t allocSize =
+          ggml_backend_buft_get_alloc_size(prepackBuft, dst);
+      ggml_backend_buffer_t buf =
+          ggml_backend_buft_alloc_buffer(prepackBuft, allocSize);
+      if (buf == nullptr) {
+        raise("Failed to allocate prepack buffer for " + name);
+      }
+      ggml_tallocr talloc = ggml_tallocr_new(buf);
+      ggml_tallocr_alloc(&talloc, dst);
+      bundle.auxBuffers.push_back(buf);
+      bundle.prepacked = true;
+    }
+  }
+
+  // Back the remaining tensors (those without a buffer yet) with the default
+  // backend storage so we can write to them via ggml_backend_tensor_set below.
   ggml_backend_buffer_type_t weightsBuft =
       ggml_backend_get_default_buffer_type(backends[0]);
   bundle.backendBuffer =
@@ -843,10 +944,10 @@ WeightsBundle loadWeights(
   // Copy raw tensor bytes (for cloneRaw) into the backend buffer.
   for (auto& [name, dst] : tensors) {
     if (name.ends_with(".scale") || name.ends_with(".shift") ||
-        name.ends_with(".bias_br") || name == "classifier.0.weight" ||
-        name == "classifier.0.bias" || name == "classifier.3.weight" ||
-        name == "classifier.3.bias") {
-      continue; // handled in the second pass
+        name.ends_with(".bias_br") ||
+        name == "classifier.0.weight" || name == "classifier.0.bias" ||
+        name == "classifier.3.weight" || name == "classifier.3.bias") {
+      continue; // folded BN params / classifier handled separately
     }
     struct ggml_tensor* src = ggml_get_tensor(ggmlCtx, name.c_str());
     if (src == nullptr) {
@@ -1122,7 +1223,41 @@ ComputeGraph buildGraph(
   cg.input = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, inputW, inputH, 3, 1);
   ggml_set_name(cg.input, "input");
 
-  GraphBuilder gb{.ctx = ctx, .w = weights.tensors};
+  // Detect the backend to pick the conv lowering (see GraphBuilder::conv2d).
+  // The compute backend is backends[0].
+  bool isVulkan = false;
+  if (!backends.empty() && backends[0] != nullptr) {
+    const char* backendName = ggml_backend_name(backends[0]);
+    if (backendName != nullptr) {
+      std::string lower(backendName);
+      std::transform(
+          lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+          });
+      isVulkan = lower.find("vulkan") != std::string::npos;
+    }
+  }
+
+  // Conv lowering: fused GGML_OP_CONV_2D everywhere on Vulkan (avoids the
+  // per-conv im2col dispatch); CPU and Metal keep the explicit
+  // im2col + mul_mat lowering for every regular conv — measured fastest on
+  // Mali-G715's CPU (det ~0.95s explicit vs ~1.0s mixed vs ~1.15s all-fused,
+  // warm; the fused kernel's statically-split inner im2col straggles on
+  // asymmetric big.LITTLE cores), and on Metal the tuned GEMM favours
+  // explicit ~2x. OCR_DOCTR_FUSED_CONV=0/1 overrides the non-Vulkan choice
+  // at graph-build time (0 = all explicit, 1 = all fused) for A/B runs.
+  bool useFusedConv = isVulkan || weights.prepacked;
+  bool fusedSpatialConv = false;
+  if (const char* fusedEnv = std::getenv("OCR_DOCTR_FUSED_CONV");
+      fusedEnv != nullptr && !isVulkan) {
+    useFusedConv = fusedEnv[0] == '1';
+    fusedSpatialConv = useFusedConv;
+  }
+  GraphBuilder gb{
+      .ctx = ctx,
+      .w = weights.tensors,
+      .useFusedConv = useFusedConv,
+      .fusedSpatialConv = fusedSpatialConv};
 
   // Stem.
   struct ggml_tensor* x = gb.convBnAct(
