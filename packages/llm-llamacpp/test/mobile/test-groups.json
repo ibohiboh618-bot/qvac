@@ -11,6 +11,8 @@
     "gemma": ["runGemma4Test"],
     "ocrPaddle": ["runOcrPaddleTest"],
     "quantizedKvcache": ["runQuantizedKvcacheTest"],
+    "visionCacheGemma": ["runVisionCacheGemma4Test"],
+    "visionCacheQwen35": ["runVisionCacheQwen35Test"],
     "lightA": [
       "runApiBehaviorTest",
       "runBitnetTest",
@@ -87,6 +89,10 @@
       "runQwen35ImageElephantPerfTest",
       "runQwen35ImageFruitPlatePerfTest",
       "runQwen35ImageHighResAuroraPerfTest"
+    ],
+    "groupVisionCache": [
+      "runVisionCacheGemma4Test",
+      "runVisionCacheQwen35Test"
     ]
   }
 }
