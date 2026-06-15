@@ -1,11 +1,13 @@
 vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
   REPO tetherto/qvac-fabric-llm.cpp
-  # Overlay (test): pin the temp-8828 merge commit of the Metal CONV_2D_DW
-  # kernel (PR tetherto/qvac-fabric-llm.cpp#148) so the addon can be tested on
-  # Device Farm before this is cut as a tag (8828.1.1) and a registry port.
-  REF 7bcd140f7933c44df6fab972297ffca326bbb8c5
-  SHA512 80c1a5ab758cab65ad00a9500ff3cdbae3fafb925b345612ee60d0bbdc6cf44ba6bd30e80b57243dc3344743b6ebe4d2a06de3f5db1e3de7e4eaff44f85c270c
+  # Overlay (test): pin the head of PR tetherto/qvac-fabric-llm.cpp#152
+  # ("perf: ARM CPU conv kernels for DocTR detection"), branched from temp-8828
+  # at the PR #148 Metal CONV_2D_DW merge. This lets the addon be tested on
+  # Device Farm with the CPU-kernel detection win before the PR merges and is
+  # cut as a tag + a registry port.
+  REF 7426e7beed9618c702524d004727fb5010508aa8
+  SHA512 71025cecfc6cd5e3231355b22a16cc4b435f9eceb2e232a438b622d47c05ac9d9a8cc9c488bf057a2cfbbe962ee41c321bef34d631a15f573abbd8c3ff45f671
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
