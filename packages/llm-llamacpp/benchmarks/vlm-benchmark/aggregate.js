@@ -145,7 +145,7 @@ function ocrScore (pred, golds) {
 // Human-readable task names for the report (fallback to the raw id).
 const TASK_LABELS = {
   textvqa: 'TextVQA — read text in natural photos',
-  vizwiz: 'VizWiz — blind-user photo questions',
+  vizwiz: 'VizWiz — photo questions',
   gqa: 'GQA — compositional scene reasoning',
   docvqa: 'DocVQA — document understanding (ANLS)',
   ai2d: 'AI2D — science-diagram multiple choice',
@@ -295,6 +295,15 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       wall: mean(okRows.map(r => r.ms).filter(v => v != null))
     }
   }
+  // Avg OCR metrics (CER/WER ↓, BLEU ↑) for a host|cell|device group, over its OCR rows.
+  function ocrGroup (key) {
+    const rs = (byKey[key] || []).filter(r => OCR_METRICS.has(r.metric) && !r.error)
+    if (!rs.length) return null
+    const cs = []; const ws = []; const bs = []
+    for (const r of rs) { const o = ocrScore(r.pred, r.gold); if (o.cer != null) { cs.push(o.cer); ws.push(o.wer); bs.push(o.bleu) } }
+    return { cer: mean(cs), wer: mean(ws), bleu: mean(bs), n: rs.length }
+  }
+  const OCR_ROWS = [{ k: 'cer', label: 'CER ↓' }, { k: 'wer', label: 'WER ↓' }, { k: 'bleu', label: 'BLEU ↑' }]
   const pctFaster = (f, q) => (q != null && f != null && f !== 0) ? ((f - q) / f * 100) : null
   const fmtDelta = p => p == null ? '—' : (p >= 0 ? '+' : '') + p.toFixed(1) + '%'
 
@@ -341,6 +350,21 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       }
     }
     L.push('')
+    if (ocrTasks.length) {
+      L.push('### OCR — avg CER/WER/BLEU per source (CER/WER lower better · BLEU higher better)\n')
+      L.push('| Platform · device | metric | ' + sources.join(' | ') + ' |')
+      L.push('|' + '---|'.repeat(sources.length + 2))
+      for (const host of hosts) {
+        for (const dv of devs) {
+          const gs = sources.map(s => ocrGroup(`${host}|${s}|${dv}`))
+          if (gs.every(g => !g)) continue
+          for (const { k, label } of OCR_ROWS) {
+            L.push(`| ${host || '—'} · ${dv.toUpperCase()} | ${label} | ` + gs.map(g => fmtNum(g && g[k], 3)).join(' | ') + ' |')
+          }
+        }
+      }
+      L.push('')
+    }
   } else {
     // Comparison axis is the model: base cell vs candidate cell, per platform · device.
     L.push(`Two models — **${base}** (base) vs **${candidate}** (candidate), per platform · device.\n`)
@@ -374,6 +398,25 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       }
     }
     L.push('')
+    // OCR comparison (only when OCR tasks ran): avg of each metric per model + Δ.
+    if (ocrTasks.length) {
+      L.push(`### OCR — avg CER/WER/BLEU: ${base} vs ${candidate} (CER/WER lower better · BLEU higher better)\n`)
+      L.push(`| Platform · device | metric | ${base} | ${candidate} | Δ (cand−base) |`)
+      L.push('|---|---|---|---|---|')
+      for (const host of hosts) {
+        for (const dv of devs) {
+          const b = ocrGroup(`${host}|${base}|${dv}`)
+          const c = ocrGroup(`${host}|${candidate}|${dv}`)
+          if (!b && !c) continue
+          for (const { k, label } of OCR_ROWS) {
+            const bv = b && b[k]; const cv = c && c[k]
+            const delta = (bv != null && cv != null) ? (cv - bv) : null
+            L.push(`| ${host || '—'} · ${dv.toUpperCase()} | ${label} | ${fmtNum(bv, 3)} | ${fmtNum(cv, 3)} | ${delta == null ? '—' : (delta >= 0 ? '+' : '') + delta.toFixed(3)} |`)
+          }
+        }
+      }
+      L.push('')
+    }
   }
 
   // ── 2 · Details ───────────────────────────────────────────────────────────
