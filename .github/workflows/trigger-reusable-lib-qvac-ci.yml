@@ -1,4 +1,4 @@
-name: General CI/CD (ai-sdk-provider)
+name: General CI/CD (qvac-ci)
 
 on:
   push:
@@ -8,20 +8,14 @@ on:
       - feature-*
       - tmp-*
     paths:
-      - "packages/ai-sdk-provider/**"
-      - ".github/workflows/trigger-reusable-lib-ai-sdk-provider.yml"
+      - "packages/qvac-ci/**"
   workflow_dispatch:
-    inputs:
-      npm_tag:
-        description: "Optional npm dist-tag override for release branches"
-        required: false
-        type: string
+
+env:
+  WORKDIR: packages/qvac-ci
 
 permissions:
   contents: read
-
-env:
-  WORKDIR: packages/ai-sdk-provider
 
 jobs:
   label-gate:
@@ -39,7 +33,6 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/actions/label-gate
           sparse-checkout-cone-mode: false
-
       - name: Run label-gate
         id: gate
         uses: ./.github/actions/label-gate
@@ -55,16 +48,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
         with:
           fetch-depth: 0
-
       - uses: ./.github/actions/release-merge-guard
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           base-ref: ${{ github.ref_name }}
           base-sha: ${{ github.event.before }}
           head-sha: ${{ github.sha }}
-          package-slug: ai-sdk-provider
-          package-json-path: packages/ai-sdk-provider/package.json
-          changelog-path: packages/ai-sdk-provider/CHANGELOG.md
+          package-slug: qvac-ci
+          package-json-path: packages/qvac-ci/package.json
+          changelog-path: packages/qvac-ci/CHANGELOG.md
 
   publish-logic:
     runs-on: ubuntu-latest
@@ -74,12 +66,9 @@ jobs:
       publish_feature: ${{ steps.logic.outputs.publish_feature }}
       publish_tmp: ${{ steps.logic.outputs.publish_tmp }}
       gpr_tag: ${{ steps.logic.outputs.gpr_tag }}
-      npm_tag: ${{ steps.logic.outputs.npm_tag }}
     steps:
       - id: logic
         shell: bash
-        env:
-          NPM_TAG_INPUT: ${{ inputs.npm_tag }}
         run: |
           set -euo pipefail
           ref_name="${GITHUB_REF_NAME}"
@@ -116,49 +105,34 @@ jobs:
           echo "publish_feature=$publish_feature" >> "$GITHUB_OUTPUT"
           echo "publish_tmp=$publish_tmp" >> "$GITHUB_OUTPUT"
           echo "gpr_tag=$gpr_tag" >> "$GITHUB_OUTPUT"
-          echo "npm_tag=${NPM_TAG_INPUT}" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: Build package
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # 2.2.0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
         with:
-          bun-version: latest
+          node-version: 18
 
       - name: Install dependencies
         working-directory: ${{ env.WORKDIR }}
-        run: bun install
+        run: npm install
 
-      - name: Run lint
+      - name: Lint
         working-directory: ${{ env.WORKDIR }}
         run: npm run lint
 
-      - name: Run tests
+      - name: Unit tests
         working-directory: ${{ env.WORKDIR }}
-        run: npm run test:unit
-
-      - name: Build package
-        working-directory: ${{ env.WORKDIR }}
-        run: npm run build
-
-      - name: Upload package dist
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
-        with:
-          name: ai-sdk-provider-dist
-          path: packages/ai-sdk-provider/dist
-          if-no-files-found: error
-          retention-days: 30
+        run: npm test
 
   publish-main-gpr-dev:
     needs:
+      - lint-and-test
       - publish-logic
       - label-gate
-      - build
-    if: needs.label-gate.outputs.authorised == 'true' && needs.publish-logic.outputs.publish_main == 'true'
+    if: needs.label-gate.outputs.authorised == 'true' && (needs.publish-logic.outputs.publish_main == 'true')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -166,55 +140,34 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-
-      - name: Download package dist
-        uses: ./.github/actions/download-release-artifact
         with:
-          name: ai-sdk-provider-dist
-          path: packages/ai-sdk-provider/dist
+          fetch-depth: 0
 
       - name: Publish to GitHub Packages (dev)
         uses: ./.github/actions/publish-library-to-gpr
         with:
           secret-token: ${{ secrets.GITHUB_TOKEN }}
-          npm-token: ${{ secrets.NPM_TOKEN }}
           tag: ${{ needs.publish-logic.outputs.gpr_tag }}
-          workdir: packages/ai-sdk-provider
+          workdir: ${{ env.WORKDIR }}
           name-suffix: "-mono"
 
   publish-release-npm:
     needs:
+      - lint-and-test
       - publish-logic
       - release-merge-guard
       - label-gate
-      - build
-    if: |-
-      needs.label-gate.outputs.authorised == 'true' && (always() && needs.publish-logic.outputs.publish_release == 'true' && (needs.release-merge-guard.result == 'success' || needs.release-merge-guard.result == 'skipped'))
-    runs-on: ubuntu-latest
-    environment: npm
-    outputs:
-      published_version: ${{ steps.publish-npm.outputs.npm_published_version }}
     permissions:
       contents: write
       packages: write
       id-token: write
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-        with:
-          fetch-depth: 0
-
-      - name: Download package dist
-        uses: ./.github/actions/download-release-artifact
-        with:
-          name: ai-sdk-provider-dist
-          path: packages/ai-sdk-provider/dist
-
-      - name: Publish to NPM
-        id: publish-npm
-        uses: ./.github/actions/publish-library-to-npm
-        with:
-          tag: ${{ needs.publish-logic.outputs.npm_tag }}
-          workdir: packages/ai-sdk-provider
+    if: |-
+      needs.label-gate.outputs.authorised == 'true' && (always() && needs.publish-logic.outputs.publish_release == 'true' && (needs.release-merge-guard.result == 'success' || needs.release-merge-guard.result == 'skipped'))
+    uses: ./.github/workflows/public-reusable-npm.yml
+    secrets: inherit
+    with:
+      workdir: packages/qvac-ci
+      caller_event_name: ${{ github.event_name }}
 
   publish-release:
     needs: [publish-release-npm]
@@ -223,18 +176,18 @@ jobs:
       contents: write
     uses: ./.github/workflows/create-github-release.yml
     with:
-      repo_name: "ai-sdk-provider"
-      release_name: "QVAC AI SDK Provider"
+      repo_name: "qvac-ci"
+      release_name: "QVAC CI Lib"
       published_version: ${{ needs.publish-release-npm.outputs.published_version }}
       prev_sha: ${{ github.event.before }}
-      workdir: "packages/ai-sdk-provider"
+      workdir: "packages/qvac-ci"
 
   publish-feature-gpr:
     needs:
+      - lint-and-test
       - publish-logic
       - label-gate
-      - build
-    if: needs.label-gate.outputs.authorised == 'true' && needs.publish-logic.outputs.publish_feature == 'true'
+    if: needs.label-gate.outputs.authorised == 'true' && (needs.publish-logic.outputs.publish_feature == 'true')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -242,28 +195,23 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-
-      - name: Download package dist
-        uses: ./.github/actions/download-release-artifact
         with:
-          name: ai-sdk-provider-dist
-          path: packages/ai-sdk-provider/dist
+          fetch-depth: 0
 
       - name: Publish to GitHub Packages (feature)
         uses: ./.github/actions/publish-library-to-gpr
         with:
           secret-token: ${{ secrets.GITHUB_TOKEN }}
-          npm-token: ${{ secrets.NPM_TOKEN }}
           tag: ${{ needs.publish-logic.outputs.gpr_tag }}
-          workdir: packages/ai-sdk-provider
+          workdir: ${{ env.WORKDIR }}
           name-suffix: "-mono"
 
   publish-tmp-gpr:
     needs:
+      - lint-and-test
       - publish-logic
       - label-gate
-      - build
-    if: needs.label-gate.outputs.authorised == 'true' && needs.publish-logic.outputs.publish_tmp == 'true'
+    if: needs.label-gate.outputs.authorised == 'true' && (needs.publish-logic.outputs.publish_tmp == 'true')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -271,18 +219,13 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
-
-      - name: Download package dist
-        uses: ./.github/actions/download-release-artifact
         with:
-          name: ai-sdk-provider-dist
-          path: packages/ai-sdk-provider/dist
+          fetch-depth: 0
 
       - name: Publish to GitHub Packages (tmp)
         uses: ./.github/actions/publish-library-to-gpr
         with:
           secret-token: ${{ secrets.GITHUB_TOKEN }}
-          npm-token: ${{ secrets.NPM_TOKEN }}
           tag: ${{ needs.publish-logic.outputs.gpr_tag }}
-          workdir: packages/ai-sdk-provider
+          workdir: ${{ env.WORKDIR }}
           name-suffix: "-mono"
