@@ -3,6 +3,7 @@
 # README so the folder + instructions exist in git; never the image bytes.
 fixture/*
 !fixture/README.md
+!fixture/LICENSES.txt
 # several-sources CLI build artifacts (built at CI time by build-cli-sources.js).
 cli-builds/
 cli-sources-resolved.json
