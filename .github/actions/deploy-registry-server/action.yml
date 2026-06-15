@@ -24,8 +24,12 @@ inputs:
     description: "Service account email CI impersonates for deploy"
     required: true
   repo-path:
-    description: "Absolute path of the git checkout on the node"
+    description: "Path of the git checkout on the node — absolute (e.g. /home/work/qvac) or relative to the SSH user's home (e.g. qvac)"
     required: true
+  ssh-user:
+    description: "Login user to SSH as; must own the git checkout and the pm2 process (pm2 is per-user)"
+    required: false
+    default: "work"
   deploy-sha:
     description: "Exact commit SHA to deploy"
     required: true
@@ -72,6 +76,7 @@ runs:
         INSTANCE: ${{ inputs.instance }}
         ZONE: ${{ inputs.zone }}
         PROJECT: ${{ inputs.project }}
+        SSH_USER: ${{ inputs.ssh-user }}
         REPO_PATH: ${{ inputs.repo-path }}
         DEPLOY_SHA: ${{ inputs.deploy-sha }}
         PKG_SUBDIR: ${{ inputs.pkg-subdir }}
@@ -102,7 +107,7 @@ runs:
         REMOTE_CMD="${REMOTE_CMD} DRY_RUN='${DRY_RUN}'"
         REMOTE_CMD="${REMOTE_CMD} bash -s"
 
-        gcloud compute ssh "$INSTANCE" \
+        gcloud compute ssh "${SSH_USER}@${INSTANCE}" \
           --zone "$ZONE" \
           --project "$PROJECT" \
           --tunnel-through-iap \

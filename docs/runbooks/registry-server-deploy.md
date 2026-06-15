@@ -74,7 +74,8 @@ environment. The two credentials stay as **`release` environment secrets**
 | `GCP_PROJECT_ID` | project hosting the staging nodes |
 | `GCP_ZONE` | zone of the staging nodes, e.g. `europe-west6-a` |
 | `REGISTRY_STAGING_INSTANCES` | JSON array, e.g. `["registry-stg-01","registry-stg-02","registry-stg-03"]` |
-| `REGISTRY_NODE_REPO_PATH` | absolute path of the git checkout on each node, e.g. `/opt/qvac` |
+| `REGISTRY_NODE_REPO_PATH` | git checkout path on each node — absolute (`/home/work/qvac`) or relative to the work user's home (`qvac`) |
+| `REGISTRY_NODE_SSH_USER` | optional; login user that owns the checkout + pm2 process (default `work`) |
 
 > Repository variables (not environment variables) are required here so the
 > un-environmented `resolve-deploy-targets` job can read the instance list.
@@ -133,12 +134,16 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 ### 4. IAM roles for the deploy SA
 
-Least-privilege set for IAP SSH via OS Login:
+CI logs in as a **fixed local user** (`work`) that owns the git checkout and
+the pm2 process — pm2 is per-user, so the reload must run as that user. That
+rules out OS Login (which derives its own POSIX usernames); instead
+`gcloud compute ssh` publishes an ephemeral key to the `work` user's
+`authorized_keys` via instance metadata. Least-privilege set:
 
 ```bash
 for role in \
   roles/iap.tunnelResourceAccessor \
-  roles/compute.osLogin \
+  roles/compute.instanceAdmin.v1 \
   roles/compute.viewer ; do
   gcloud projects add-iam-policy-binding "<project>" \
     --member="serviceAccount:registry-deploy@<project>.iam.gserviceaccount.com" \
@@ -146,17 +151,13 @@ for role in \
 done
 ```
 
-Enable OS Login on the nodes (project- or instance-level):
-
-```bash
-gcloud compute project-info add-metadata \
-  --project="<project>" \
-  --metadata enable-oslogin=TRUE
-```
-
-> If OS Login is not used, the SA instead needs
-> `roles/compute.instanceAdmin.v1` so `gcloud compute ssh` can publish an
-> ephemeral key to instance metadata. OS Login is preferred.
+> `roles/compute.instanceAdmin.v1` is broad. To tighten, replace it with a
+> custom role granting only `compute.instances.setMetadata` and
+> `compute.instances.get` — the permissions `gcloud compute ssh` needs to add
+> the ephemeral key.
+>
+> Ensure OS Login is **disabled** on these nodes (`enable-oslogin=FALSE` or
+> unset) so the fixed `work` login is honored.
 
 ### 5. Firewall — allow IAP to reach SSH
 
