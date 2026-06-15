@@ -16,6 +16,11 @@ on:
     paths:
       - "packages/registry-server/**"
   workflow_dispatch:
+    inputs:
+      deploy_dry_run:
+        description: "Deploy registry nodes in dry-run mode (no checkout/reload, and sync-staging is skipped)"
+        type: boolean
+        default: false
 
 env:
   PKG_DIR: packages/registry-server
@@ -204,14 +209,91 @@ jobs:
         shell: bash
         run: npm install && npm run lint && npm run test:unit
 
+  # Resolve the list of staging nodes to deploy to. vars.REGISTRY_STAGING_INSTANCES
+  # is a JSON array of GCE instance names, e.g. ["registry-stg-01","registry-stg-02"].
+  # Fails loudly if unset so a misconfiguration blocks the deploy rather than
+  # silently skipping it.
+  resolve-deploy-targets:
+    needs: [authorize, detect-changes, label-gate]
+    if: |-
+      needs.label-gate.outputs.authorised == 'true' &&
+      needs.authorize.outputs.allowed == 'true' &&
+      (needs.detect-changes.outputs.models_changed == 'true' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    outputs:
+      instances: ${{ steps.targets.outputs.instances }}
+    steps:
+      - name: Resolve staging instances
+        id: targets
+        shell: bash
+        env:
+          INSTANCES_JSON: ${{ vars.REGISTRY_STAGING_INSTANCES }}
+        run: |
+          set -euo pipefail
+          if [ -z "${INSTANCES_JSON:-}" ]; then
+            echo "::error::vars.REGISTRY_STAGING_INSTANCES is not set (expected a JSON array of GCE instance names)"
+            exit 1
+          fi
+          if ! echo "$INSTANCES_JSON" | jq -e 'type == "array" and length > 0' >/dev/null; then
+            echo "::error::vars.REGISTRY_STAGING_INSTANCES must be a non-empty JSON array"
+            exit 1
+          fi
+          echo "instances=$(echo "$INSTANCES_JSON" | jq -c .)" >> "$GITHUB_OUTPUT"
+
+  # Deploy code + data (incl. licenses) to every staging node BEFORE sync runs,
+  # so whichever indexer the sync RPC reaches already knows any new license.
+  # Nodes are rolled one at a time (max-parallel: 1, fail-fast) to preserve
+  # Autobase quorum; each node must report indexer status before the next.
+  deploy-staging:
+    needs:
+      - detect-changes
+      - validate-json
+      - test
+      - label-gate
+      - resolve-deploy-targets
+    if: |-
+      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (needs.detect-changes.outputs.models_changed == 'true' || github.event_name == 'workflow_dispatch') && (needs.validate-json.result == 'success' || needs.validate-json.result == 'skipped') && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.resolve-deploy-targets.result == 'success')
+    runs-on: qvac-ubuntu2204-x64
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        instance: ${{ fromJSON(needs.resolve-deploy-targets.outputs.instances || '[]') }}
+    steps:
+      - name: Manual Workspace Cleanup
+        run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
+        shell: bash
+        working-directory: .
+        if: runner.environment != 'github-hosted'
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+
+      - name: Deploy to ${{ matrix.instance }}
+        uses: ./.github/actions/deploy-registry-server
+        with:
+          instance: ${{ matrix.instance }}
+          zone: ${{ vars.GCP_ZONE }}
+          project: ${{ vars.GCP_PROJECT_ID }}
+          workload-identity-provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service-account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          repo-path: ${{ vars.REGISTRY_NODE_REPO_PATH }}
+          deploy-sha: ${{ github.sha }}
+          dry-run: ${{ github.event.inputs.deploy_dry_run || 'false' }}
+
   sync-staging:
     needs:
       - detect-changes
       - validate-json
       - test
       - label-gate
+      - deploy-staging
     if: |-
-      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.detect-changes.outputs.models_changed == 'true' && needs.validate-json.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped'))
+      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.detect-changes.outputs.models_changed == 'true' && needs.validate-json.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.deploy-staging.result == 'success' && github.event.inputs.deploy_dry_run != 'true')
     runs-on: ubuntu-latest
     environment: release
     env:

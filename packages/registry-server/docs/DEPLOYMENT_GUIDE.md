@@ -275,6 +275,20 @@ After all writers are indexers:
 
 ## Operations
 
+### Automated Deployment (CI)
+
+Staging nodes are deployed **automatically** by CI before model sync runs. On a
+push to `main` that changes `packages/registry-server/data/models.prod.json`,
+the `PR Validation and Staging Sync (Registry-server)` workflow deploys the
+merged commit to every staging node (one at a time, health-gated on indexer
+status) and only then runs `sync-staging`. This guarantees license files
+(`data/licenses.json`, `data/licenses/<spdxId>/LICENSE.txt`) are present on the
+nodes before any `add-model` RPC needs them.
+
+Setup, secrets/vars, IAM, and triage live in
+[`docs/runbooks/registry-server-deploy.md`](../../../docs/runbooks/registry-server-deploy.md).
+The manual steps below remain valid as a **break-glass** path.
+
 ### Adding an Indexer
 
 Full walkthrough: add **Server 2** to a running **Server 1** cluster.

@@ -1,0 +1,112 @@
+name: Deploy registry-server (single node)
+description: >
+  Deploys the registry-server package onto a single registry node.
+  Authenticates to Google Cloud via Workload Identity Federation (keyless
+  OIDC), then runs the remote update script over an IAP-tunnelled SSH session:
+  checkout the pinned commit, reinstall dependencies, regenerate spec
+  artifacts, gracefully reload the pm2 process, and block until the node
+  reports indexer status. No long-lived SSH key and no inbound public SSH are
+  required (IAP manages ephemeral keys).
+inputs:
+  instance:
+    description: "GCE instance name of the target registry node"
+    required: true
+  zone:
+    description: "GCE zone of the target node"
+    required: true
+  project:
+    description: "GCP project id hosting the node"
+    required: true
+  workload-identity-provider:
+    description: "Full resource name of the Workload Identity provider"
+    required: true
+  service-account:
+    description: "Service account email CI impersonates for deploy"
+    required: true
+  repo-path:
+    description: "Absolute path of the git checkout on the node"
+    required: true
+  deploy-sha:
+    description: "Exact commit SHA to deploy"
+    required: true
+  pkg-subdir:
+    description: "Package directory within the repo"
+    required: false
+    default: "packages/registry-server"
+  pm2-process:
+    description: "pm2 process name to reload"
+    required: false
+    default: "registry"
+  metrics-port:
+    description: "Local Prometheus metrics port to health-check on the node"
+    required: false
+    default: "9210"
+  health-timeout-seconds:
+    description: "How long to wait for indexer status after reload"
+    required: false
+    default: "120"
+  dry-run:
+    description: "When 'true', print intended actions without mutating the node"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # OIDC -> Workload Identity Federation. Keyless; no service-account JSON
+    # stored. The SA must hold roles/iap.tunnelResourceAccessor and
+    # roles/compute.instanceAdmin.v1 (or osLogin) on the target nodes — see
+    # docs/runbooks/registry-server-deploy.md for the GCP trust setup.
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        service_account: ${{ inputs.service-account }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+    - name: Deploy to ${{ inputs.instance }} via IAP
+      shell: bash
+      env:
+        INSTANCE: ${{ inputs.instance }}
+        ZONE: ${{ inputs.zone }}
+        PROJECT: ${{ inputs.project }}
+        REPO_PATH: ${{ inputs.repo-path }}
+        DEPLOY_SHA: ${{ inputs.deploy-sha }}
+        PKG_SUBDIR: ${{ inputs.pkg-subdir }}
+        PM2_PROCESS: ${{ inputs.pm2-process }}
+        METRICS_PORT: ${{ inputs.metrics-port }}
+        HEALTH_TIMEOUT_SECONDS: ${{ inputs.health-timeout-seconds }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        SCRIPT_PATH: ${{ github.workspace }}/${{ inputs.pkg-subdir }}/scripts/deploy/remote-update.sh
+      run: |
+        set -euo pipefail
+
+        if [ ! -f "$SCRIPT_PATH" ]; then
+          echo "::error::remote-update.sh not found at $SCRIPT_PATH"
+          exit 1
+        fi
+
+        echo "::group::Deploy $DEPLOY_SHA to $INSTANCE (dry-run=$DRY_RUN)"
+
+        # The remote update script is fed over stdin; deploy parameters are set
+        # as environment variables on the remote command line. None of these are
+        # secrets, so plain interpolation is safe.
+        REMOTE_CMD="DEPLOY_SHA='${DEPLOY_SHA}'"
+        REMOTE_CMD="${REMOTE_CMD} REPO_PATH='${REPO_PATH}'"
+        REMOTE_CMD="${REMOTE_CMD} PKG_SUBDIR='${PKG_SUBDIR}'"
+        REMOTE_CMD="${REMOTE_CMD} PM2_PROCESS='${PM2_PROCESS}'"
+        REMOTE_CMD="${REMOTE_CMD} METRICS_PORT='${METRICS_PORT}'"
+        REMOTE_CMD="${REMOTE_CMD} HEALTH_TIMEOUT_SECONDS='${HEALTH_TIMEOUT_SECONDS}'"
+        REMOTE_CMD="${REMOTE_CMD} DRY_RUN='${DRY_RUN}'"
+        REMOTE_CMD="${REMOTE_CMD} bash -s"
+
+        gcloud compute ssh "$INSTANCE" \
+          --zone "$ZONE" \
+          --project "$PROJECT" \
+          --tunnel-through-iap \
+          --quiet \
+          --command "$REMOTE_CMD" < "$SCRIPT_PATH"
+
+        echo "::endgroup::"
