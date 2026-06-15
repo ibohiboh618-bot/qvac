@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <string_view>
 
 #include <common/log.h>
 #include <inference-addon-cpp/Errors.hpp>
@@ -14,9 +15,9 @@
 #include "inference-addon-cpp/Logger.hpp"
 #include "utils/ChatTemplateUtils.hpp"
 #include "utils/LoggingMacros.hpp"
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+#include "utils/VisionPrefixCache.hpp"
 
+using namespace qvac_lib_inference_addon_llama;
 using namespace qvac_lib_inference_addon_llama::errors;
 using namespace qvac_lib_inference_addon_cpp::logger;
 using namespace qvac_lib_inference_addon_llama::utils;
@@ -24,8 +25,11 @@ using namespace qvac_lib_inference_addon_llama::utils;
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 MtmdLlmContext::MtmdLlmContext(
     common_params& commonParams, common_init_result_ptr llamaInit,
-    ToolsCompactController& tools)
-    : tools_(tools), llamaInit_(std::move(llamaInit)), params_(commonParams) {
+    ToolsCompactController& tools, std::size_t visionCacheBudgetBytes)
+    : tools_(tools), llamaInit_(std::move(llamaInit)), params_(commonParams),
+      visionPrefixCache_(visionCacheBudgetBytes),
+      visionCacheKeyPrefix_(makeVisionCacheKeyPrefix(
+          commonParams.model.path, commonParams.mmproj.path)) {
   modelCtx_.model = llamaInit_->model();
   modelCtx_.lctx = llamaInit_->context();
 
@@ -302,19 +306,20 @@ bool MtmdLlmContext::evalMessageWithTools(
   const llama_pos nTokens =
       static_cast<llama_pos>(mtmd_helper_get_n_tokens(chunksPtr));
   const llama_pos nPositions = mtmd_helper_get_n_pos(chunksPtr);
-  if (nTokens >= llama_n_ctx(modelCtx_.lctx) ||
-      nPositions >= llama_n_ctx(modelCtx_.lctx)) {
+  const auto nCtx = static_cast<size_t>(llama_n_ctx(modelCtx_.lctx));
+  const auto nCtxI32 = llama_n_ctx(modelCtx_.lctx);
+  if (nTokens >= nCtxI32 || nPositions >= nCtxI32) {
     std::string errorMsg = string_format(
         "[MtmdLlm] context overflow at prefill step (%d tokens, %d positions, "
         "max %d)\n",
         nTokens,
         nPositions,
-        llama_n_ctx(modelCtx_.lctx));
+        nCtxI32);
     throw qvac_errors::StatusError(
         ADDON_ID, toString(ContextOverflow), errorMsg);
   }
-  if (current_.pos + nPositions >= llama_n_ctx(modelCtx_.lctx) ||
-      current_.cacheTokens + nTokens >= llama_n_ctx(modelCtx_.lctx)) {
+  if (current_.pos + nPositions >= nCtxI32 ||
+      current_.cacheTokens + nTokens >= nCtxI32) {
     auto outcome = trySlidePrefill(
         modelCtx_.lctx,
         seqId_,
@@ -354,7 +359,7 @@ bool MtmdLlmContext::evalMessageWithTools(
           "[MtmdLlm] context overflow at prefill step (%d tokens, max "
           "%d)\n",
           current_.cacheTokens + nTokens,
-          llama_n_ctx(modelCtx_.lctx));
+          nCtxI32);
       throw qvac_errors::StatusError(
           ADDON_ID, toString(ContextOverflow), errorMsg);
     }
@@ -365,12 +370,54 @@ bool MtmdLlmContext::evalMessageWithTools(
           current_.pos,
           current_.cacheTokens,
           nTokens,
-          llama_n_ctx(modelCtx_.lctx));
+          nCtxI32);
       throw qvac_errors::StatusError(
           ADDON_ID, toString(ContextSlideFailed), errorMsg);
     }
     case ContextSlideOutcome::Kind::NotNeeded:
       break;
+    }
+  }
+
+  // QVAC-19118 A3: after sliding, check whether the post-slide nPast +
+  // prompt + n_predict + safety margin still fits in n_ctx. This catches
+  // the case where the prompt technically fits but leaves no room for
+  // generation (e.g. Qwen3VL + 2250x3000 image at ctx=4096).
+  {
+    const size_t nPastPostSlide = static_cast<size_t>(current_.pos);
+    // Reserve a minimum generation headroom when n_predict < 0 (unlimited
+    // generation — the documented default). Image tokens cannot be slid
+    // mid-generation, so a prompt that fills the context to within a handful
+    // of tokens is effectively doomed; catch it here with the actionable
+    // error below instead of after the expensive encode + decode.
+    // n_predict == 0 is prefill-only (generates nothing), so it needs no
+    // headroom and must not be rejected for leaving no room to generate.
+    constexpr size_t kMinGenerationHeadroom = 64;
+    size_t nPredict;
+    if (params_.n_predict > 0) {
+      nPredict = static_cast<size_t>(params_.n_predict);
+    } else if (params_.n_predict == 0) {
+      nPredict = 0;
+    } else {
+      nPredict = kMinGenerationHeadroom;
+    }
+    if (nPredict > nCtx)
+      nPredict = nCtx;
+    constexpr size_t kSafetyMargin = 16;
+    const size_t nPromptPositions = static_cast<size_t>(nPositions);
+    if (nPastPostSlide + nPromptPositions + nPredict + kSafetyMargin > nCtx) {
+      resetMedia();
+      std::string errorMsg = string_format(
+          "[MtmdLlm] context overflow at prefill step: nPast=%zu + "
+          "prompt=%zu positions + n_predict=%zu + safety=%zu would exceed "
+          "n_ctx=%zu. Reduce image resolution or increase ctx_size.\n",
+          nPastPostSlide,
+          nPromptPositions,
+          nPredict,
+          kSafetyMargin,
+          nCtx);
+      throw qvac_errors::StatusError(
+          ADDON_ID, toString(ContextOverflow), errorMsg);
     }
   }
 
@@ -393,6 +440,130 @@ bool MtmdLlmContext::evalMessageWithTools(
       stopGeneration_.store(false);
       return false;
     }
+
+    // QVAC-19118 A2: image chunks bypass mtmd_helper_eval_chunk_single
+    // (which always re-runs CLIP encode + projection) when their bytes hash
+    // is in our cache. Cache stores post-projection embeddings; on hit we
+    // hand them directly to mtmd_helper_decode_image_chunk, which only
+    // sets up KV positions / non-causal attention and runs llama_decode.
+    // Text and audio chunks fall through to the existing helper unchanged.
+    if (mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+      const char* idC = mtmd_input_chunk_get_id(chunk);
+      const std::string_view imageHashView =
+          (idC != nullptr) ? std::string_view(idC) : std::string_view{};
+      std::string cacheKey;
+      if (!imageHashView.empty() && visionPrefixCache_.budgetBytes() > 0) {
+        cacheKey.reserve(visionCacheKeyPrefix_.size() + imageHashView.size());
+        cacheKey.append(visionCacheKeyPrefix_);
+        cacheKey.append(imageHashView);
+      }
+
+      const std::size_t nTokensChunk = mtmd_input_chunk_get_n_tokens(chunk);
+      const std::size_t nEmbd =
+          static_cast<std::size_t>(llama_model_n_embd(modelCtx_.model));
+
+      auto cached =
+          cacheKey.empty() ? std::nullopt : visionPrefixCache_.get(cacheKey);
+      // Decode from cache ONLY when the cached buffer exactly matches the
+      // shape mtmd_helper_decode_image_chunk will read for THIS chunk: it
+      // consumes mtmd_input_chunk_get_n_tokens(chunk) * n_embd floats from
+      // the buffer. A mismatch (hash collision, or a change in image
+      // preprocessing for the same bytes) would otherwise read out of
+      // bounds. On mismatch we fall through and re-encode from scratch.
+      if (cached && nEmbd != 0 && cached->nTokens == nTokensChunk &&
+          cached->embeddings.size() == nTokensChunk * nEmbd) {
+        // Cache hit: get() returned a copy (thread-safe). The API takes
+        // non-const float* so we pass our owned copy directly.
+        int32_t res = mtmd_helper_decode_image_chunk(
+            ctxVision_.get(),
+            modelCtx_.lctx,
+            chunk,
+            cached->embeddings.data(),
+            nPastLocal,
+            0,
+            params_.n_batch,
+            &nPastLocal);
+        if (res != 0) {
+          std::string errorMsg = "[MtmdLlm] failed to decode cached image "
+                                 "chunk " +
+                                 std::to_string(i);
+          throw qvac_errors::StatusError(
+              ADDON_ID, toString(EncoderFailed), errorMsg);
+        }
+        continue;
+      }
+
+      // Cache miss: run CLIP + projection ourselves so we can capture and
+      // copy the post-projection embeddings before they're overwritten by
+      // a subsequent encode call (the libmtmd output buffer is reused).
+      if (mtmd_encode_chunk(ctxVision_.get(), chunk) != 0) {
+        std::string errorMsg =
+            "[MtmdLlm] failed to encode image chunk " + std::to_string(i);
+        throw qvac_errors::StatusError(
+            ADDON_ID, toString(EncoderFailed), errorMsg);
+      }
+
+      // CRITICAL invariant: mtmd_get_output_embd() returns a pointer into
+      // libmtmd's internal scratch buffer that is OVERWRITTEN on the next
+      // mtmd_encode_chunk() call. Deep-copy NOW, before any further
+      // encode runs (e.g. a second image chunk in this same loop).
+      const float* embd = mtmd_get_output_embd(ctxVision_.get());
+
+      if (embd == nullptr || nTokensChunk == 0 || nEmbd == 0) {
+        std::string errorMsg = string_format(
+            "[MtmdLlm] encoder returned no output for image chunk %zu "
+            "(embd=%p, nTokens=%zu, nEmbd=%zu)\n",
+            i,
+            static_cast<const void*>(embd),
+            nTokensChunk,
+            nEmbd);
+        throw qvac_errors::StatusError(
+            ADDON_ID, toString(EncoderFailed), errorMsg);
+      }
+      if (nTokensChunk > SIZE_MAX / nEmbd) {
+        std::string errorMsg = string_format(
+            "[MtmdLlm] embedding size overflow: nTokens=%zu * nEmbd=%zu "
+            "exceeds SIZE_MAX\n",
+            nTokensChunk,
+            nEmbd);
+        throw qvac_errors::StatusError(
+            ADDON_ID, toString(EncoderFailed), errorMsg);
+      }
+
+      VisionCacheEntry entry;
+      entry.embeddings.assign(embd, embd + nTokensChunk * nEmbd);
+      entry.nTokens = nTokensChunk;
+      entry.nPos = mtmd_input_chunk_get_n_pos(chunk);
+      if (const auto* imgTokens = mtmd_input_chunk_get_tokens_image(chunk)) {
+        entry.nx = mtmd_image_tokens_get_nx(imgTokens);
+        entry.ny = mtmd_image_tokens_get_ny(imgTokens);
+      }
+
+      int32_t res = mtmd_helper_decode_image_chunk(
+          ctxVision_.get(),
+          modelCtx_.lctx,
+          chunk,
+          entry.embeddings.data(),
+          nPastLocal,
+          0,
+          params_.n_batch,
+          &nPastLocal);
+      if (res != 0) {
+        std::string errorMsg =
+            "[MtmdLlm] failed to decode image chunk " + std::to_string(i);
+        throw qvac_errors::StatusError(
+            ADDON_ID, toString(EncoderFailed), errorMsg);
+      }
+
+      // Only insert if the bitmap had an ID we could hash and we actually
+      // captured embeddings. An empty key would short-circuit lookup
+      // anyway, but the explicit check keeps stats honest.
+      if (!cacheKey.empty() && !entry.embeddings.empty()) {
+        visionPrefixCache_.put(std::move(cacheKey), std::move(entry));
+      }
+      continue;
+    }
+
     int32_t res = mtmd_helper_eval_chunk_single(
         ctxVision_.get(),
         modelCtx_.lctx,
@@ -666,6 +837,12 @@ void MtmdLlmContext::loadMedia(const std::vector<uint8_t>& media) {
             qvac_errors::general_error::InvalidArgument),
         errorMsg);
   }
+  if (visionPrefixCache_.budgetBytes() > 0) {
+    const std::string hash = sha256OfBytes(media);
+    if (!hash.empty()) {
+      bmp.set_id(hash.c_str());
+    }
+  }
   bitmaps_.entries.push_back(std::move(bmp));
 }
 
@@ -699,6 +876,12 @@ void MtmdLlmContext::loadMedia(const std::string& fname) {
             qvac_errors::general_error::InvalidArgument),
         errorMsg);
   }
+  if (visionPrefixCache_.budgetBytes() > 0) {
+    const std::string hash = sha256OfFile(fname);
+    if (!hash.empty()) {
+      bmp.set_id(hash.c_str());
+    }
+  }
   bitmaps_.entries.push_back(std::move(bmp));
 }
 
@@ -717,6 +900,15 @@ void MtmdLlmContext::resetState(bool resetStats) {
 
   // Clear UTF-8 buffer when resetting state
   utf8Buffer_.clear();
+
+  // Vision prefix cache stores raw post-projection embeddings keyed by image
+  // SHA-256. Entries are context-independent and re-injected into fresh KV
+  // contexts via mtmd_helper_decode_image_chunk, so they remain valid across
+  // KV resets and cacheKey changes. Data persists for the model lifetime;
+  // cleared only on destroy or onMemoryWarning().
+  if (resetStats) {
+    visionPrefixCache_.clearStats();
+  }
 
   clearSequenceMemory(modelCtx_.lctx);
 
