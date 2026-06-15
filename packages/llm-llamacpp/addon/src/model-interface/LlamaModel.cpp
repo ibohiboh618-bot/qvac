@@ -407,7 +407,13 @@ void LlamaModel::init(bool acquireLock) {
         try {
           constexpr std::size_t kMaxMB = SIZE_MAX / (1024ULL * 1024ULL);
           auto val = std::stoul(budgetIt->second, nullptr, 10);
-          if (val <= kMaxMB) {
+          if (val == 0) {
+            visionCacheBudgetBytes = 0;
+            QLOG_IF(
+                Priority::WARNING,
+                "[LlamaModel] vision_cache_budget_mb=0 disables vision "
+                "caching; use vision_cache:\"false\" to disable explicitly\n");
+          } else if (val <= kMaxMB) {
             visionCacheBudgetBytes = val * 1024ULL * 1024ULL;
           }
         } catch (const std::exception&) {
