@@ -11,7 +11,7 @@
 //   vqa / anls / relaxed / mc  → the higher-better "%" tables
 //   ocr                        → CER / WER / BLEU, shown in a SEPARATE table (aggregate.js)
 //
-// OCR fixture items (tasks `ocr-line`, `ocr-page`) are HAND-CURATED into
+// OCR fixture items (tasks `ocr-small`, `ocr-page`) are HAND-CURATED into
 // fixture.data.cjs from S3-hosted images — see fixture/README.md for the item shape and
 // the "read the text" prompt convention. Until those items exist, the OCR task ids here
 // simply select zero items (the VQA suite runs unaffected).
@@ -22,6 +22,6 @@
 module.exports = {
   default: {
     title: 'VLM quality suite (VQA + OCR)',
-    tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d', 'ocr-line', 'ocr-page']
+    tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d', 'ocr-small', 'ocr-page']
   }
 }

@@ -79,5 +79,5 @@ Scoring families (each fixture item carries its own `metric`):
 - `vqa` / `anls` / `relaxed` / `mc` → higher-better, shown as `%` (Overall % = equal-weight mean).
 - `ocr` → **CER ↓ / WER ↓ / BLEU ↑**, shown in a **separate OCR table** (never blended into `%`).
 
-OCR fixture items (`ocr-line`, `ocr-page`) are hand-curated from S3 images — see
+OCR fixture items (`ocr-small`, `ocr-page`) are hand-curated from S3 images — see
 `fixture/README.md`.

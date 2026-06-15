@@ -149,7 +149,7 @@ const TASK_LABELS = {
   gqa: 'GQA — compositional scene reasoning',
   docvqa: 'DocVQA — document understanding (ANLS)',
   ai2d: 'AI2D — science-diagram multiple choice',
-  'ocr-line': 'OCR · line — read a single word/line',
+  'ocr-small': 'OCR · small — read a short phrase/sentence',
   'ocr-page': 'OCR · page — full-page text recognition'
 }
 const taskLabel = t => TASK_LABELS[t] || t
@@ -490,7 +490,7 @@ function build (rows, vision, meta, provText, title, opts = {}) {
 
 // Exported for unit/scoring tests (score-check.cjs). The CLI only runs when invoked
 // directly, so `require('./aggregate.js')` is side-effect-free.
-module.exports = { SCORERS, score, textSim, tokenF1, norm, extractAnswer, build, parseLog }
+module.exports = { SCORERS, score, ocrScore, OCR_METRICS, textSim, tokenF1, norm, extractAnswer, build, parseLog }
 
 if (require.main === module) {
   const args = parseArgs(process.argv)

@@ -211,7 +211,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
      two-models only — ignored for several-sources.
 
 **7. Task set** — `scenarios.cjs` defines one `default` set: the 5 VQA tasks
-   (textvqa/vizwiz/gqa/docvqa/ai2d) + the OCR tasks (ocr-line/ocr-page). Quality is
+   (textvqa/vizwiz/gqa/docvqa/ai2d) + the OCR tasks (ocr-small/ocr-page). Quality is
    reported per task, **not gated** (different models are compared, so there's no
    candidate-vs-baseline accuracy regression to gate on). OCR tasks score by CER/WER/BLEU
    in a separate table.
