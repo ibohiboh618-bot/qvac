@@ -94,6 +94,11 @@ private:
 
   int backendDevice_ = 0;
   int backendId_ = 0;
+  // 1 when useGPU was requested but the engine fell back to CPU because the
+  // device's GPU is present yet outside the validated allowlist (e.g. Mali);
+  // surfaced as the `gpuUnsupported` stat so a CPU result on such a device is
+  // not treated as a GPU-engagement regression.
+  int gpuUnsupported_ = 0;
   std::string backendName_ = "CPU";
 };
 

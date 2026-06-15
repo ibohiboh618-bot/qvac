@@ -228,7 +228,8 @@ async function runTTS (model, params, expectation = {}, options = {}) {
           audioDurationMs: stats.audioDurationMs,
           totalSamples: stats.totalSamples,
           backendDevice: stats.backendDevice,
-          backendId: stats.backendId
+          backendId: stats.backendId,
+          gpuUnsupported: stats.gpuUnsupported
         }
       : null
 

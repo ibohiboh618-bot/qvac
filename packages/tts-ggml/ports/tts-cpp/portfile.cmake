@@ -1,34 +1,23 @@
-# tts-cpp — LOCAL OVERLAY PORT (Android dlopen-fix validation).
+# tts-cpp — LOCAL OVERLAY PORT (Android GPU validation; DO NOT MERGE).
 #
-# This package-local overlay replaces the registry `tts-cpp` port so the
-# tts-ggml prebuild builds an upstream fix that is NOT yet published to
-# qvac-registry-vcpkg. It pins qvac-ext-lib-whisper.cpp@f7d4d6c — exactly
-# one commit on top of the published 2026-06-05 pin (128dae42) — which
-# reroutes Supertonic's direct CPU-backend calls that are unlinkable under
-# `GGML_BACKEND_DL=ON`:
-#   - `ggml_get_type_traits_cpu(...)->from_float` -> `ggml_quantize_chunk()`
-#     (ggml-base, always linked)
-#   - `ggml_backend_is_cpu()` -> `tts_cpp::detail::backend_is_cpu()` registry
-#     shim (the pattern Chatterbox / parakeet already use)
+# Replaces the registry tts-cpp port so the tts-ggml prebuild builds the
+# Android-GPU fixes not yet published to qvac-registry-vcpkg. Pins
+# tetherto/qvac-ext-lib-whisper.cpp @ aa2c9056 (4 commits on master ed749556):
+#   1. dlopen reroute: Supertonic's direct CPU-backend calls are unlinkable
+#      under GGML_BACKEND_DL=ON; route ggml_get_type_traits_cpu(...)->from_float
+#      to ggml_quantize_chunk() and ggml_backend_is_cpu() to the registry shim
+#      tts_cpp::detail::backend_is_cpu() (else the addon SIGABRTs at dlopen on
+#      Android, killing all Android e2e).
+#   2. keep Supertonic K/V attention F32 on OpenCL (no F32xF16 mat-vec kernel).
+#   3. explicit GPU attention when the backend can't run flash-attn (Adreno /
+#      Xclipse OpenCL route FLASH_ATTN_EXT to CPU) so the per-step CFM attention
+#      stays GPU-resident instead of going stale on a CPU bridge.
+#   4. allowlist Samsung Xclipse (Vulkan) as a 2nd Android GPU vendor + report a
+#      gpu_unsupported() policy-decline fallback (Mali stays CPU).
 #
-# Why this exists: tts-cpp@2026-06-05 (QVAC-19254 sched + cpu_backend
-# refactor) left `ggml_backend_is_cpu` / `ggml_get_type_traits_cpu` as
-# undefined symbols in `libqvac__tts-ggml.*.so`, so the addon fails to
-# `dlopen` on Android (per-arch CPU backends are dlopen'd lazily, not
-# linked) -> SIGABRT at bootstrap -> all Android e2e dead.
-#
-# How to verify the fix: build the Android prebuild from this overlay, then
-#   llvm-readelf --dyn-syms prebuilds/android-arm64/qvac__tts-ggml.bare \
-#     | grep -E 'UND.*(ggml_backend_is_cpu|ggml_get_type_traits_cpu)'
-# The CPU symbols should no longer appear as UND.
-#
-# TEMPORARY: remove this overlay (and the `overlay-ports` entry in
-# vcpkg-configuration.json) once the fix is published to the registry and
-# consumed via vcpkg.json. Tracked as a QVAC-19254 follow-up.
-#
-# Base pin 128dae42 brought PR #31 (supertonic_optimizations): QVAC-18605
-# Supertonic Vulkan/Metal optimisations, QVAC-19254 sched + cpu_backend
-# refactor, QVAC-19213 Adreno-generation parse fix.
+# TEMPORARY: remove this overlay (and the overlay-ports entry in
+# vcpkg-configuration.json) once the fixes are published to the registry and
+# consumed via vcpkg.json.
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -36,8 +25,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF f7d4d6c18615dc0c094776db78421bbb07e90371
-    SHA512 eb4d5679db948a496282f3a73ad11da0b19efbfc63c0b27a08cb536a88c3313ad03f91aa2f875463fd9990b2cf0e2b66a063a3a84bb2ff930718926c497b435d
+    REF aa2c9056c425aec7bacab70d79ea3d66b531ba1f
+    SHA512 2fc32d81e4ce9e759fd18544d8eb1f6e900628cd8806a7a679420a80bcb980dc5b70514afacf8f3302b0d4aa67ba336e76f8e117a06ccea971a4ff4df0de8686
     HEAD_REF master
 )
 

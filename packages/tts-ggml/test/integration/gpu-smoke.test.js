@@ -53,6 +53,29 @@ function backendIdToName (id) {
   }
 }
 
+// Minimum RMS amplitude real synthesized speech clears by a wide margin
+// (~0.037 on the smoke sentence; samples are int16, normalised by 32768).
+// Catches a graph miscompute that emits the right sample count but silent /
+// all-zero / NaN-collapsed audio, which the sample-count-only check missed.
+const MIN_AUDIO_RMS = 0.01
+
+function audioRms (samples) {
+  if (!samples || samples.length === 0) return 0
+  let sum = 0
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i] / 32768
+    sum += v * v
+  }
+  return Math.sqrt(sum / samples.length)
+}
+
+function assertAudibleRms (t, engineTag, samples) {
+  const r = audioRms(samples)
+  console.log(`[${engineTag}] audio rms=${r.toFixed(6)} (floor ${MIN_AUDIO_RMS})`)
+  t.ok(r > MIN_AUDIO_RMS,
+    `${engineTag}: audio rms ${r.toFixed(6)} must exceed ${MIN_AUDIO_RMS} (silent/garbage output regression)`)
+}
+
 // Which platforms wire up a GPU backend in tts-cpp's vcpkg port
 // today (default-features in qvac-registry-vcpkg/ports/tts-cpp/vcpkg.json):
 //   - darwin / ios:        metal
@@ -76,7 +99,16 @@ function assertGpuBackend (t, engineTag, stats) {
   const dev = stats.backendDevice
   const id = stats.backendId
   const name = backendIdToName(id)
-  console.log(`[${engineTag}/GPU] backendDevice=${dev} backendId=${id} (${name})`)
+  console.log(`[${engineTag}/GPU] backendDevice=${dev} backendId=${id} (${name}) gpuUnsupported=${stats.gpuUnsupported}`)
+
+  // On Android the GPU is engaged only on validated vendors (Adreno → OpenCL,
+  // Samsung Xclipse → Vulkan). Other Android GPUs (e.g. ARM Mali) are routed to
+  // CPU by the tts-cpp allowlist — a correct fallback, not a regression — and
+  // the engine flags it via stats.gpuUnsupported. Accept that CPU result.
+  if (platform === 'android' && dev === 0 && stats.gpuUnsupported) {
+    t.pass(`${engineTag}/android: GPU present but unsupported vendor (e.g. Mali); correctly using CPU`)
+    return
+  }
 
   if (!expectsGpu()) {
     t.is(dev, 0, `${engineTag}/${platform}: backendDevice must be 0 (CPU) on platforms with no GPU wired in`)
@@ -123,10 +155,6 @@ function assertCpuBackend (t, engineTag, stats) {
 }
 
 test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (platform === 'android') {
-    t.pass('Android: GPU disabled at engine boundary pending Vulkan/Mali + OpenCL/Adreno upstream fixes')
-    return
-  }
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
@@ -159,21 +187,16 @@ test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
     t.ok(result.passed, 'Chatterbox/GPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Chatterbox/GPU produced audio')
     assertGpuBackend(t, 'Chatterbox', result.data.stats)
+    assertAudibleRms(t, 'Chatterbox/GPU', result.data.samples)
   } finally {
     try { await model.unload() } catch (_e) {}
   }
 })
 
 test('Supertonic GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  // QVAC-19255 re-land: Supertonic GPU (Metal on Apple, Vulkan/CUDA on desktop)
-  // is consumed via tts-cpp@2026-06-05 (f7d4d6c overlay). Android (Adreno) is
-  // intentionally kept CPU-only at the engine boundary
-  // (SupertonicModel::loadLocked) because Adreno Vulkan/OpenCL ggml graph
-  // compute still aborts, so skip the GPU assertion there (mirrors Chatterbox).
-  if (platform === 'android') {
-    t.pass('Android: Supertonic GPU disabled at engine boundary pending Adreno Vulkan/OpenCL ggml fixes')
-    return
-  }
+  // Android GPU is enabled for both engines (the loadLocked __ANDROID__ guards
+  // are removed). Adreno auto-selects OpenCL(4); Mali/Xclipse auto-select
+  // Vulkan(3) — assertGpuBackend accepts either.
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
@@ -202,6 +225,7 @@ test('Supertonic GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
     t.ok(result.passed, 'Supertonic/GPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Supertonic/GPU produced audio')
     assertGpuBackend(t, 'Supertonic', result.data.stats)
+    assertAudibleRms(t, 'Supertonic/GPU', result.data.samples)
   } finally {
     try { await model.unload() } catch (_e) {}
   }
@@ -248,6 +272,7 @@ test('Chatterbox CPU smoke - useGPU=false must run on the CPU backend', { timeou
     t.ok(result.passed, 'Chatterbox/CPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Chatterbox/CPU produced audio')
     assertCpuBackend(t, 'Chatterbox', result.data.stats)
+    assertAudibleRms(t, 'Chatterbox/CPU', result.data.samples)
   } finally {
     try { await model.unload() } catch (_e) {}
   }
@@ -282,6 +307,7 @@ test('Supertonic CPU smoke - useGPU=false must run on the CPU backend', { timeou
     t.ok(result.passed, 'Supertonic/CPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Supertonic/CPU produced audio')
     assertCpuBackend(t, 'Supertonic', result.data.stats)
+    assertAudibleRms(t, 'Supertonic/CPU', result.data.samples)
   } finally {
     try { await model.unload() } catch (_e) {}
   }
