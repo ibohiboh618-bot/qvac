@@ -11,25 +11,21 @@ namespace qvac_lib_inference_addon_llama {
 VisionPrefixCache::VisionPrefixCache(std::size_t budgetBytes)
     : budgetBytes_(budgetBytes) {}
 
-std::optional<VisionCacheEntry> VisionPrefixCache::get(const std::string& key) {
-  std::shared_ptr<const VisionCacheEntry> entryPtr;
-  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (key.empty()) {
-      ++misses_;
-      return std::nullopt;
-    }
-    auto it = entries_.find(key);
-    if (it == entries_.end()) {
-      ++misses_;
-      return std::nullopt;
-    }
-    ++hits_;
-    touch(it->second.second);
-    entryPtr = it->second.first; // cheap refcount bump while locked
+std::shared_ptr<const VisionCacheEntry>
+VisionPrefixCache::get(const std::string& key) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  if (key.empty()) {
+    ++misses_;
+    return nullptr;
   }
-  // Deep-copy the (potentially multi-MB) embeddings after releasing the lock.
-  return *entryPtr;
+  auto it = entries_.find(key);
+  if (it == entries_.end()) {
+    ++misses_;
+    return nullptr;
+  }
+  ++hits_;
+  touch(it->second.second);
+  return it->second.first;
 }
 
 bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
@@ -48,7 +44,7 @@ bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
         std::make_shared<const VisionCacheEntry>(std::move(entry));
     currentBytes_ += existing->second.first->sizeBytes();
     touch(existing->second.second);
-    while (currentBytes_ > budgetBytes_ && order_.size() > 1) {
+    while (currentBytes_ > budgetBytes_ && !order_.empty()) {
       const std::string& victim = order_.back();
       auto vIt = entries_.find(victim);
       if (vIt != entries_.end()) {
@@ -72,12 +68,12 @@ bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
     order_.pop_back();
     ++evictions_;
   }
-  order_.push_front(key);
+  order_.push_front(std::move(key));
   currentBytes_ += entrySize;
   if (currentBytes_ > peakBytes_)
     peakBytes_ = currentBytes_;
   entries_.emplace(
-      std::move(key),
+      order_.front(),
       std::make_pair(
           std::make_shared<const VisionCacheEntry>(std::move(entry)),
           order_.begin()));
@@ -167,7 +163,7 @@ struct Sha256Ctx {
       0x5be0cd19};
   uint8_t block[64]{};
   std::size_t blockLen = 0;
-  uint64_t totalLen = 0;
+  uint64_t totalBits = 0;
 
   void transform() {
     uint32_t w[64];
@@ -214,7 +210,7 @@ struct Sha256Ctx {
     // Top off a partial block first, then run full 64-byte blocks straight
     // from the input, then buffer the remainder. Bulk memcpy is ~10x faster
     // than the byte-at-a-time loop on multi-MB images. The (block, blockLen,
-    // totalLen) state evolves identically, so finalize() and the digest are
+    // totalBits) state evolves identically, so finalize() and the digest are
     // byte-for-byte identical to the scalar version.
     if (blockLen > 0) {
       const std::size_t need = 64 - blockLen;
@@ -224,14 +220,14 @@ struct Sha256Ctx {
       i += take;
       if (blockLen == 64) {
         transform();
-        totalLen += 512;
+        totalBits += 512;
         blockLen = 0;
       }
     }
     while (len - i >= 64) {
       std::memcpy(block, data + i, 64);
       transform();
-      totalLen += 512;
+      totalBits += 512;
       i += 64;
     }
     if (i < len) {
@@ -241,7 +237,7 @@ struct Sha256Ctx {
   }
 
   std::array<uint8_t, 32> finalize() {
-    uint64_t totalBits = totalLen + blockLen * 8;
+    uint64_t msgBits = totalBits + blockLen * 8;
     block[blockLen++] = 0x80;
     if (blockLen > 56) {
       while (blockLen < 64)
@@ -252,7 +248,7 @@ struct Sha256Ctx {
     while (blockLen < 56)
       block[blockLen++] = 0;
     for (int i = 7; i >= 0; --i) {
-      block[blockLen++] = static_cast<uint8_t>(totalBits >> (i * 8));
+      block[blockLen++] = static_cast<uint8_t>(msgBits >> (i * 8));
     }
     transform();
     std::array<uint8_t, 32> digest{};
@@ -328,6 +324,9 @@ std::string sha256OfFile(const std::string& path) {
 
 std::string makeVisionCacheKeyPrefix(
     const std::string& modelPath, const std::string& mmprojPath) {
+  if (modelPath.empty() && mmprojPath.empty()) {
+    return {};
+  }
   std::string prefix;
   prefix.reserve(20 + modelPath.size() + mmprojPath.size());
   prefix.append(std::to_string(modelPath.size()));

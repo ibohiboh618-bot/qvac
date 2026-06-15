@@ -60,11 +60,9 @@ public:
 
   explicit VisionPrefixCache(std::size_t budgetBytes = DEFAULT_BUDGET_BYTES);
 
-  // Look up a cached entry. Returns an independent copy of the entry
-  // (thread-safe). The large embeddings copy is made AFTER the lock is
-  // released — entries are held behind a shared_ptr internally, so only a
-  // cheap refcount bump happens under the lock. Returns std::nullopt on miss.
-  std::optional<VisionCacheEntry> get(const std::string& key);
+  // Look up a cached entry. Returns a shared_ptr to an immutable entry
+  // (thread-safe, zero-copy). Returns nullptr on miss.
+  std::shared_ptr<const VisionCacheEntry> get(const std::string& key);
 
   // Insert / overwrite. Evicts least-recently-used entries while total byte
   // usage exceeds budgetBytes. Empty key or zero budget is rejected (no-op +
