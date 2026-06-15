@@ -1,23 +1,167 @@
 'use strict'
-// QVAC-19371 (A1 scaffold): desktop run driver — the future home of the
-// process-level orchestration the in-process harness cannot do:
-//   • swap addon prebuild dirs between candidate/baseline blocks   TODO(A2)
-//   • schedule interleaved warmup/measured blocks + stability guard TODO(A3)
-//   • sample peak RSS around the bare process (macOS/Windows)       TODO(A4)
+// QVAC-19371 (A3, scaffolded for A2): desktop run driver — the process-level
+// orchestration the in-process harness cannot do. The harness loads ONE build in
+// ONE process, so warmup/measured round scheduling (and, in A2, candidate-vs-
+// baseline) has to happen out here by spawning one harness process per
+// { source × model × block }.
 //
-// NOT WIRED YET: the workflow's "Run VLM matrix" step still runs the harness
-// directly (npx brittle … && bare …). A2/A3 replace that step body with
-//   node benchmarks/vlm-benchmark/run-desktop.cjs
-// keeping all future run-logic changes inside this folder (no YAML churn).
+// What this does:
+//   • planBlocks() lays out 1 warmup + N measured blocks per source, INTERLEAVED
+//     across sources (B,C,B,C…) so neither build sits on a hotter machine.
+//   • stabilityGuard() waits for a steady thermal state between blocks; we emit a
+//     [VLMBLOCK] marker recording what it did.
+//   • each block is a fresh `bare` process pinned to one source/model/block via
+//     env (QVAC_VLM_SOURCE_ID/REF, QVAC_VLM_MODEL_INDEX, QVAC_VLM_BLOCK,
+//     QVAC_VLM_BACKENDS_DIR) so its markers carry the right identity and exactly
+//     one build is loaded per process.
+//
+// The workflow's "Run VLM matrix" step now just runs this file, so all run-logic
+// changes stay in this folder (no YAML churn). The report side takes the median
+// over measured blocks (block >= 1) and drops warmup (block 0).
+//
+// A2 will make addonPrebuildDir() return real candidate/baseline dirs; today both
+// resolve to the published build on disk, so addon@candidate,addon@baseline is a
+// genuine A/A test (expect ~0% deltas).
 //
 // OWNERSHIP: runner workstream (Dev A).
 //
-// --selfcheck validates this folder's contract wiring without running any
-// model: config loads, scenarios resolve, the models grammar parses, and the
-// sample markers file matches the v2 schema. CI and devs run it cheaply.
+// --selfcheck validates the contract wiring without running any model.
 
 const fs = require('fs')
 const path = require('path')
+const { spawn, spawnSync } = require('child_process')
+
+function env (key, dflt) {
+  const v = process.env[key]
+  return v == null || v === '' ? dflt : v
+}
+
+function note (...args) {
+  console.error('[run-desktop]', ...args)
+}
+
+// The harness loads from packages/llm-llamacpp; CI invokes us with that as cwd.
+const WORKDIR = process.cwd()
+
+// Resolve the models under test EXACTLY as the harness does, so the scheduler and
+// the child agree on the list — we then pick one per child by index.
+function resolveModels (config, parseModels) {
+  const mode = env('QVAC_VLM_MODE', config.mode || 'two-models')
+  if (mode === 'several-sources') return [config.sourcesModel]
+  return parseModels(env('QVAC_VLM_MODELS', ''), config.catalog, config.models)
+}
+
+// Source identity → the version string stamped into markers (source_ref). Until
+// A2 builds real candidate/baseline prebuilds, both resolve to the published
+// build on disk; the ref label still distinguishes them in the report.
+function sourceRef (config, src) {
+  if (src.type !== 'addon') return src.ref
+  if (src.ref === 'baseline') return 'npm:' + ((config.defaultBaseline && config.defaultBaseline.npm) || 'baseline')
+  if (src.ref === 'candidate') return env('QVAC_VLM_CANDIDATE_REF', 'git:candidate')
+  return env('QVAC_VLM_SOURCE_REF', 'npm:' + env('ADDON_VERSION', 'published'))
+}
+
+function stabilityOptsFrom (config) {
+  const want = (config.methodology && config.methodology.stability) || 'auto'
+  // 'temp' (Mac mini sensor) is not wired yet → probe everywhere; 'off' disables.
+  if (want === 'off') return { mode: 'off' }
+  return { mode: 'probe' }
+}
+
+function emitBlock (config, entry, src, model, device, stability) {
+  const obj = {
+    v: 2,
+    scenario: env('QVAC_VLM_SCENARIOS', config.defaultScenario || 'vqa-suite').split(',')[0].trim(),
+    source_id: src.id,
+    source_ref: sourceRef(config, src),
+    model: model.label,
+    device,
+    block: entry.block,
+    stability
+  }
+  process.stdout.write('[VLMBLOCK]' + JSON.stringify(obj) + '[/VLMBLOCK]\n')
+}
+
+// brittle -r generates test/integration/all.js referencing the matrix test; we
+// then run that under bare once per block.
+function generateRunner () {
+  const r = spawnSync('npx', ['brittle', '-r', 'test/integration/all.js', 'benchmarks/vlm-benchmark/vlm-matrix.test.js'], { cwd: WORKDIR, stdio: 'inherit' })
+  if (r.status !== 0) throw new Error('brittle runner generation failed (status ' + r.status + ')')
+}
+
+function runBlock (config, src, model, modelIndex, device, block, prebuildDir) {
+  const childEnv = Object.assign({}, process.env, {
+    QVAC_VLM_MATRIX: '1',
+    QVAC_VLM_DEVICES: device,
+    QVAC_VLM_REPEATS: '1', // one block = one pass over the fixture
+    QVAC_VLM_BLOCK: String(block),
+    QVAC_VLM_MODEL_INDEX: String(modelIndex),
+    QVAC_VLM_SOURCE_ID: src.id,
+    QVAC_VLM_SOURCE_REF: sourceRef(config, src),
+    QVAC_VLM_BACKENDS_DIR: prebuildDir
+  })
+  return new Promise(resolve => {
+    const child = spawn('bare', ['test/integration/all.js', '--exit'], { cwd: WORKDIR, stdio: 'inherit', env: childEnv })
+    child.on('exit', code => resolve(code == null ? 1 : code))
+    child.on('error', err => { note('failed to spawn bare:', (err && err.message) || err); resolve(1) })
+  })
+}
+
+async function run () {
+  const config = require('./config.cjs')
+  const { parseModels } = require('./models.cjs')
+  const { parseSources, addonPrebuildDir } = require('./sources.cjs')
+  const { planBlocks, stabilityGuard } = require('./methodology.cjs')
+
+  // In several-sources mode the comparison axis is the engine: this leg always
+  // runs the published addon, while the fabric/upstream CLIs are built and run by
+  // the separate workflow step (not scheduled here). QVAC_VLM_SOURCES there holds
+  // the CLI tokens, so don't try to schedule them as addon builds.
+  const mode = env('QVAC_VLM_MODE', config.mode || 'two-models')
+  let sources
+  if (mode === 'several-sources') {
+    sources = parseSources('addon')
+  } else {
+    sources = parseSources(env('QVAC_VLM_SOURCES', 'addon')).filter(s => {
+      if (s.type === 'addon') return true
+      note(`skipping non-addon source '${s.id}' — CLI sources run via the several-sources path (arbitrary refs land in A5)`)
+      return false
+    })
+    if (!sources.length) throw new Error('no addon sources to schedule (set QVAC_VLM_SOURCES)')
+  }
+
+  const byId = new Map(sources.map(s => [s.id, s]))
+  const sourceIds = sources.map(s => s.id)
+  const devices = env('QVAC_VLM_DEVICES', 'cpu').split(',').map(s => s.trim()).filter(Boolean)
+  const models = resolveModels(config, parseModels)
+  const plan = planBlocks(sourceIds, config.methodology)
+  const stabOpts = stabilityOptsFrom(config)
+
+  note(`scheduling ${models.length} model(s) × ${devices.join(',')} × ${plan.length} block-run(s); sources: ${sourceIds.join(', ')}`)
+  generateRunner()
+
+  let failed = 0
+  for (let mi = 0; mi < models.length; mi++) {
+    for (const device of devices) {
+      for (const entry of plan) {
+        const src = byId.get(entry.source)
+        const prebuildDir = addonPrebuildDir(src, WORKDIR)
+        const stability = await stabilityGuard(stabOpts)
+        emitBlock(config, entry, src, models[mi], device, stability)
+        const code = await runBlock(config, src, models[mi], mi, device, entry.block, prebuildDir)
+        if (code !== 0) {
+          failed++
+          note(`block FAILED (source=${src.id} model=${models[mi].label} device=${device} block=${entry.block} exit=${code})`)
+        }
+      }
+    }
+  }
+  if (failed) {
+    note(`${failed} block run(s) failed`)
+    process.exit(1)
+  }
+  note('all block runs completed')
+}
 
 function selfcheck () {
   const config = require('./config.cjs')
@@ -62,10 +206,7 @@ function selfcheck () {
 
 if (require.main === module) {
   if (process.argv.includes('--selfcheck')) selfcheck()
-  else {
-    console.error('run-desktop.cjs: block-scheduling driver not implemented yet (A2/A3); only --selfcheck is available')
-    process.exit(2)
-  }
+  else run().catch(err => { console.error('run-desktop failed:', (err && err.stack) || err); process.exit(1) })
 }
 
-module.exports = { selfcheck }
+module.exports = { selfcheck, run }

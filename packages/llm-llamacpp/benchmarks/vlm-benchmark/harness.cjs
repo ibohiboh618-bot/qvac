@@ -47,6 +47,8 @@ const isMobile = os.platform() === 'android' || os.platform() === 'ios'
 // it there; on desktop gate behind QVAC_VLM_MATRIX so the normal suite skips the 6 GB.
 const ENABLED = isMobile || env('QVAC_VLM_MATRIX') === '1'
 function intEnv (k) { const v = parseInt(env(k), 10); return Number.isFinite(v) && v > 0 ? v : null }
+// Like intEnv but allows 0 (block 0 = warmup, model index 0 are both valid).
+function nonNegEnv (k) { const raw = env(k); if (raw === '') return null; const v = parseInt(raw, 10); return Number.isFinite(v) && v >= 0 ? v : null }
 
 // Active preset = the run SIZE (tasks × samples × repeats), independent of mode.
 // QVAC_VLM_PRESET overrides config.defaultPreset on every target — the workflow sets
@@ -84,6 +86,15 @@ const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') 
 // mean over repeats and any nondeterminism is visible. Default 3 on desktop; 1 on
 // mobile to stay under the Device Farm ceiling. Override with QVAC_VLM_REPEATS.
 const REPEATS = intEnv('QVAC_VLM_REPEATS') || PRESET.repeats || (isMobile ? 1 : 3)
+
+// Set by the A3 scheduler (run-desktop.cjs) when it drives one block per process:
+// the block number to stamp (0 = warmup, 1.. = measured) and which single model
+// from the resolved list to run. Absent on single-process / mobile runs.
+const BLOCK_OVERRIDE = nonNegEnv('QVAC_VLM_BLOCK')
+const MODEL_INDEX = nonNegEnv('QVAC_VLM_MODEL_INDEX')
+// The addon prebuild dir to load (A2 candidate vs baseline swap). Empty = the
+// addon's own default (packages/llm-llamacpp/prebuilds).
+const BACKENDS_DIR = env('QVAC_VLM_BACKENDS_DIR')
 
 // tasks: QVAC_VLM_TASKS (csv) > preset.tasks > the scenario's task list.
 // preset.maxTasks (e.g. smoke = 1) trims to the first N distinct tasks so the
@@ -231,11 +242,12 @@ function emitRow (obj) {
 }
 
 // Contract-v2 fields stamped into every marker (CONTRACT.md §1). `block` is the
-// measurement round; until the A3 scheduler adds warmup blocks every round is
-// measured, so block = rep + 1 (0 is reserved for warmup).
+// measurement round: the A3 scheduler sets it explicitly (QVAC_VLM_BLOCK, one
+// block per process); on single-process runs there are no warmup blocks so
+// block = rep + 1.
 function stamp (rep, obj) {
   const out = { v: 2, scenario: SCENARIO_ID, source_id: SRC_ID, source_ref: SRC_REF }
-  if (rep != null) out.block = rep + 1
+  if (rep != null) out.block = BLOCK_OVERRIDE != null ? BLOCK_OVERRIDE : rep + 1
   return Object.assign(out, obj)
 }
 
@@ -285,7 +297,8 @@ function runModel (spec) {
           ctx_size: spec.ctx_size,
           n_predict: '128',
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
-          'reasoning-budget': '0' // disable Qwen3.5 thinking -> clean direct answers
+          'reasoning-budget': '0', // disable Qwen3.5 thinking -> clean direct answers
+          ...(BACKENDS_DIR ? { backendsDir: BACKENDS_DIR } : {}) // A2: candidate/baseline prebuild
         },
         logger: console,
         opts: { stats: true }
@@ -344,7 +357,10 @@ function runAll () {
   const models = MODE === 'several-sources'
     ? [config.sourcesModel]
     : parseModels(env('QVAC_VLM_MODELS'), config.catalog, config.models)
-  for (const spec of models) runModel(spec)
+  // When the A3 scheduler drives one (source × model × block) per process it pins
+  // the model by index; otherwise run the whole list.
+  const selected = MODEL_INDEX != null && models[MODEL_INDEX] ? [models[MODEL_INDEX]] : models
+  for (const spec of selected) runModel(spec)
 }
 
 module.exports = { runModel, runAll }
