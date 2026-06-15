@@ -14,12 +14,10 @@ const path = require('bare-path')
 const os = require('bare-os')
 const proc = require('bare-process')
 const test = require('brittle')
-const binding = require('../../binding')
 const VideoStableDiffusion = require('@qvac/diffusion-cpp/video')
-const { detectPlatform, setupJsLogger, ensureModelPath } = require('./utils')
+const { setupJsLogger, ensureModelPath } = require('./utils')
 
 const isMobile = os.platform() === 'ios' || os.platform() === 'android'
-const isDarwin = os.platform() === 'darwin'
 const noGpu = proc.env && proc.env.NO_GPU === 'true'
 // Skip LTX tests on mobile and on CPU-only runners (NO_GPU).
 // LTX also runs on darwin (unlike Wan which OOMs), but you can skip via env if needed.
@@ -27,8 +25,6 @@ const skip = isMobile || noGpu
 
 // Log skip status for CI visibility
 console.log('[LTX Video Tests] Platform:', os.platform(), 'Arch:', os.arch(), 'NO_GPU:', noGpu, '→ Skip:', skip)
-
-const platform = detectPlatform()
 
 const LTX_MODELS_DIR = proc.env.LTX_MODELS_DIR || path.join(__dirname, '../../models')
 
@@ -183,4 +179,3 @@ test('LTX-2.3 smoke test (T2V, 1 step, 9 frames)', { skip }, async (t) => {
     console.log('[LTX] Done.')
   }
 })
-
