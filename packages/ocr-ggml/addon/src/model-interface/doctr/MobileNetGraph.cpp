@@ -944,9 +944,9 @@ WeightsBundle loadWeights(
   // Copy raw tensor bytes (for cloneRaw) into the backend buffer.
   for (auto& [name, dst] : tensors) {
     if (name.ends_with(".scale") || name.ends_with(".shift") ||
-        name.ends_with(".bias_br") ||
-        name == "classifier.0.weight" || name == "classifier.0.bias" ||
-        name == "classifier.3.weight" || name == "classifier.3.bias") {
+        name.ends_with(".bias_br") || name == "classifier.0.weight" ||
+        name == "classifier.0.bias" || name == "classifier.3.weight" ||
+        name == "classifier.3.bias") {
       continue; // folded BN params / classifier handled separately
     }
     struct ggml_tensor* src = ggml_get_tensor(ggmlCtx, name.c_str());
