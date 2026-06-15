@@ -145,6 +145,13 @@ public:
     resetState();
   }
 
+  void onMemoryWarning() {
+    std::shared_lock lock(stateMtx_);
+    if (state_->llmContext_) {
+      state_->llmContext_->onMemoryWarning();
+    }
+  }
+
   /// @brief Rebuilds reloadable model state using stored construction args.
   /// Acquires exclusive lock on stateMtx_; tries to cancel and blocks until
   /// any in-flight operation that access the state finishes, then safely swaps
@@ -312,7 +319,8 @@ private:
   void resetState(bool resetStats = true);
   std::unique_ptr<LlmContext> createContext(
       std::string&& projectionPath, common_params& params,
-      common_init_result_ptr llamaInit, ToolsCompactController& tools);
+      common_init_result_ptr llamaInit, ToolsCompactController& tools,
+      std::size_t visionCacheBudgetBytes);
 
   bool loadMedia(const std::vector<uint8_t>& input);
 
