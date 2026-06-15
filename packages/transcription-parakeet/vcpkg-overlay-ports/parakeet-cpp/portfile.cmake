@@ -2,11 +2,12 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at master HEAD ed749556. Since the previous pin (a34cb6da, PR #38
-# robust Adreno-generation parse) the parakeet-cpp sources are unchanged;
-# this bump pairs the port with the newer ggml-speech (speech HEAD
-# 44fd4817: Adreno-740 Vulkan + Android OpenCL correctness) so the
-# transcription-parakeet addon (QVAC-20556) can run on the GPU on Android.
+# Pinned at 06cef8e7 (branch qvac-20556-tdt-opencl-host-decode, off master
+# ed749556): "run TDT decode on host for Adreno OpenCL". The TDT transducer's
+# in-place LSTM persistent-state ggml_cpy is dropped on Adreno OpenCL, so the
+# per-step decode runs on the host scalar path there (the encoder still runs on
+# the GPU). Pairs with ggml-speech 44fd4817 (Adreno-740 Vulkan + Android OpenCL)
+# so the transcription-parakeet addon (QVAC-20556) can run on the GPU on Android.
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -14,8 +15,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF ed749556dc6923caaf08db3a706d003599988765
-    SHA512 03d297a3757983bba37ea78fe08e8626e2a333ffc8852963ce407832b4a65a39c5dc420813e1bc6e7004ee63f7f72b521c4b12bc502e20ef64f0559941485cf0
+    REF 06cef8e76e1f4f88dd47e0512dd8ac876fe2f86b
+    SHA512 8dba424cabd848992af87da6a778fdcadd0285706ece8ae4037516186aeff263e72ded6d1cd32abb40d9fcd52d2162df693cc610a853b890c530014e11277602
     HEAD_REF master
 )
 
