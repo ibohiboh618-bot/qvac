@@ -85,7 +85,12 @@ run_rehearsal() {
   log "Cloning into $REHEARSAL_DIR and checking out $DEPLOY_SHA"
   rm -rf "$REHEARSAL_DIR"
   git clone --quiet "$REPO_PATH" "$REHEARSAL_DIR"
-  git -C "$REHEARSAL_DIR" fetch --quiet origin "$DEPLOY_SHA" 2>/dev/null || true
+  # The local clone's 'origin' points at REPO_PATH (a local path), which may not
+  # yet have the deploy SHA. Fetch the exact commit from the real upstream — this
+  # also validates the node's network reachability to GitHub.
+  local origin_url
+  origin_url="$(git -C "$REPO_PATH" remote get-url origin)"
+  git -C "$REHEARSAL_DIR" fetch --quiet "$origin_url" "$DEPLOY_SHA"
   git -C "$REHEARSAL_DIR" checkout --quiet --force "$DEPLOY_SHA"
   log "Checked out $(git -C "$REHEARSAL_DIR" rev-parse --short HEAD) in throwaway clone"
 
