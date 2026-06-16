@@ -20,6 +20,29 @@ before the node was updated with the new license files, the RPC fails with
 `License <id> not available` (the PR #2187 incident). The deploy job updates all
 nodes first, so whichever indexer the RPC reaches already knows the license.
 
+## Node prerequisites (confirmed 2026-06-16)
+
+The deploy assumes the following on every staging node; verified on
+`registry-stg-01/02/03`. Re-check with
+`packages/registry-server/scripts/deploy/node-diagnostics.sh` (run as the
+run-as-user) if a node is rebuilt.
+
+| Assumption | Confirmed value |
+| --- | --- |
+| Git checkout path | `/home/work/qvac` (remote `tetherto/qvac`, branch `main`) |
+| Run-as-user | `work`, owns the checkout and the pm2 processes |
+| Login → sudo | operator logs in as a metadata-key user, `sudo`s to `work` **passwordless** (`google-sudoers`) |
+| pm2 process name | `registry` (fork mode), plus a separate `health-check` process (not touched) |
+| Node toolchain | `node`/`npm`/`pm2` via **nvm** under `/home/work/.nvm` — `remote-update.sh` sources `nvm.sh` because CI runs non-interactively |
+| Metrics | `http://127.0.0.1:9210/metrics` exposes `qvac_registry_is_indexer` |
+| OS Login | **off** (project `enable-oslogin` unset) → metadata-key SSH path |
+| Node version | ≥ 20 (currently v22.x) |
+| Working tree | must be **clean** (tracked files); deploy fail-stops on drift |
+
+> Zones differ per node (`registry-stg-01` europe-west6-c, `registry-stg-02`
+> asia-southeast1-b, `registry-stg-03` us-central1-c), so zone is carried
+> per-instance in `REGISTRY_STAGING_INSTANCES`.
+
 ## Flow
 
 ```
@@ -45,16 +68,14 @@ long-lived SSH key or service-account JSON is stored. SSH to the nodes goes
 **through IAP** (`gcloud compute ssh --tunnel-through-iap`), which manages
 ephemeral SSH keys and requires no inbound public SSH.
 
-**Identity vs. execution:** CI logs in **as the deploy service account** via
-OS Login — gcloud uses the active SA credentials, so the SSH principal is the
-SA's own derived POSIX user (e.g. `sa_106…`), never a human account. Every
-session is therefore attributable to `registry-deploy@…` in OS Login and Cloud
-Audit Logs. Once on the box, the session does `sudo -n su - <run-as-user>`
-(default `work`) — **not** for identity, but because the git checkout, the
-`node_modules`, and the **per-user pm2 daemon** are owned by `work`, so the
-reload must run as that user. `roles/compute.osAdminLogin` is what grants the SA
-the passwordless sudo this requires (the on-box sudo log records the
-`sa_… → work` elevation, keeping the privilege step auditable too).
+**Identity vs. execution:** gcloud authenticates as the deploy service account.
+**OS Login is off** on these nodes, so gcloud pushes an ephemeral SSH key to
+instance metadata and the guest agent provisions the login user in the
+`google-sudoers` group (passwordless sudo). The GCP-side audit trail (IAP tunnel
++ `compute.instances.setMetadata`) attributes the access to `registry-deploy@…`.
+Once on the box, the session does `sudo -n su - <run-as-user>` (default `work`)
+— **not** for identity, but because the git checkout, `node_modules`, and the
+**per-user pm2 daemon** are owned by `work`, so the reload must run as that user.
 
 The deploy job runs on the self-hosted `qvac-ubuntu2204-x64` runner. The runner
 only needs **egress** to Google APIs (`oauth2.googleapis.com`,
@@ -82,21 +103,20 @@ environment. The two credentials stay as **`release` environment secrets**
 
 | Name | Example / description |
 | --- | --- |
-| `GCP_PROJECT_ID` | project hosting the staging nodes |
-| `GCP_ZONE` | zone of the staging nodes, e.g. `europe-west6-a` |
-| `REGISTRY_STAGING_INSTANCES` | JSON array, e.g. `["registry-stg-01","registry-stg-02","registry-stg-03"]` |
-| `REGISTRY_NODE_REPO_PATH` | git checkout path on each node — absolute (`/home/work/qvac`) or relative to the run-as-user's home (`qvac`) |
-| `REGISTRY_NODE_RUN_AS_USER` | optional; user that owns the checkout + pm2 process, sudo'd into after SA login (default `work`) |
+| `GCP_PROJECT_ID` | project hosting the staging nodes (`tether-data-open-qvac`) |
+| `REGISTRY_STAGING_INSTANCES` | JSON array of `{"name","zone"}` objects — nodes may be in **different zones**: `[{"name":"registry-stg-01","zone":"europe-west6-c"},{"name":"registry-stg-02","zone":"asia-southeast1-b"},{"name":"registry-stg-03","zone":"us-central1-c"}]` |
+| `REGISTRY_NODE_REPO_PATH` | git checkout path on each node — `/home/work/qvac` |
+| `REGISTRY_NODE_RUN_AS_USER` | optional; user that owns the checkout + pm2 process, sudo'd into after login (default `work`) |
 
 > Repository variables (not environment variables) are required here so the
 > un-environmented `resolve-deploy-targets` job can read the instance list.
 > Repo-level vars are also visible to `deploy-staging` even though it scopes to
 > the `release` environment.
 >
-> All three nodes are assumed to share the same zone and repo path. If that ever
-> diverges, promote `GCP_ZONE` / `REGISTRY_NODE_REPO_PATH` into the
-> `REGISTRY_STAGING_INSTANCES` entries and resolve them per-instance in
-> `resolve-deploy-targets`.
+> Per-instance zone lives in each `REGISTRY_STAGING_INSTANCES` entry (the nodes
+> are spread across regions), so there is no single `GCP_ZONE` var. All nodes
+> are assumed to share the same `REGISTRY_NODE_REPO_PATH`; if that diverges,
+> promote it into the per-instance objects too.
 
 ## One-time GCP setup (scaffold)
 
@@ -145,15 +165,15 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 ### 4. IAM roles for the deploy SA
 
-CI logs in **as the SA via OS Login** (its own derived POSIX user), then sudo's
-to the run-as-user (`work`) to operate on that user's checkout and pm2 daemon.
-`roles/compute.osAdminLogin` provides both the OS Login account and the
-**passwordless sudo** the unattended `sudo -n su - work` depends on.
+**OS Login is off** on these nodes (confirmed — see Prerequisites), so the SA
+reaches them via gcloud-managed **ephemeral SSH keys in instance metadata**. The
+guest agent provisions the login user in the `google-sudoers` group, giving the
+passwordless sudo the unattended `sudo -n su - work` depends on. Roles:
 
 ```bash
 for role in \
   roles/iap.tunnelResourceAccessor \
-  roles/compute.osAdminLogin \
+  roles/compute.instanceAdmin.v1 \
   roles/compute.viewer ; do
   gcloud projects add-iam-policy-binding "<project>" \
     --member="serviceAccount:registry-deploy@<project>.iam.gserviceaccount.com" \
@@ -161,19 +181,18 @@ for role in \
 done
 ```
 
-Enable OS Login on the nodes (project- or instance-level) so the SA can log in:
-
-```bash
-gcloud compute project-info add-metadata \
-  --project="<project>" \
-  --metadata enable-oslogin=TRUE
-```
-
-> `roles/compute.osAdminLogin` grants the SA sudo on every instance in the
-> project. To narrow the blast radius, grant it at the **instance** level on the
-> three registry nodes instead of the project, or use a sudoers rule scoped to
-> `<sa-posix-user> ALL=(work) NOPASSWD: ALL` with the non-admin
-> `roles/compute.osLogin` role.
+> **Do not enable OS Login just for this** — turning it on makes GCE ignore
+> metadata SSH keys, which can disrupt existing operator access. The nodes
+> already use metadata-key SSH + `google-sudoers`.
+>
+> `roles/compute.instanceAdmin.v1` is broad. To tighten, replace it with a
+> custom role granting only `compute.instances.setMetadata` and
+> `compute.instances.get`, and/or grant it at the **instance** level on the
+> three registry nodes rather than the whole project.
+>
+> If you later standardize on OS Login, switch this role to
+> `roles/compute.osAdminLogin` (login + passwordless sudo) and enable OS Login
+> on the nodes.
 
 ### 5. Firewall — allow IAP to reach SSH
 
@@ -209,8 +228,8 @@ appropriate. `35.235.240.0/20` is Google's published IAP forwarding range.
 | `resolve-deploy-targets` fails with "not set" | `vars.REGISTRY_STAGING_INSTANCES` missing/empty |
 | auth step fails | WIF provider/SA wrong, or repo not bound (step 3) |
 | `gcloud compute ssh` times out | IAP firewall (step 5) or `roles/iap.tunnelResourceAccessor` missing |
-| SSH login refused / `Permission denied (publickey)` | OS Login not enabled on the node, or SA lacks `roles/compute.osLogin`/`osAdminLogin` |
-| `sudo: a password is required` | SA lacks `roles/compute.osAdminLogin` (no passwordless sudo), or no NOPASSWD sudoers rule to the run-as-user |
+| SSH login refused / `Permission denied (publickey)` | SA lacks `compute.instances.setMetadata` (`instanceAdmin.v1`), or IAP firewall/role blocked |
+| `sudo: a password is required` | provisioned login user not in `google-sudoers` (unexpected on these nodes); add a `NOPASSWD` sudoers rule to the run-as-user |
 | "tracked files are dirty on the node" | someone edited tracked files on the box; reconcile before deploy |
 | health gate times out | process didn't rejoin as indexer; check `pm2 logs registry` (printed in the job output) |
 

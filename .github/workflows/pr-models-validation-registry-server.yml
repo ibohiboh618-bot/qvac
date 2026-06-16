@@ -235,8 +235,8 @@ jobs:
             echo "::error::vars.REGISTRY_STAGING_INSTANCES is not set (expected a JSON array of GCE instance names)"
             exit 1
           fi
-          if ! echo "$INSTANCES_JSON" | jq -e 'type == "array" and length > 0' >/dev/null; then
-            echo "::error::vars.REGISTRY_STAGING_INSTANCES must be a non-empty JSON array"
+          if ! echo "$INSTANCES_JSON" | jq -e 'type == "array" and length > 0 and all(.[]; has("name") and has("zone"))' >/dev/null; then
+            echo "::error::vars.REGISTRY_STAGING_INSTANCES must be a non-empty JSON array of {\"name\",\"zone\"} objects"
             exit 1
           fi
           echo "instances=$(echo "$INSTANCES_JSON" | jq -c .)" >> "$GITHUB_OUTPUT"
@@ -263,7 +263,7 @@ jobs:
       fail-fast: true
       max-parallel: 1
       matrix:
-        instance: ${{ fromJSON(needs.resolve-deploy-targets.outputs.instances || '[]') }}
+        target: ${{ fromJSON(needs.resolve-deploy-targets.outputs.instances || '[]') }}
     steps:
       - name: Manual Workspace Cleanup
         run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
@@ -273,11 +273,11 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
 
-      - name: Deploy to ${{ matrix.instance }}
+      - name: Deploy to ${{ matrix.target.name }}
         uses: ./.github/actions/deploy-registry-server
         with:
-          instance: ${{ matrix.instance }}
-          zone: ${{ vars.GCP_ZONE }}
+          instance: ${{ matrix.target.name }}
+          zone: ${{ matrix.target.zone }}
           project: ${{ vars.GCP_PROJECT_ID }}
           workload-identity-provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service-account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}

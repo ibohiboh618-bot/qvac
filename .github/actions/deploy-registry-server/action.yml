@@ -58,11 +58,12 @@ runs:
   using: composite
   steps:
     # OIDC -> Workload Identity Federation. Keyless; no service-account JSON
-    # stored. The SA logs in via OS Login as its own derived POSIX user (never a
-    # human account) and must hold roles/iap.tunnelResourceAccessor +
-    # roles/compute.osAdminLogin (osAdminLogin grants the passwordless sudo used
-    # to drop to the run-as-user) + roles/compute.viewer — see
-    # docs/runbooks/registry-server-deploy.md for the GCP trust setup.
+    # stored. OS Login is off on these nodes, so gcloud manages an ephemeral SSH
+    # key in instance metadata; the guest agent provisions the login user in the
+    # google-sudoers group (passwordless sudo), which the step below uses to drop
+    # to the run-as-user. SA needs roles/iap.tunnelResourceAccessor +
+    # roles/compute.instanceAdmin.v1 (or a custom compute.instances.setMetadata
+    # role) + roles/compute.viewer — see docs/runbooks/registry-server-deploy.md.
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
       with:
@@ -108,11 +109,12 @@ runs:
         INNER="${INNER} DRY_RUN='${DRY_RUN}'"
         INNER="${INNER} bash -s"
 
-        # Log in as the service account's OS Login user (gcloud uses the active
-        # SA credentials — no user@, never a human account), then sudo to the
-        # run-as-user to operate on its checkout and its per-user pm2 daemon.
-        # remote-update.sh is streamed on stdin and passes through
-        # gcloud ssh -> sudo -> su to the inner `bash -s`.
+        # gcloud authenticates as the SA and (OS Login being off) pushes an
+        # ephemeral SSH key to instance metadata; the guest agent provisions the
+        # login user with passwordless sudo. We then sudo to the run-as-user to
+        # operate on its checkout and its per-user pm2 daemon. remote-update.sh
+        # is streamed on stdin and passes through gcloud ssh -> sudo -> su to the
+        # inner `bash -s`.
         gcloud compute ssh "$INSTANCE" \
           --zone "$ZONE" \
           --project "$PROJECT" \
