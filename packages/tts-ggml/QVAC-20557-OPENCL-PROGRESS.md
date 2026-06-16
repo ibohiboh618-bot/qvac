@@ -651,6 +651,67 @@ module-top `GGML_VK_DISABLE_F16=1` (swapped from coopmat); probe pin 72a71099 ke
 `dprobe_pwconv1` max ~2.48 + no NaN ⇒ F16 was it (small Mali fp16-off fix); still ~10-13/NaN ⇒ F16 REFUTED ⇒
 commit to the live-graph ggml-vulkan mul_mat fix (Mali-only, Adreno-regression-gated locally, coord w/ parakeet).
 
+### ❌ ROUND-4 RESULT (run 27601718214, Pixel 9 Pro XL / Mali-G715, 2026-06-16) — F16 REFUTED → ALL CHEAP LEVERS EXHAUSTED
+With `GGML_VK_DISABLE_F16=1` (confirmed: `[mali-probe] GGML_VK_DISABLE_F16=1` in logcat):
+```
+dprobe_dwconv     rms=0.114032 min=-0.5759 max=0.7057   (bit-exact, still fine)
+dprobe_pwconv1    rms=1.392400 min=-9.1171 max=10.3491  <- BIT-IDENTICAL to round-2 default (coopmat-on)
+duration_convnext0/1 clean; convnext2..5 = NaN(1088); duration raw=nan ⇒ text_emb/cfm/wav_full all NaN
+```
+**Disabling fp16 changed NOTHING — `dprobe_pwconv1` is byte-for-byte the round-2 default (max 10.3491,
+min -9.1171).** So fp16 is not even on this matmul path; **F16 REFUTED.** Summary of the cheap-lever sweep on
+the SAME failing op (`dprobe_pwconv1`): default/coopmat-on max **10.35**; coopmat-off max **13.17 (worse)**;
+f16-off max **10.35 (identical to default)**. ⇒ the miscompute is in the **base Valhall `mul_mat`
+computation itself** (integer/indexing/reduction logic), independent of fp16 and coopmat. **No cheap env
+lever fixes it.**
+
+**DECISION (per user): COMMIT to the ggml-vulkan Valhall `mul_mat` fix.** Implement + test properly; in the
+new session, plan via a Workflow + decide the best approach. Constraints unchanged: LIVE graph change (NOT
+supports_op — dead on the duration predictor's direct `ggml_backend_graph_compute` path), Mali-only,
+Adreno-regression-gated on the attached adb device, coordinate with parakeet (shared Valhall mul_mat bug).
+**CHECKPOINT/restore point committed:** qvac **`30dcb446`** (this ledger) + tts-cpp **`72a71099`** (probes).
+Handoff: `/tmp/qvac-20557-ggml-vulkan-matmul-fix-handoff.md`. Plan: `~/.claude/plans/mutable-kindling-book.md`.
+
+### ⚠️ ROUND-5 PREP (2026-06-16) — design workflow REOPENED the localization; the round-4 "commit to the mul_mat fix" is CORRECTED to "split-capture probe FIRST"
+A multi-agent design workflow (5 source investigators → synthesis → adversarial review; verdict **SOUND**)
+re-examined the "K=64 plain `mul_mat` is broken" root cause against source and the parakeet ledger. It does
+**NOT** hold up as a confirmed isolation — three findings:
+1. **`dprobe_pwconv1` folds THREE ops, never split.** It is marked AFTER `conv1d_f32` **+ a broadcasting
+   bias-add** (`supertonic_duration.cpp:212-214`): im2col + the plain K=64 `ggml_mul_mat` + `ggml_add` of a
+   `repeat_like` view `[1,256]` broadcast over `[L,256]`. The bare mul_mat output was **never read in
+   isolation**. "the mul_mat is broken" is an INFERENCE — exactly the R3g/R11 situation that FLIPPED parakeet.
+2. **im2col is doubly refuted** (so the round won't waste a slot on it): (a) source — `im2col.comp` for the
+   pointwise case (KW=KH=1,p=0,s=1) is a 1:1 `[L,64]→[64,L]` transpose, bounds-branch always true, cannot 4×
+   a value; (b) empirical — ggml-vulkan does NOT implement `GGML_OP_SUPERTONIC_DEPTHWISE_1D` (grep=0), so the
+   depthwise takes the **im2col+mul_mat fallback** and `dprobe_dwconv` is bit-exact Mali==Adreno ⇒ Vulkan
+   im2col runs clean on this graph/driver.
+3. **A new, parakeet-grade suspect: the broadcasting bias-add.** Parakeet's SETTLED fact (`/tmp/qvac-parakeet-
+   mali-progress.md` R3g): the **BROADCAST op-class** is what breaks on this exact Valhall driver, and **plain
+   non-broadcast `mul_mat` stays CLEAN** (their `sub_conv0`, K≈9; reinforced by our `dwconv` mul_mat K=5 clean).
+   Our pwconv1 mul_mat is plain/non-broadcast → by parakeet it is the *less*-suspected op; the broadcast bias-add
+   is in the *confirmed-broken* class. So "plain mul_mat clean" CANNOT dismiss the bias-add. Reconciliation of
+   the contradiction toward **K-dependence** (K=9/5 single-tile clean vs K=64 two-`BK=32`-tile) remains OPEN —
+   the K=64 mul_mat was never read alone.
+**CORRECTION carried (R15):** parakeet's `ggml_mul`+`ggml_sum_rows` reformulation (commit `4ab3519d`) was
+DO-NOT-MERGE/**Metal-preflighted-only, NEVER Mali-confirmed**; their SHIPPED fix was Mali→CPU (`bb585eb1`). So
+it is a CANDIDATE pattern, not a "proven" transfer.
+
+**ROUND-5 HYPOTHESIS / TEST:** trisect block-0 pwconv1 into three named outputs — `dprobe_pw1_im2col` (im2col),
+`dprobe_pw1_mulmat` (raw `ggml_mul_mat`, pre-bias), `dprobe_pwconv1` (post broadcast bias-add) — + emit `ne[]`
+for every probe (confirm real K & L). Pure tts-cpp probe (no ggml change). **Pre-registered interpretation:**
+(a) im2col carries the outlier → deeper im2col bug (contradicts source; re-open); (b) im2col clean + bare mul_mat
+carries it → K-dependent non-broadcast `mul_mat` bug CONFIRMED (a NEW failure mode parakeet did not see) → fix
+the K=64 mul_mat; (c) im2col+mul_mat clean + only post-bias bad → the **broadcasting bias-add** is the culprit
+(parakeet-class broadcast bug) → model-side explicit-`repeat`/add-on-CPU. **All fixes via Approach B** (LIVE
+Mali-gated model-side change — NOT a bare `supports_op` gate [dead on the direct `graph_compute` path], NOT the
+universal-GEMM shader edit of Approach A). Probe HANGS / outlier MOVES when marks added ⇒ DID-NOT-RUN /
+fusion-sensitivity (R8/R13), not a clean negative.
+
+**State:** tts-cpp probe **`8bba2619`** (split-capture) pushed to `tetherto/qvac-ext-lib-whisper.cpp`
+@ `QVAC-20557-mali-probe`; addon portfile re-pinned (SHA512 `d179a824…`); android-arm64 build GREEN locally
+(probe compiles). Next: local Adreno (adb `10BD1C1LEF0001R`, OpenCL) no-regression + marks-emit pre-gate →
+push qvac #2610 → `verified` label → read Pixel/Mali trisection. Workflow run `wxwefu5hf`.
+
 ## ✅ RESOLVED — PR #2605 CI failure (diagnosed + fixed 2026-06-15)
 **Issue:** #2605 CI (run 27562752301) failed despite #2605 NOT enabling Mali. Two relevant red
 checks: `cpp-lint` (clang-format — out of scope per user) and `run-mobile-integration-tests /

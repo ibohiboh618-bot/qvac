@@ -37,18 +37,15 @@ const isMobile = platform === 'ios' || platform === 'android'
 const RELAX = proc.env && proc.env.QVAC_TTS_GPU_SMOKE_RELAX === '1'
 const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
 
-// DEBUG ROUND 4 (DO NOT MERGE): Supertonic NaNs on Mali-Vulkan because the
-// pointwise-conv ggml_mul_mat (K=64) miscomputes (depthwise/layernorm bit-exact;
-// the matmul's ~4-5x outliers compound to NaN over the ConvNeXt blocks). Round 3
-// REFUTED coopmat (disabling it made it WORSE). Last cheap lever before committing
-// to a ggml-vulkan fix: force fp32-only (disable fp16 storage/compute) to test
-// whether an fp16 path inside the matmul is the trigger. ggml-vulkan reads this
-// once at device init, so set it BEFORE the first model load (module top).
-// Adreno/OpenCL ignores GGML_VK_*; the device farm (Pixel/Mali) is the oracle.
-if (platform === 'android' && typeof os.setEnv === 'function') {
-  os.setEnv('GGML_VK_DISABLE_F16', '1')
-  console.log('[mali-probe] GGML_VK_DISABLE_F16=1')
-}
+// DEBUG ROUND 5 (DO NOT MERGE): Supertonic NaNs on Mali-Vulkan inside the
+// duration ConvNeXt block 0. Rounds 3/4 REFUTED the cheap env levers (coopmat-off
+// made it WORSE; f16-off changed nothing) — it's the base Valhall computation, not
+// a precision toggle. The dprobe_pwconv1 capture folds THREE ops (im2col + the
+// plain K=64 mul_mat + a broadcast bias-add) and was never split; the broadcast
+// bias-add is in parakeet's confirmed-broken op-class. This round runs the DEFAULT
+// Mali-Vulkan path (NO env override) so the split-capture probe (tts-cpp 8bba2619:
+// dprobe_pw1_im2col / dprobe_pw1_mulmat / dprobe_pwconv1 + ne[] shapes) isolates the
+// exact culprit op. Adreno/OpenCL is the no-regression control; Pixel/Mali = oracle.
 
 function getBaseDir () {
   return isMobile && global.testDir ? global.testDir : '.'
