@@ -2,16 +2,15 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at 3826c8d6 (DO-NOT-MERGE diagnostic branch off the host-decode commit
+# Pinned at 4ab3519d (DO-NOT-MERGE diagnostic branch off the host-decode commit
 # bb585eb1): removes the Mali->CPU guard so ARM Mali (Valhall) runs on Vulkan,
-# and runs a one-shot per-stage encoder GPU-vs-CPU bisect. The bisect localised
-# the Mali-Vulkan miscompute to the subsampler's depthwise conv2d. Round 3g
-# inlines that ggml_conv_2d_dw decomposition with the im2col dst forced to F32
-# (was F16) -- a buggy Valhall F16 im2col store is the prime suspect for the
-# non-deterministic inf -- and adds sub_conv1_dw_im2col / sub_conv2_dw_im2col
-# bisect rows to isolate the im2col from the broadcast mul_mat. Diagnostic-only
-# -- NOT for merge. Pairs with ggml-speech 44fd4817 (clean registry ref; the
-# earlier dead supports_op gates were dropped).
+# and runs a one-shot per-stage encoder GPU-vs-CPU bisect. The round-3g bisect
+# proved the broken op is the subsampler depthwise's BROADCAST ggml_mul_mat (the
+# F32 im2col is finite on Mali; only the batched/broadcast mul_mat goes inf).
+# Round 3h replaces that mul_mat with the identical per-channel contraction
+# expressed WITHOUT a mul_mat -- an elementwise ggml_mul + ggml_sum_rows over the
+# KH*KW dim (kernel cast to F32). Diagnostic-only -- NOT for merge. Pairs with
+# ggml-speech 44fd4817 (clean registry ref).
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -19,8 +18,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 3826c8d697a5d3ca04a35af3f3b151bbe1d78309
-    SHA512 ee4ad95c5572b459ea5b1feca3955cecacd449329a484119dc222e1047a7dc284e060672634d3da4737df1aac485561be1b252749547cff898e90a77dd2465f3
+    REF 4ab3519d9e6014276504fa8f9cf4027c4ad81a5c
+    SHA512 1114cb2dc37ec8f7f871327d323cd63e1b3073f3e9ebfeeb342beb0d4828951d3e8650e2e973d51d39c04e7efbe4bc1e2b123e948a1f96ff0cd7a33fe2d42f76
     HEAD_REF master
 )
 
