@@ -759,6 +759,27 @@ non-Mali, as designed). **DECISIVE READ on the Mali round:** `dprobe_pw1_mulmat`
 control) ⇒ aligned load was the bug → ship the Mali gate; still ~10.4 ⇒ H2 (strengthen non-coopmat K-tile
 barriers `mul_mm.comp` 287/349) → H3 (WARP=32 vs HW subgroup=16 geometry).
 
+**H1 round 1 (run 27611952432) was CANCELLED (hung)** — no verdict. Re-triggering with a gate-fired diagnostic.
+**Gate-fired log added (ggml `27cbd6f4`):** a one-shot `GGML_LOG_WARN("[gpu-diag] QVAC-20557 H1: Mali F32
+mul_mat -> UNALIGNED (gate FIRED, dev=%s)")` in the H1 gate — anti-dead-gate guard (the addon's
+`tts_cpp_log_set`→`ggml_log_set` shares the sink, so ggml logs reach logcat here, unlike parakeet). If that
+line is ABSENT but the bug persists, the gate (not the unaligned path) is at fault. ggml-speech re-pinned
+`27cbd6f4` (SHA512 `4eb608b1…`).
+
+**TWO PARALLEL MALI-TEST PATHS now:**
+1. **CI device-farm** (Pixel/Mali) — re-trigger via push (`verified` persists); ~40 min; whole-model gpu-smoke
+   + the `[gpu-diag]` trisection. The official path.
+2. **Remote friend's harness** (`packages/tts-ggml/remote-gpu-verify/`, zipped to
+   `~/workstuff/qvac-mali-verify-kit.zip`) — agent-driven on a friend's physical Pixel 9 via raw `adb`. Runs
+   the SAME H1 prebuild whole-model (`run-on-device.sh` → the trisection) AND `test-backend-ops` per-op
+   (`run-backend-ops.sh`). Setup fetches public pieces (npm install — @qvac is PUBLIC on npm, no token; model
+   via `download-tts-ggml-models.js`; bare CLI via `npm pack`). Faster iteration than CI; per-fix-round we send
+   a small `prebuild-update.tgz` (`make-bundle.sh --prebuild-only`). **`test-backend-ops` CANNOT run in the CI
+   device-farm** (Expo/Appium APK sandbox can't exec a raw ELF + `pull_request_target` runs the base workflow)
+   — the friend's raw-adb harness IS the per-op path. Caveat: test-backend-ops uses random inputs + small-N
+   shapes → may PASS despite the real-data bug (bci precedent); a FAIL localizes, a PASS doesn't clear — the
+   whole-model `dprobe_pw1_mulmat` stays the oracle.
+
 ## ✅ RESOLVED — PR #2605 CI failure (diagnosed + fixed 2026-06-15)
 **Issue:** #2605 CI (run 27562752301) failed despite #2605 NOT enabling Mali. Two relevant red
 checks: `cpp-lint` (clang-format — out of scope per user) and `run-mobile-integration-tests /
