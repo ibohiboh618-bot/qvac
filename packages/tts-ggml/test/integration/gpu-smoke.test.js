@@ -37,13 +37,6 @@ const isMobile = platform === 'ios' || platform === 'android'
 const RELAX = proc.env && proc.env.QVAC_TTS_GPU_SMOKE_RELAX === '1'
 const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
 
-// DEBUG E1 (DO NOT MERGE): probe Supertonic Mali-Vulkan 0-samples by forcing
-// the per-step decomposed CFM path on Android GPU. Read by ggml at synth time.
-if (platform === 'android' && typeof os.setEnv === 'function') {
-  os.setEnv('SUPERTONIC_DISABLE_LOOP_GRAPH', '1')
-  os.setEnv('SUPERTONIC_DISABLE_ONE_GRAPH', '1')
-}
-
 function getBaseDir () {
   return isMobile && global.testDir ? global.testDir : '.'
 }

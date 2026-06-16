@@ -192,6 +192,13 @@ target_compile_definitions(${tts-ggml} PRIVATE
 # qvac/packages/transcription-parakeet/CMakeLists.txt; drop the flag
 # once we move to NDK r28+.
 if(ANDROID)
+  # DEBUG (QVAC-20557 Mali-Vulkan bring-up, DO-NOT-MERGE): SupertonicModel.cpp's
+  # emitDeviceDiag calls __android_log_print so the [gpu-diag] lines reach the
+  # device logcat artifact. Bare modules link with `-undefined,dynamic_lookup`,
+  # so without an explicit DT_NEEDED the liblog symbol would defer to a load-time
+  # lookup that can silently fail (ADDON_NOT_FOUND). Link it explicitly. Mirrors
+  # qvac/packages/transcription-parakeet PR #2601.
+  target_link_libraries(${tts-ggml}_module PRIVATE log)
   target_link_options(
     ${tts-ggml}_module
     PRIVATE
