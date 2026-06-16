@@ -1,16 +1,19 @@
-# ggml-speech: tetherto/qvac-ext-ggml pinned at d8e138e6 -- the registry
+# ggml-speech: tetherto/qvac-ext-ggml pinned at ffab061f -- the registry
 # ggml-speech pin 44fd4817 (PR #22, "bci-whispercpp OpenCL correctness on
-# Android GPUs (Adreno + Samsung Xclipse)") plus ONE ggml-vulkan change:
+# Android GPUs (Adreno + Samsung Xclipse)") plus the ggml-vulkan change:
 #
-#   d8e138e6  ggml-vulkan: route depthwise conv2d (GGML_OP_CONV_2D_DW) to
-#             CPU on ARM Mali -- the Valhall Vulkan driver miscomputes that
-#             op (non-deterministic inf), corrupting the parakeet subsampler;
-#             im2col + mul_mat stay on the GPU, so the rest of the encoder
-#             keeps running on Vulkan.
+#   ffab061f  ggml-vulkan: route the subsampler's depthwise conv2d
+#             (GGML_OP_CONV_2D_DW) to CPU on ARM Mali -- the Valhall Vulkan
+#             driver miscomputes it (non-deterministic inf), corrupting the
+#             parakeet subsampler. Gated on the GPU model name ("Mali" in
+#             properties.deviceName); im2col + mul_mat stay on the GPU, so the
+#             rest of the encoder keeps running on Vulkan. (Supersedes the
+#             earlier d8e138e6 vendor_id==0x13B5 gate, which did not match the
+#             Pixel Mali-G715 on-device.)
 #
 # DO-NOT-MERGE diagnostic pin: device-farm validation that the dw-conv->CPU
 # gate fixes the Mali-Vulkan parakeet miscompute (the parakeet-cpp overlay's
-# per-stage bisect proves sub_conv1_dw relL2 drops from inf to ~0). The clean
+# per-stage bisect proves sub_conv1_dw drops from inf to finite). The clean
 # ship rolls this commit through the qvac-registry-vcpkg ggml-speech port.
 # Android backend packaging (GGML_BACKEND_DL=ON per-arch CPU variants +
 # MODULE GPU .so) is unchanged from 44fd4817.
@@ -18,8 +21,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF d8e138e66b4892150096fa98924cad8b0ac91e9e
-    SHA512 76b6ca24cdfda6e1ce577ec3c4a90b461a9edfaf20364d00ee9fc375f3be66d76a6eb78d00f6c7d4cc640744fcf9eaf7b589d9ca77be5b0ce28af864b68e909d
+    REF ffab061f5ce839f9841b5e7acacd3a2878ced704
+    SHA512 7ddbc15601d4effd068a2d3654958540147e2d4dca536b2e3562fe5050a6e9557f2b9f1ee040ed268c33817e3f8da2400039f92a49b8a2c1a7b36c0aa9e69052
     HEAD_REF speech
 )
 
