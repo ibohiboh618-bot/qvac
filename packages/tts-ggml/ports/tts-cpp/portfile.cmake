@@ -1,11 +1,12 @@
 # tts-cpp — LOCAL OVERLAY PORT (MALI-VULKAN PROBE; DO NOT MERGE).
 #
-# THROWAWAY probe branch: pins tetherto/qvac-ext-lib-whisper.cpp @ d7292fbb =
-# 0aa594a6 (the QVAC-20557 stack below + ARM-Mali allowlist) + one extra commit
-# adding per-stage [gpu-diag] diagnostics (EngineOptions::diag_sink) so the
-# device-farm round can pinpoint the first Supertonic stage that miscomputes on
-# Mali-Vulkan. The real PR (#2605) pins aa2c9056 (no Mali, no diag). Builds the
-# Android-GPU fixes not yet published to qvac-registry-vcpkg:
+# THROWAWAY probe branch: pins tetherto/qvac-ext-lib-whisper.cpp @ 72a71099 =
+# 0aa594a6 (the QVAC-20557 stack below + ARM-Mali allowlist) + per-stage
+# [gpu-diag] diagnostics + per-OP NaN trace in the duration predictor's block 0
+# (marks ConvNeXt intra-op intermediates as outputs, reads them post-compute) to
+# pinpoint the exact op the Mali Vulkan driver miscomputes to NaN. The real PR
+# (#2605) pins aa2c9056 (no Mali, no diag). Builds the Android-GPU fixes not yet
+# published to qvac-registry-vcpkg:
 #   1. dlopen reroute: Supertonic's direct CPU-backend calls are unlinkable
 #      under GGML_BACKEND_DL=ON; route ggml_get_type_traits_cpu(...)->from_float
 #      to ggml_quantize_chunk() and ggml_backend_is_cpu() to the registry shim
@@ -28,8 +29,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF d7292fbb784584e4066bb471e0130625a51a8fd9
-    SHA512 17936ad2621fc60fbcc39948881d6bf5943e062ab7577095f361df1bc09fc8f435655e19a1444e00b0ee3775bd72d727e205ed62a60270def33e897d8a732a8b
+    REF 72a71099dffaf156152fa98b5e0c216d310023f5
+    SHA512 2818bd50230b30777864bb66146458b65ee06edab43aea8c28533ac951404682a707b7a7d363a071cd2f5994bfeede0798a610758f3b65e0092406104779762f
     HEAD_REF master
 )
 
