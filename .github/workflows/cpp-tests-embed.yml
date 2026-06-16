@@ -28,6 +28,10 @@ on:
         required: false
         default: "packages/embed-llamacpp"
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   run-cpp-tests:
     runs-on: ${{ matrix.runner || matrix.os }}
@@ -74,10 +78,6 @@ jobs:
           echo "repository=$INPUT_REPO"
           echo "workdir=$INPUT_WORKDIR"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
-        with:
-          node-version: lts/*
       - name: Manual Workspace Cleanup
         run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
         shell: bash
@@ -90,27 +90,6 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref || github.ref }}
           token: ${{ secrets.PAT_TOKEN }}
-
-      - name: Install bare tooling
-        run: npm install -g --force bare bare-make
-
-      - name: Link local @qvac/fabric
-        uses: ./.github/actions/link-local-qvac-fabric
-        with:
-          workdir: ${{ env.WORKDIR }}
-          build-if-missing: "true"
-          # The C++ unit tests run under ASan; instrument the fabric runtime on
-          # Linux so allocations originating inside it are validated rather than
-          # suppressed. macOS links libc++ dynamically (no mismatch) and Windows
-          # does not use ASan, so both keep the regular runtime.
-          asan: ${{ matrix.platform == 'linux' && 'true' || 'false' }}
-
-      - name: Install NPM dependencies
-        working-directory: ${{ env.WORKDIR }}
-        shell: bash
-        run: |
-          npm install
-
 
       - if: ${{ matrix.os == 'windows-2025' }}
         name: Set Vulkan SDK Path on Windows Server 2025
@@ -134,6 +113,7 @@ jobs:
       - if: ${{ matrix.os == 'windows-2025' }}
         name: Configure CMake generator on Windows
         shell: powershell
+        working-directory: ${{ env.WORKDIR }}
         run: |
           echo "CMAKE_GENERATOR=Visual Studio 17 2022" >> $env:GITHUB_ENV
           echo "CMAKE_GENERATOR_PLATFORM=x64" >> $env:GITHUB_ENV
@@ -155,6 +135,45 @@ jobs:
             }}
           path: ${{ github.workspace }}/${{ env.WORKDIR }}/vcpkg/cache
           restore-keys: cpp-tests-v4-${{ matrix.platform }}-${{ matrix.arch || 'x64' }}-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+        with:
+          node-version: lts/*
+
+      - name: Install bare tooling
+        run: npm install -g --force bare bare-make
+
+      - name: Configure scoped npmrc for GitHub Packages
+        uses: ./.github/actions/configure-scoped-npmrc
+        with:
+          workdir: ${{ env.WORKDIR }}
+          gpr-token: ${{ secrets.GITHUB_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
+
+      - name: Link local @qvac/fabric
+        uses: ./.github/actions/link-local-qvac-fabric
+        with:
+          workdir: ${{ env.WORKDIR }}
+          build-if-missing: "true"
+          # The C++ unit tests run under ASan; instrument the fabric runtime on
+          # Linux so allocations originating inside it are validated rather than
+          # suppressed. macOS links libc++ dynamically (no mismatch) and Windows
+          # does not use ASan, so both keep the regular runtime.
+          asan: ${{ matrix.platform == 'linux' && 'true' || 'false' }}
+
+      - name: Install NPM dependencies
+        working-directory: ${{ env.WORKDIR }}
+        shell: bash
+        run: |
+          npm install
+
+      - name: Normalize GPR fabric prebuild names
+        uses: ./.github/actions/normalize-gpr-fabric-prebuilds
+        with:
+          workdir: ${{ env.WORKDIR }}
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
 
       - name: Cache C++ test models
         id: model-cache
