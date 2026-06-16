@@ -37,16 +37,17 @@ const isMobile = platform === 'ios' || platform === 'android'
 const RELAX = proc.env && proc.env.QVAC_TTS_GPU_SMOKE_RELAX === '1'
 const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
 
-// DEBUG ROUND 3 (DO NOT MERGE): Supertonic NaNs on Mali-Vulkan because the
-// pointwise-conv ggml_mul_mat miscomputes (depthwise/layernorm are bit-exact;
-// matmul outliers compound to NaN by ConvNeXt block 2). Test whether the
-// cooperative-matrix (matrix-core) matmul path is the trigger by forcing the
-// scalar matmul path. ggml-vulkan reads these once at device init, so they must
-// be set BEFORE the first model load (module top). Adreno/OpenCL ignores them.
+// DEBUG ROUND 4 (DO NOT MERGE): Supertonic NaNs on Mali-Vulkan because the
+// pointwise-conv ggml_mul_mat (K=64) miscomputes (depthwise/layernorm bit-exact;
+// the matmul's ~4-5x outliers compound to NaN over the ConvNeXt blocks). Round 3
+// REFUTED coopmat (disabling it made it WORSE). Last cheap lever before committing
+// to a ggml-vulkan fix: force fp32-only (disable fp16 storage/compute) to test
+// whether an fp16 path inside the matmul is the trigger. ggml-vulkan reads this
+// once at device init, so set it BEFORE the first model load (module top).
+// Adreno/OpenCL ignores GGML_VK_*; the device farm (Pixel/Mali) is the oracle.
 if (platform === 'android' && typeof os.setEnv === 'function') {
-  os.setEnv('GGML_VK_DISABLE_COOPMAT', '1')
-  os.setEnv('GGML_VK_DISABLE_COOPMAT2', '1')
-  console.log('[mali-probe] GGML_VK_DISABLE_COOPMAT=1 GGML_VK_DISABLE_COOPMAT2=1')
+  os.setEnv('GGML_VK_DISABLE_F16', '1')
+  console.log('[mali-probe] GGML_VK_DISABLE_F16=1')
 }
 
 function getBaseDir () {
