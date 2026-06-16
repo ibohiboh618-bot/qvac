@@ -2,15 +2,16 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at 4ab3519d (DO-NOT-MERGE diagnostic branch off the host-decode commit
-# bb585eb1): removes the Mali->CPU guard so ARM Mali (Valhall) runs on Vulkan,
-# and runs a one-shot per-stage encoder GPU-vs-CPU bisect. The round-3g bisect
-# proved the broken op is the subsampler depthwise's BROADCAST ggml_mul_mat (the
-# F32 im2col is finite on Mali; only the batched/broadcast mul_mat goes inf).
-# Round 3h replaces that mul_mat with the identical per-channel contraction
-# expressed WITHOUT a mul_mat -- an elementwise ggml_mul + ggml_sum_rows over the
-# KH*KW dim (kernel cast to F32). Diagnostic-only -- NOT for merge. Pairs with
-# ggml-speech 44fd4817 (clean registry ref).
+# Pinned at 628022ee (DO-NOT-MERGE diagnostic branch off the host-decode commit
+# bb585eb1): removes the Mali->CPU guard so ARM Mali (Valhall) runs on Vulkan.
+# Round 3h FIXED the encoder miscompute (subsampler depthwise reformulated as an
+# elementwise ggml_mul + ggml_sum_rows, no broadcast mul_mat) -- CTC/TDT/EOU now
+# correct on Mali and the encoder bisect is clean to encoder_out. The residual is
+# the Sortformer diarization head (a SEPARATE ggml graph) outputting "[No speakers
+# detected]" on Mali. Round 3i adds a one-shot per-stage GPU-vs-CPU bisect of that
+# head (sf_encoder_proj / sf_block0_out / sf_block_last_out / sf_head_h2h /
+# sf_logits / sf_probs), both fed the same encoder_out, to name the broken op.
+# Diagnostic-only -- NOT for merge. Pairs with ggml-speech 44fd4817 (clean ref).
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -18,8 +19,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 4ab3519d9e6014276504fa8f9cf4027c4ad81a5c
-    SHA512 1114cb2dc37ec8f7f871327d323cd63e1b3073f3e9ebfeeb342beb0d4828951d3e8650e2e973d51d39c04e7efbe4bc1e2b123e948a1f96ff0cd7a33fe2d42f76
+    REF 628022ee998e68554b794b6efb0d2c874c2c52e5
+    SHA512 41a229386c9cf473b53817f5ae5bdbc3c93a3b8e47c544168b5ad22d20e147469361b5f5e41f88e62417ed472afeeb89d67df0fa637772463b6efaf01e05e589
     HEAD_REF master
 )
 
