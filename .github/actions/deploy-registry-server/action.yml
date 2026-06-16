@@ -63,7 +63,9 @@ runs:
     # google-sudoers group (passwordless sudo), which the step below uses to drop
     # to the run-as-user. SA needs roles/iap.tunnelResourceAccessor +
     # roles/compute.instanceAdmin.v1 (or a custom compute.instances.setMetadata
-    # role) + roles/compute.viewer — see docs/runbooks/registry-server-deploy.md.
+    # role) + roles/compute.viewer + roles/iam.serviceAccountUser on the VMs'
+    # attached compute SA (to write the ephemeral SSH key when the instance runs
+    # as a service account) — see docs/runbooks/registry-server-deploy.md.
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
       with:

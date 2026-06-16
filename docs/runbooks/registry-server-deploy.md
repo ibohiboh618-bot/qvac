@@ -181,6 +181,25 @@ for role in \
 done
 ```
 
+The nodes run as the **default compute service account**, and writing an
+ephemeral SSH key to instance metadata requires "actAs" on that SA. Grant
+`roles/iam.serviceAccountUser` on it (resource-level, not project-wide):
+
+```bash
+# find the VM's service account if unsure:
+#   gcloud compute instances describe <node> --zone <zone> \
+#     --format='value(serviceAccounts[0].email)'
+gcloud iam service-accounts add-iam-policy-binding \
+  <project-number>-compute@developer.gserviceaccount.com \
+  --project="<project>" \
+  --member="serviceAccount:registry-deploy@<project>.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+```
+
+> Without this, `gcloud compute ssh` fails with *"The user does not have access
+> to service account …-compute@developer.gserviceaccount.com … grant the
+> iam.serviceAccountUser role."* (OS-Login-off metadata-key path only.)
+
 > **Do not enable OS Login just for this** — turning it on makes GCE ignore
 > metadata SSH keys, which can disrupt existing operator access. The nodes
 > already use metadata-key SSH + `google-sudoers`.
@@ -229,6 +248,7 @@ appropriate. `35.235.240.0/20` is Google's published IAP forwarding range.
 | auth step fails | WIF provider/SA wrong, or repo not bound (step 3) |
 | `gcloud compute ssh` times out | IAP firewall (step 5) or `roles/iap.tunnelResourceAccessor` missing |
 | SSH login refused / `Permission denied (publickey)` | SA lacks `compute.instances.setMetadata` (`instanceAdmin.v1`), or IAP firewall/role blocked |
+| `Could not add SSH key to instance metadata … grant the iam.serviceAccountUser role` | SA lacks `roles/iam.serviceAccountUser` on the VMs' attached compute SA (step 4b) |
 | `sudo: a password is required` | provisioned login user not in `google-sudoers` (unexpected on these nodes); add a `NOPASSWD` sudoers rule to the run-as-user |
 | "tracked files are dirty on the node" | someone edited tracked files on the box; reconcile before deploy |
 | health gate times out | process didn't rejoin as indexer; check `pm2 logs registry` (printed in the job output) |

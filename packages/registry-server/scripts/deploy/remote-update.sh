@@ -63,6 +63,15 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   fail "tracked files are dirty on the node; refusing to deploy over local changes"
 fi
 
+# Corestore safety gate (per architecture review): the live registry storage
+# must be git-ignored so `git checkout --force` — which only updates tracked
+# files and never deletes untracked/ignored paths — cannot touch it. We never
+# run `git clean`. Abort if the storage dir is somehow tracked.
+STORAGE_DIR="$PKG_SUBDIR/corestore"
+if [ -e "$REPO_PATH/$STORAGE_DIR" ] && ! git check-ignore -q "$STORAGE_DIR"; then
+  fail "storage dir '$STORAGE_DIR' exists but is NOT git-ignored — refusing to deploy (would risk the live corestore)"
+fi
+
 log "Fetching $DEPLOY_SHA"
 git fetch --quiet origin "$DEPLOY_SHA" 2>/dev/null || git fetch --quiet origin
 
