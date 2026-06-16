@@ -43,7 +43,7 @@ on:
         type: string
         default: "two-models"
       matrix_preset:
-        description: "  task group: smoke (1 task), cognitive (5 VQA×5), ocr (1 light ocr-page doc), ocrhighmp (all 5 ocr-page docs, desktop), full (cognitive + ocr-small + 1 light ocr-page). Forwarded to every leg."
+        description: "  task group: smoke (1 task), cognitive (5 VQA×5), ocr1page (1 light ocr-page doc), ocr5pages (all 5 ocr-page docs, desktop), full (cognitive + ocr-small + 1 light ocr-page). Forwarded to every leg."
         required: false
         type: string
         default: "full"
@@ -63,7 +63,7 @@ on:
         type: string
         default: ""
       matrix_mobile:
-        description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's25-cpu,s25-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
+        description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s26,s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's26-cpu,s26-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
         required: false
         type: string
         default: ""
@@ -179,12 +179,13 @@ jobs:
                 *)     vlm_devices="cpu,gpu"; dev=$sel ;;
               esac
               case "$dev" in
+                s26)         platform=Android; manufacturer=Samsung; model="S26 Ultra" ;;
                 s25)         platform=Android; manufacturer=Samsung; model="S25 Ultra" ;;
                 pixel9)      platform=Android; manufacturer=Google;  model="Pixel 9" ;;
                 iphone16)    platform=iOS;     manufacturer=Apple;   model="iPhone 16" ;;
                 iphone17)    platform=iOS;     manufacturer=Apple;   model="iPhone 17" ;;
                 iphone17pro) platform=iOS;     manufacturer=Apple;   model="iPhone 17 Pro" ;;
-                *) echo "::warning::Unknown matrix_mobile device '$dev' (known: s25, pixel9, iphone16, iphone17, iphone17pro)"; continue ;;
+                *) echo "::warning::Unknown matrix_mobile device '$dev' (known: s26, s25, pixel9, iphone16, iphone17, iphone17pro)"; continue ;;
               esac
               cells=$(echo "$cells" | jq -c \
                 --arg t "$sel" --arg p "$platform" --arg man "$manufacturer" \

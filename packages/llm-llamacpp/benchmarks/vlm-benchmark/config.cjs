@@ -178,13 +178,13 @@ module.exports = {
     smoke: { tasks: null, maxTasks: 1, samplesPerTask: 1, repeats: 1, devices: null },
     // cognitive — the 5 VQA reasoning tasks × 5 samples.
     cognitive: { tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d'], samplesPerTask: 5, repeats: 1, devices: null },
-    // ocr — a single light document-OCR check: just ocr-page_0 (fits the mobile session).
-    ocr: { ids: ['ocr-page_0'], samplesPerTask: 5, repeats: 1, devices: null },
-    // ocrhighmp — the full high-MP document-OCR set: all 5 ocr-page docs (desktop-oriented;
+    // ocr1page — a single light document-OCR check: just ocr-page_0 (fits the mobile session).
+    ocr1page: { ids: ['ocr-page_0'], samplesPerTask: 5, repeats: 1, devices: null },
+    // ocr5pages — the full high-MP document-OCR set: all 5 ocr-page docs (desktop-oriented;
     // overruns the mobile Device-Farm session window).
-    ocrhighmp: { ids: ['ocr-page_0', 'ocr-page_1', 'ocr-page_2', 'ocr-page_3', 'ocr-page_4'], samplesPerTask: 5, repeats: 1, devices: null },
+    ocr5pages: { ids: ['ocr-page_0', 'ocr-page_1', 'ocr-page_2', 'ocr-page_3', 'ocr-page_4'], samplesPerTask: 5, repeats: 1, devices: null },
     // full — cognitive + ocr-small + the one light ocr-page (ocr-page capped to its first
-    // sample = ocr-page_0); the heavy ocrhighmp pages are excluded.
+    // sample = ocr-page_0); the heavy ocr5pages docs are excluded.
     full: { tasks: null, samplesPerTask: 5, taskSamples: { 'ocr-page': 1 }, repeats: 1, devices: null }
   }
 }

@@ -102,7 +102,7 @@ const DEFAULT_NPREDICT = 128
 
 function selectedItems () {
   // Explicit item allowlist (preset.ids) wins — used to pick specific images
-  // (e.g. ocr = ocr-small + the one light ocr-page; ocr-high-mp = the 4 heavy pages).
+  // (e.g. ocr1page = just ocr-page_0; ocr5pages = all 5 ocr-page docs).
   if (PRESET.ids) { const want = new Set(PRESET.ids); return fixture.items.filter(it => want.has(it.id)) }
   const seen = {}
   return fixture.items.filter(it => {
