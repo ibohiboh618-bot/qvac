@@ -17,10 +17,14 @@ on:
       - "packages/registry-server/**"
   workflow_dispatch:
     inputs:
-      deploy_dry_run:
-        description: "Deploy registry nodes in dry-run mode (no checkout/reload, and sync-staging is skipped)"
-        type: boolean
-        default: false
+      deploy_mode:
+        description: "Manual-run deploy mode: dry-run (preflight only), rehearse (isolated clone + throwaway pm2 process), or live. sync-staging runs only for live."
+        type: choice
+        options:
+          - dry-run
+          - rehearse
+          - live
+        default: dry-run
 
 env:
   PKG_DIR: packages/registry-server
@@ -295,7 +299,7 @@ jobs:
           repo-path: ${{ vars.REGISTRY_NODE_REPO_PATH }}
           run-as-user: ${{ vars.REGISTRY_NODE_RUN_AS_USER || 'work' }}
           deploy-sha: ${{ github.sha }}
-          dry-run: ${{ github.event.inputs.deploy_dry_run || 'false' }}
+          mode: ${{ github.event.inputs.deploy_mode || 'live' }}
 
   sync-staging:
     needs:
@@ -305,7 +309,7 @@ jobs:
       - label-gate
       - deploy-staging
     if: |-
-      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.detect-changes.outputs.models_changed == 'true' && needs.validate-json.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.deploy-staging.result == 'success' && github.event.inputs.deploy_dry_run != 'true')
+      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.detect-changes.outputs.models_changed == 'true' && needs.validate-json.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.deploy-staging.result == 'success' && (github.event.inputs.deploy_mode == '' || github.event.inputs.deploy_mode == 'live'))
     runs-on: ubuntu-latest
     environment: release
     env:

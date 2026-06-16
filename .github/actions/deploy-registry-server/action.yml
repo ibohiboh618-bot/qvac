@@ -49,10 +49,10 @@ inputs:
     description: "How long to wait for indexer status after reload"
     required: false
     default: "120"
-  dry-run:
-    description: "When 'true', print intended actions without mutating the node"
+  mode:
+    description: "live (checkout+reload), dry-run (preflight only), or rehearse (isolated clone + throwaway pm2 process; live process untouched)"
     required: false
-    default: "false"
+    default: "live"
 
 runs:
   using: composite
@@ -89,7 +89,7 @@ runs:
         PM2_PROCESS: ${{ inputs.pm2-process }}
         METRICS_PORT: ${{ inputs.metrics-port }}
         HEALTH_TIMEOUT_SECONDS: ${{ inputs.health-timeout-seconds }}
-        DRY_RUN: ${{ inputs.dry-run }}
+        MODE: ${{ inputs.mode }}
         SCRIPT_PATH: ${{ github.workspace }}/${{ inputs.pkg-subdir }}/scripts/deploy/remote-update.sh
       run: |
         set -euo pipefail
@@ -115,7 +115,7 @@ runs:
         _check deploy-sha     "$DEPLOY_SHA"              '^[0-9a-f]{7,40}$'
         _check metrics-port   "$METRICS_PORT"            '^[0-9]+$'
         _check health-timeout "$HEALTH_TIMEOUT_SECONDS"  '^[0-9]+$'
-        _check dry-run        "$DRY_RUN"                 '^(true|false)$'
+        _check mode           "$MODE"                    '^(live|dry-run|rehearse)$'
 
         # Short-lived SSH material on this persistent (and possibly shared)
         # self-hosted runner: generate the keypair in a per-job temp dir that is
@@ -126,7 +126,7 @@ runs:
         SSH_KEYDIR="$(mktemp -d)"
         trap 'rm -rf "$SSH_KEYDIR"' EXIT
 
-        echo "::group::Deploy $DEPLOY_SHA to $INSTANCE as $RUN_AS_USER (dry-run=$DRY_RUN)"
+        echo "::group::Deploy $DEPLOY_SHA to $INSTANCE as $RUN_AS_USER (mode=$MODE)"
 
         # Deploy parameters are passed as env assignments prefixed to the remote
         # command. None of these are secrets, so plain interpolation is safe.
@@ -136,7 +136,7 @@ runs:
         INNER="${INNER} PM2_PROCESS='${PM2_PROCESS}'"
         INNER="${INNER} METRICS_PORT='${METRICS_PORT}'"
         INNER="${INNER} HEALTH_TIMEOUT_SECONDS='${HEALTH_TIMEOUT_SECONDS}'"
-        INNER="${INNER} DRY_RUN='${DRY_RUN}'"
+        INNER="${INNER} MODE='${MODE}'"
         INNER="${INNER} bash -s"
 
         # gcloud authenticates as the SA and (OS Login being off) pushes an
