@@ -17,12 +17,16 @@ on:
       - ".github/workflows/*embed*.yml"
       - ".github/actions/cache-models/**"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
   pull-requests: read
   packages: read
   id-token: write
+
+env:
+  PKG_DIR: packages/embed-llamacpp
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -109,8 +113,8 @@ jobs:
     uses: ./.github/workflows/cpp-lint.yaml
     secrets: inherit
     with:
-      sha: ${{ github.event.pull_request.base.sha }}
-      pr_head_sha: ${{ github.event.pull_request.head.sha }}
+      sha: ${{ github.event.pull_request.base.sha || github.sha }}
+      pr_head_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       workdir: packages/embed-llamacpp
 
   cpp-tests:
@@ -126,8 +130,9 @@ jobs:
     uses: ./.github/workflows/cpp-tests-embed.yml
     secrets: inherit
     with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.ref }}
+      workdir: packages/embed-llamacpp
+      repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
   ts-checks:
     needs: authorize
@@ -141,6 +146,13 @@ jobs:
         with:
           node-version: 20
 
+      - name: Configure scoped npmrc for GitHub Packages
+        uses: ./.github/actions/configure-scoped-npmrc
+        with:
+          workdir: packages/embed-llamacpp
+          gpr-token: ${{ secrets.GITHUB_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
+
       - name: Link local @qvac/fabric
         uses: ./.github/actions/link-local-qvac-fabric
         with:
@@ -149,6 +161,11 @@ jobs:
       - name: Install dependencies
         working-directory: packages/embed-llamacpp
         run: npm install
+
+      - name: Normalize GPR fabric prebuild names
+        uses: ./.github/actions/normalize-gpr-fabric-prebuilds
+        with:
+          workdir: packages/embed-llamacpp
 
       - name: Type declaration check
         working-directory: packages/embed-llamacpp
@@ -177,8 +194,8 @@ jobs:
     uses: ./.github/workflows/prebuilds-embed-llamacpp.yml
     secrets: inherit
     with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.ref }}
+      repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
   integration-tests:
     needs:
@@ -193,8 +210,8 @@ jobs:
     uses: ./.github/workflows/integration-test-embed-llamacpp.yml
     secrets: inherit
     with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.ref }}
+      repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
   run-mobile-integration-tests:
     permissions:
@@ -210,8 +227,8 @@ jobs:
     uses: ./.github/workflows/integration-mobile-test-embed-llamacpp.yml
     secrets: inherit
     with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.ref }}
+      repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
   merge-guard:
     needs: [authorize, verify-fabric-lockstep, sanity-checks, cpp-lint, cpp-tests, prebuild, integration-tests, run-mobile-integration-tests, ts-checks]
