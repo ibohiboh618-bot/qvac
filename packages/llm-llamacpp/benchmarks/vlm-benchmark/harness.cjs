@@ -101,12 +101,17 @@ const TASK_NPREDICT = { 'ocr-page': 768, 'ocr-small': 96 }
 const DEFAULT_NPREDICT = 128
 
 function selectedItems () {
+  // Explicit item allowlist (preset.ids) wins — used to pick specific images
+  // (e.g. ocr = ocr-small + the one light ocr-page; ocr-high-mp = the 4 heavy pages).
+  if (PRESET.ids) { const want = new Set(PRESET.ids); return fixture.items.filter(it => want.has(it.id)) }
   const seen = {}
   return fixture.items.filter(it => {
     if (TASKS && !TASKS.includes(it.task)) return false
     if (!(it.task in seen) && PRESET.maxTasks && Object.keys(seen).length >= PRESET.maxTasks) return false
     seen[it.task] = (seen[it.task] || 0) + 1
-    return seen[it.task] <= SAMPLES_PER_TASK
+    // per-task sample cap (preset.taskSamples) overrides the global samplesPerTask
+    const cap = (PRESET.taskSamples && PRESET.taskSamples[it.task] != null) ? PRESET.taskSamples[it.task] : SAMPLES_PER_TASK
+    return seen[it.task] <= cap
   })
 }
 

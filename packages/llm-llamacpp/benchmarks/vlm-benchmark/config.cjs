@@ -171,14 +171,21 @@ module.exports = {
 
   // The two task groups (cognitive = VQA reasoning, ocr = text recognition). Kept here
   // so a preset can run one group in isolation (e.g. for the mobile session budget).
+  // `ids` = an explicit fixture-item allowlist (overrides tasks/samples — used to pick
+  // specific images). `taskSamples` = per-task overrides of samplesPerTask (first-N).
   presets: {
     // smoke — first task only, 1 image: a single inference per config (wiring check).
     smoke: { tasks: null, maxTasks: 1, samplesPerTask: 1, repeats: 1, devices: null },
     // cognitive — the 5 VQA reasoning tasks × 5 samples.
     cognitive: { tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d'], samplesPerTask: 5, repeats: 1, devices: null },
-    // ocr — the OCR text-recognition tasks × 5 samples (lighter; fits the mobile session window).
-    ocr: { tasks: ['ocr-small', 'ocr-page'], samplesPerTask: 5, repeats: 1, devices: null },
-    // full — cognitive + ocr (all tasks) × 5 samples (the complete fixture).
-    full: { tasks: null, samplesPerTask: 5, repeats: 1, devices: null }
+    // ocr — the light OCR set that fits the mobile session: all ocr-small phrases + the
+    // single lightest ocr-page document (ocr-page_0). The 4 heavy pages are ocr-high-mp.
+    ocr: { ids: ['ocr-small_0', 'ocr-small_1', 'ocr-small_2', 'ocr-small_3', 'ocr-small_4', 'ocr-page_0'], samplesPerTask: 5, repeats: 1, devices: null },
+    // ocr-high-mp — the heavy high-MP full-document pages (ocr-page_1..4); desktop-oriented
+    // (overruns the mobile Device-Farm session window).
+    'ocr-high-mp': { ids: ['ocr-page_1', 'ocr-page_2', 'ocr-page_3', 'ocr-page_4'], samplesPerTask: 5, repeats: 1, devices: null },
+    // full — cognitive + ocr (NOT ocr-high-mp): all VQA tasks + ocr-small + the one light
+    // ocr-page (ocr-page capped to its first sample = ocr-page_0).
+    full: { tasks: null, samplesPerTask: 5, taskSamples: { 'ocr-page': 1 }, repeats: 1, devices: null }
   }
 }
