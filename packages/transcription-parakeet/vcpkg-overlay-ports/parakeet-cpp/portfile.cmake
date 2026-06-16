@@ -2,15 +2,17 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at cb0365ab (DO-NOT-MERGE diagnostic branch off the host-decode commit
+# Pinned at 8146f1bc (DO-NOT-MERGE diagnostic branch off the host-decode commit
 # bb585eb1): removes the Mali->CPU guard so ARM Mali (Valhall) runs on Vulkan.
 # Round 3h FIXED the encoder miscompute (subsampler depthwise reformulated as an
 # elementwise ggml_mul + ggml_sum_rows, no broadcast mul_mat) -- CTC/TDT/EOU now
 # correct on Mali. Round 3i localised the Sortformer residual to transformer
 # block 0 (sf_block0_out -> NaN on Mali; sf_encoder_proj clean; Adreno/Metal
-# clean). Round 3j is the SHIP fix: route ONLY the diarization head to CPU on
-# Mali-Vulkan (encoder + CTC/TDT/EOU stay on the Mali GPU); the round-3i bisect
-# stays so the round still documents the routed-around block-0 NaN.
+# clean). Round 3j routed the diarization head to the CPU backend but its
+# GPU-resident q4_0 weights crashed the CPU matmul. Round 3k (Option B) builds
+# CPU-resident copies of the head weights at load on Mali-Vulkan and reads them
+# when the head runs on CPU; the encoder + CTC/TDT/EOU stay on the Mali GPU. The
+# encoder bisect + diag logs stay for on-device validation.
 # Diagnostic-only -- NOT for merge. Pairs with ggml-speech 44fd4817 (clean ref).
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
@@ -19,8 +21,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF cb0365ab5344770d29da2f7f36d3b8517d76d8b3
-    SHA512 8b701e1597397532f7f4f1a85aeaabec4f12935f1366ad10f97ec5d84d988225d90efd882474250c010e3a401657fcd835154f416c02e4ed7e46c9b7ec0bd91e
+    REF 8146f1bcb5bfe59c615b96e2fe7643aa62c859cc
+    SHA512 8108c30e1dabb93639c803fa572e9b0273e8ac9285da06c27cf7d49d751b3fee5ba82a7dad527b88e1529a68140df970844e2a8335f869bf7d4a5017d9c6892a
     HEAD_REF master
 )
 
