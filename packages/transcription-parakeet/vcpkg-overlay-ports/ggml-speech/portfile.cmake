@@ -1,29 +1,30 @@
-# ggml-speech: tetherto/qvac-ext-ggml pinned at 4902033a -- the registry
-# ggml-speech pin 44fd4817 (PR #22, "bci-whispercpp OpenCL correctness on
-# Android GPUs (Adreno + Samsung Xclipse)") plus the ggml-vulkan change:
+# ggml-speech: tetherto/qvac-ext-ggml pinned at the clean registry ref 44fd4817
+# (PR #22, "bci-whispercpp OpenCL correctness on Android GPUs (Adreno + Samsung
+# Xclipse)"). No ggml-vulkan change here -- the Mali-Vulkan parakeet miscompute
+# is addressed entirely in parakeet-cpp for this diagnostic round.
 #
-#   4902033a  ggml-vulkan: route the subsampler's depthwise-conv2d im2col to
-#             CPU on ARM Mali. parakeet's ggml_conv_2d_dw decomposes to an F16
-#             ggml_im2col + mul_mat (NOT GGML_OP_CONV_2D_DW); on Valhall that
-#             F16 im2col -- input channels folded into the batch dim
-#             (src[1]->ne[2]==1, ne[3]==IC>1) -- miscomputes (non-det inf).
-#             supports_op routes just that im2col to CPU when deviceName has
-#             "Mali"; the regular conv im2col + the rest of the encoder stay on
-#             the GPU. (Supersedes the earlier CONV_2D_DW gates, which were
-#             no-ops -- the subsampler never emits that op.)
+# The subsampler's depthwise conv2d (ggml_conv_2d_dw) decomposes to an F16
+# ggml_im2col + a broadcast mul_mat (NOT GGML_OP_CONV_2D_DW); on Mali/Valhall
+# Vulkan that path produces a non-deterministic inf. parakeet-cpp now inlines
+# that decomposition with the im2col dst forced to F32 (was F16). The earlier
+# ggml-vulkan supports_op gates (route the depthwise op/im2col to CPU on Mali)
+# were no-ops: parakeet runs the encoder on a single backend via
+# ggml_backend_graph_compute with NO ggml_backend_sched, so
+# ggml_backend_vk_device_supports_op is never consulted. They are dropped --
+# this pin is the plain registry ref.
 #
-# DO-NOT-MERGE diagnostic pin: device-farm validation that the im2col->CPU gate
-# fixes the Mali-Vulkan parakeet miscompute (the parakeet-cpp overlay's
-# per-stage bisect proves sub_conv1_dw drops from inf to finite). The clean
-# ship rolls this commit through the qvac-registry-vcpkg ggml-speech port.
-# Android backend packaging (GGML_BACKEND_DL=ON per-arch CPU variants +
-# MODULE GPU .so) is unchanged from 44fd4817.
+# DO-NOT-MERGE diagnostic pin: device-farm validation that the parakeet-cpp F32
+# im2col fixes the Mali-Vulkan miscompute (the parakeet-cpp overlay's per-stage
+# bisect shows sub_conv1_dw drop from inf to finite, with the new
+# sub_conv1_dw_im2col row isolating the im2col from the broadcast mul_mat).
+# Android backend packaging (GGML_BACKEND_DL=ON per-arch CPU variants + MODULE
+# GPU .so) is unchanged at 44fd4817.
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO tetherto/qvac-ext-ggml
-    REF 4902033a3f98c275dc1347ebf7c211475d15a9d5
-    SHA512 a72daa8785e375b9a331f856ab58cac4a2908d21edb73d14c479d2272b802c38ae36a50bd5c540846e25eb816fe1e77ad27c36c49ce1ad75d8b0a8dc6748210d
+    REF 44fd4817dd1dc5872053927200e2824b8a0ced86
+    SHA512 7d83537e5346fc1a1470e6b7ef191c55b02459ac139a841f39d319e7a5e11aea8e3ed0178cbbb0f0b9f2016e0b79c081411d31707368ccb637940fde3496ec14
     HEAD_REF speech
 )
 

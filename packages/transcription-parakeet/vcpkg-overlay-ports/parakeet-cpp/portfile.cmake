@@ -2,13 +2,16 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at 812ec809 (DO-NOT-MERGE diagnostic branch off the host-decode commit
+# Pinned at 3826c8d6 (DO-NOT-MERGE diagnostic branch off the host-decode commit
 # bb585eb1): removes the Mali->CPU guard so ARM Mali (Valhall) runs on Vulkan,
-# and runs a one-shot per-stage encoder GPU-vs-CPU bisect. The bisect already
-# localised the Mali-Vulkan miscompute to the conv2d subsampling front-end; this
-# pin adds finer per-conv captures inside subsampling_graph (sub_conv0 /
-# sub_conv1_dw / sub_conv1_pw / sub_conv2_dw / sub_conv2_pw) to name the exact
-# broken op. Diagnostic-only -- NOT for merge. Pairs with ggml-speech 44fd4817.
+# and runs a one-shot per-stage encoder GPU-vs-CPU bisect. The bisect localised
+# the Mali-Vulkan miscompute to the subsampler's depthwise conv2d. Round 3g
+# inlines that ggml_conv_2d_dw decomposition with the im2col dst forced to F32
+# (was F16) -- a buggy Valhall F16 im2col store is the prime suspect for the
+# non-deterministic inf -- and adds sub_conv1_dw_im2col / sub_conv2_dw_im2col
+# bisect rows to isolate the im2col from the broadcast mul_mat. Diagnostic-only
+# -- NOT for merge. Pairs with ggml-speech 44fd4817 (clean registry ref; the
+# earlier dead supports_op gates were dropped).
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -16,8 +19,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 812ec80984af9f141d67cf0eaa09022e4ec1cd25
-    SHA512 1edc2359cffecc2887c746d484bb02926a12c758aa4a4089837198ecb24ea6572058b891ecc7afdd7c4d2a63f27b9df5d193bd97585ee8b5cffcd60bd208b39a
+    REF 3826c8d697a5d3ca04a35af3f3b151bbe1d78309
+    SHA512 ee4ad95c5572b459ea5b1feca3955cecacd449329a484119dc222e1047a7dc284e060672634d3da4737df1aac485561be1b252749547cff898e90a77dd2465f3
     HEAD_REF master
 )
 
