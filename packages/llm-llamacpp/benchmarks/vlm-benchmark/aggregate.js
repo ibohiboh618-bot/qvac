@@ -365,6 +365,33 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     }
   } else {
     // Comparison axis is the model: base cell vs candidate cell, per platform · device.
+    // One-liner verdict: candidate vs baseline averaged across every platform·device leg
+    // in this run. Speed = TTFT (the one latency metric present on every platform); quality
+    // = VQA overall % when VQA tasks ran, otherwise OCR BLEU (higher = better) as the proxy.
+    // Each leg gets equal weight (mean of per-leg relative %). Two-models mode only.
+    const speedPcts = []
+    const qualPcts = []
+    for (const host of hosts) {
+      for (const dv of devs) {
+        const b = groupStats(`${host}|${base}|${dv}`)
+        const c = groupStats(`${host}|${candidate}|${dv}`)
+        if (!b || !c) continue
+        if (b.ttft != null && c.ttft != null && b.ttft > 0) speedPcts.push((b.ttft - c.ttft) / b.ttft * 100)
+        if (b.overall != null && c.overall != null && b.overall > 0) {
+          qualPcts.push((c.overall - b.overall) / b.overall * 100)
+        } else {
+          const bo = ocrGroup(`${host}|${base}|${dv}`)
+          const co = ocrGroup(`${host}|${candidate}|${dv}`)
+          if (bo && co && bo.bleu != null && co.bleu != null && bo.bleu > 0) qualPcts.push((co.bleu - bo.bleu) / bo.bleu * 100)
+        }
+      }
+    }
+    const sp = mean(speedPcts)
+    const qp = mean(qualPcts)
+    const legs = Math.max(speedPcts.length, qualPcts.length)
+    const verdict = (v, better, worse) => v == null ? 'n/a' : `**${v >= 0 ? better : worse} ${Math.abs(v).toFixed(1)}%**`
+    L.push(`**Summary:** candidate **${candidate}** is ${verdict(sp, 'faster', 'slower')} than baseline **${base}** (TTFT), ` +
+      `with ${verdict(qp, 'better', 'worse')} quality — averaged across ${legs} platform·device leg${legs === 1 ? '' : 's'}.\n`)
     L.push(`Two models — **${base}** (base) vs **${candidate}** (candidate), per platform · device.\n`)
     L.push(`### Quality — overall %: ${base} vs ${candidate}\n`)
     L.push(`| Platform · device | ${base} % | ${candidate} % | Δ (pp, cand−base) |`)
