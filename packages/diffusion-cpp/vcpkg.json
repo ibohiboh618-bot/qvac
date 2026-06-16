@@ -1,9 +1,5 @@
 {
   "dependencies": [
-    {
-      "name": "ggml",
-      "version>=": "2026-06-06#2"
-    },
     "picojson",
     {
       "name": "qvac-lib-inference-addon-cpp",
