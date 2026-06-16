@@ -61,11 +61,12 @@ runs:
     # stored. OS Login is off on these nodes, so gcloud manages an ephemeral SSH
     # key in instance metadata; the guest agent provisions the login user in the
     # google-sudoers group (passwordless sudo), which the step below uses to drop
-    # to the run-as-user. SA needs roles/iap.tunnelResourceAccessor +
-    # roles/compute.instanceAdmin.v1 (or a custom compute.instances.setMetadata
-    # role) + roles/compute.viewer + roles/iam.serviceAccountUser on the VMs'
-    # attached compute SA (to write the ephemeral SSH key when the instance runs
-    # as a service account) — see docs/runbooks/registry-server-deploy.md.
+    # to the run-as-user. Least-privilege SA roles: iap.tunnelResourceAccessor,
+    # compute.viewer, iam.serviceAccountUser on the VMs' attached compute SA, and
+    # a custom role limited to compute.instances.get + setMetadata (preferred
+    # over project-wide compute.instanceAdmin.v1). The WIF trust is scoped to
+    # this workflow on the default branch. Setup steps live in a private runbook,
+    # not committed to this public repo.
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
       with:
@@ -97,6 +98,24 @@ runs:
           echo "::error::remote-update.sh not found at $SCRIPT_PATH"
           exit 1
         fi
+
+        # Validate every maintainer-supplied value before it is interpolated into
+        # the remote shell command below. These come from repo vars/inputs, but a
+        # malformed value must never become shell injection on the deploy host.
+        _check() {
+          printf '%s' "$2" | grep -qE "$3" || { echo "::error::invalid $1 value: '$2'"; exit 1; }
+        }
+        _check instance       "$INSTANCE"               '^[a-z]([-a-z0-9]*[a-z0-9])?$'
+        _check zone           "$ZONE"                    '^[a-z0-9-]+$'
+        _check project        "$PROJECT"                 '^[a-z][-a-z0-9]*[a-z0-9]$'
+        _check run-as-user    "$RUN_AS_USER"             '^[a-z_][a-z0-9_-]*$'
+        _check repo-path      "$REPO_PATH"               '^[A-Za-z0-9._/-]+$'
+        _check pkg-subdir     "$PKG_SUBDIR"              '^[A-Za-z0-9._/-]+$'
+        _check pm2-process    "$PM2_PROCESS"             '^[A-Za-z0-9._-]+$'
+        _check deploy-sha     "$DEPLOY_SHA"              '^[0-9a-f]{7,40}$'
+        _check metrics-port   "$METRICS_PORT"            '^[0-9]+$'
+        _check health-timeout "$HEALTH_TIMEOUT_SECONDS"  '^[0-9]+$'
+        _check dry-run        "$DRY_RUN"                 '^(true|false)$'
 
         # Short-lived SSH material on this persistent (and possibly shared)
         # self-hosted runner: generate the keypair in a per-job temp dir that is
