@@ -33,6 +33,21 @@ DRY_RUN="${DRY_RUN:-false}"
 log() { printf '[remote-update] %s\n' "$*"; }
 fail() { printf '[remote-update] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# CI runs this non-interactively (su - <user> -c "... bash -s"), which does not
+# source ~/.bashrc where nvm — and therefore node/npm/pm2 — is set up. Load nvm
+# explicitly so the toolchain that owns the pm2 daemon is on PATH.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$NVM_DIR/nvm.sh" --no-use
+  nvm use default >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true
+fi
+if ! command -v node >/dev/null 2>&1; then
+  for _bin in "$NVM_DIR"/versions/node/*/bin; do
+    [ -d "$_bin" ] && PATH="$_bin:$PATH"
+  done
+fi
+
 command -v git >/dev/null || fail "git not found on node"
 command -v npm >/dev/null || fail "npm not found on node"
 command -v pm2 >/dev/null || fail "pm2 not found on node"
