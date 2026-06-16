@@ -1,0 +1,110 @@
+# Daily health check for the public docs site (https://docs.qvac.tether.io).
+#
+# Scans, once per day, the surfaces a user is most likely to hit a broken page
+# on:
+#   - every page in the live sitemap.xml
+#   - the `.md` variant of every sitemap page (Markdown content negotiation)
+#   - every permanent (301) redirect source from public/_redirects
+#   - sitemap.xml, llms.txt, llms-full.txt
+#
+# The URL list is built fresh each run by `build-urls.mjs`, checked with
+# lychee, and parsed by `parse-lychee.mjs`. Only HTTP 404s trigger an alert:
+# a single Slack message is posted to #product-sdk and the run is marked
+# failed. The list of broken URLs stays in the GitHub Actions job summary and
+# is never sent to Slack. Transient errors (timeouts / DNS / 5xx) are recorded
+# in the summary but do not alert.
+name: Docs Health Check
+
+on:
+  schedule:
+    # 02:30 UTC == 08:00 IST, daily. Scheduled runs only fire on the default
+    # branch, so this takes effect once merged to main.
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      site_origin:
+        description: "Docs site origin to scan"
+        required: false
+        default: "https://docs.qvac.tether.io"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-health-check
+  cancel-in-progress: false
+
+jobs:
+  health-check:
+    name: Scan docs site for broken pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (redirects + scripts only)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          sparse-checkout: |
+            .github/scripts/docs-health-check
+            docs/website/public/_redirects
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+        with:
+          node-version: lts/*
+
+      - name: Build URL list
+        id: build
+        env:
+          SITE_ORIGIN: ${{ github.event.inputs.site_origin || 'https://docs.qvac.tether.io' }}
+        run: node .github/scripts/docs-health-check/build-urls.mjs
+
+      - name: Check links with lychee
+        id: lychee
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
+        with:
+          args: >-
+            --no-progress
+            --max-retries 3
+            --retry-wait-time 5
+            --max-concurrency 8
+            --timeout 30
+            --user-agent qvac-docs-health-check
+            urls.txt
+          format: json
+          output: ./lychee-report.json
+          fail: false
+          jobSummary: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse report and write job summary
+        id: parse
+        run: node .github/scripts/docs-health-check/parse-lychee.mjs ./lychee-report.json
+
+      - name: Notify Slack on broken pages
+        if: steps.parse.outputs.count_404 > 0
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Docs Site Alert: broken pages detected during the daily health check",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "🚨 *Docs Site Alert*\nBroken pages were detected during the daily health check.\n\nSee the <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions report> for details.\n\ncc <@U092N54FW7Q> <@U0AFBC3G2EQ> <@U07HUCA3A3H>"
+                  }
+                }
+              ]
+            }
+
+      - name: Fail run when broken pages found
+        if: steps.parse.outputs.count_404 > 0
+        run: |
+          echo "::error::Broken pages (404) detected during docs health check — see job summary."
+          exit 1
