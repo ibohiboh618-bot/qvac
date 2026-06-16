@@ -2,7 +2,7 @@
 # Sourced from the parakeet-cpp/ subfolder of tetherto/qvac-ext-lib-whisper.cpp;
 # consumes the ggml-speech port.
 #
-# Pinned at 06e2e537 (branch qvac-20556-parakeet-mali-gpu, off master ed749556):
+# Pinned at d7a347a8 (branch qvac-20556-parakeet-mali-gpu, off master ed749556):
 # run Parakeet on the Mali-Vulkan GPU. The subsampler depthwise broadcast mul_mat
 # (miscomputes to inf on Valhall) is reformulated as ggml_mul + ggml_sum_rows, and
 # the Sortformer diarization head (block-0 NaN on Valhall) runs on CPU with
@@ -16,8 +16,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 06e2e537cbdaff3dd44ece04bcb831c945b9f580
-    SHA512 75023f48fb8d19020bf232fa7e29a8315b411b2125cbca36f44535f9b82d2b8c86659c76dbb48994499ad170cbc304ac61981dd99e169ab6e8f69605f1194cae
+    REF d7a347a86fe3259a53db53130a8830380533e127
+    SHA512 f8c9afd54fe6860487b5cf90050eafc6c17253a9c1530d589bca9f40b3cefe168c320a2b2744f4bdaf7ca73a13857ad3461156e9ecbfd97891fdc5200d8f4bef
     HEAD_REF master
 )
 
