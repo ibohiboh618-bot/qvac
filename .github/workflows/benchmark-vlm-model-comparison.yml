@@ -276,9 +276,32 @@ jobs:
   # macos-15-xlarge runner (same runner the LLM integration tests use).
   # The matrix itself is built dynamically by the context job above
   # from the `matrix_desktop` input.
-  matrix-desktop:
+  # Build the addon from the PR ref so addon@candidate can be compared against the
+  # published addon@baseline (A2). Uses the standard reusable prebuild workflow,
+  # which uploads per-platform `llama-cpp-<platform>-<arch>` artifacts the desktop
+  # legs download. Only runs when a candidate source is requested.
+  prebuild-candidate:
     needs: context
-    if: needs.context.outputs.desktop_count != '0'
+    if: needs.context.outputs.desktop_count != '0' && contains(inputs.matrix_sources, 'addon@candidate')
+    # The reusable prebuild job requests contents/pull-requests: write; a caller
+    # can't grant a nested job more than it has, so match those (as on-merge does).
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/prebuilds-llm-llamacpp.yml
+    with:
+      ref: ${{ needs.context.outputs.ref }}
+      repository: ${{ needs.context.outputs.repository }}
+    secrets: inherit
+
+  matrix-desktop:
+    needs: [context, prebuild-candidate]
+    # prebuild-candidate is skipped unless a candidate is requested; a skipped
+    # need would otherwise skip this job too. The !cancelled() status function
+    # overrides that implicit skip so the real gate is evaluated — only bail if a
+    # needed job actually failed.
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.desktop_count != '0' && needs.prebuild-candidate.result != 'failure' }}
     name: vlm-matrix-${{ matrix.host }}-${{ matrix.backend }}
     runs-on: ${{ matrix.runner }}
     # `release` environment exposes AWS_OIDC_ROLE_ARN and satisfies the role's OIDC
@@ -338,6 +361,33 @@ jobs:
           rm -rf package *.tgz
           echo "addon @qvac/llm-llamacpp@$ADDON_VER"
           ls -la prebuilds/
+
+      # addon@candidate (A2): the prebuild built from the PR ref by the
+      # prebuild-candidate job. Download this leg's platform artifact into
+      # builds/candidate/prebuilds; run-desktop.cjs symlinks it in per block.
+      - name: Stage candidate prebuild (addon@candidate)
+        if: contains(inputs.matrix_sources, 'addon@candidate')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+        with:
+          name: llama-cpp-${{ (matrix.host == 'linux' && 'linux-x64') || (matrix.host == 'windows' && 'win32-x64') || 'darwin-arm64' }}
+          path: ${{ env.WORKDIR }}/builds/candidate/prebuilds
+
+      # addon@baseline (A2): the pinned published version (config.defaultBaseline).
+      # Pack it from npm and stage its prebuilds the same way.
+      - name: Stage baseline prebuild (addon@baseline)
+        if: contains(inputs.matrix_sources, 'addon@baseline')
+        working-directory: ${{ env.WORKDIR }}
+        shell: bash
+        run: |
+          BASELINE_VER=$(node -e "console.log(require('./benchmarks/vlm-benchmark/config.cjs').defaultBaseline.npm)")
+          echo "baseline @qvac/llm-llamacpp@$BASELINE_VER"
+          npm pack "@qvac/llm-llamacpp@$BASELINE_VER"
+          rm -rf builds/baseline
+          mkdir -p builds/baseline
+          tar -xzf qvac-llm-llamacpp-*.tgz
+          mv package/prebuilds builds/baseline/prebuilds
+          rm -rf package qvac-llm-llamacpp-*.tgz
+          echo "baseline prebuilds:"; ls -la builds/baseline/prebuilds
 
       # Linux GPU runners ship the Vulkan SDK at the well-known path; stamp the
       # env so the addon's loader finds it. No-op on cpu and macOS (Metal) legs.

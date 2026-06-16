@@ -19,9 +19,11 @@
 // changes stay in this folder (no YAML churn). The report side takes the median
 // over measured blocks (block >= 1) and drops warmup (block 0).
 //
-// A2 will make addonPrebuildDir() return real candidate/baseline dirs; today both
-// resolve to the published build on disk, so addon@candidate,addon@baseline is a
-// genuine A/A test (expect ~0% deltas).
+// A2: addon@candidate / addon@baseline load builds staged by CI into
+// builds/<id>/prebuilds; stagePrebuild() symlinks the live prebuilds dir at the
+// right one before each block so the whole native build (binding + backends) is
+// swapped. When both candidate and baseline point at the same staged build it is
+// a genuine A/A test (expect ~0% deltas).
 //
 // OWNERSHIP: runner workstream (Dev A).
 //
@@ -89,6 +91,21 @@ function generateRunner () {
   if (r.status !== 0) throw new Error('brittle runner generation failed (status ' + r.status + ')')
 }
 
+// Point the live prebuilds dir at the build this block must load. The harness
+// loads BOTH its binding (require.addon from ./prebuilds) and the compute
+// backends (backendsDir) from here, so swapping the dir swaps the whole build —
+// candidate vs baseline end to end. A symlink keeps it cheap (no copying .bare
+// files once per block). No-op for the published 'addon' source (loads in place).
+function stagePrebuild (targetDir, workdir) {
+  const live = path.join(workdir, 'prebuilds')
+  if (path.resolve(live) === path.resolve(targetDir)) return
+  if (!fs.existsSync(targetDir)) {
+    throw new Error('prebuild not staged: ' + targetDir + ' — expected the candidate/baseline build on disk (check the prebuild-candidate job / baseline npm pack)')
+  }
+  try { fs.rmSync(live, { recursive: true, force: true }) } catch (_) {}
+  fs.symlinkSync(path.resolve(targetDir), live, 'junction')
+}
+
 function runBlock (config, src, model, modelIndex, device, block, prebuildDir) {
   const childEnv = Object.assign({}, process.env, {
     QVAC_VLM_MATRIX: '1',
@@ -146,6 +163,7 @@ async function run () {
       for (const entry of plan) {
         const src = byId.get(entry.source)
         const prebuildDir = addonPrebuildDir(src, WORKDIR)
+        stagePrebuild(prebuildDir, WORKDIR)
         const stability = await stabilityGuard(stabOpts)
         emitBlock(config, entry, src, models[mi], device, stability)
         const code = await runBlock(config, src, models[mi], mi, device, entry.block, prebuildDir)
@@ -209,4 +227,4 @@ if (require.main === module) {
   else run().catch(err => { console.error('run-desktop failed:', (err && err.stack) || err); process.exit(1) })
 }
 
-module.exports = { selfcheck, run }
+module.exports = { selfcheck, run, stagePrebuild }
