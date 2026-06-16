@@ -98,6 +98,15 @@ runs:
           exit 1
         fi
 
+        # Short-lived SSH material on this persistent (and possibly shared)
+        # self-hosted runner: generate the keypair in a per-job temp dir that is
+        # removed when the step exits, instead of the reused ~/.ssh default. The
+        # public key pushed to instance metadata also self-expires (below), so a
+        # leaked private key is useless shortly after the job and metadata does
+        # not accumulate stale keys. Auth itself stays keyless via WIF.
+        SSH_KEYDIR="$(mktemp -d)"
+        trap 'rm -rf "$SSH_KEYDIR"' EXIT
+
         echo "::group::Deploy $DEPLOY_SHA to $INSTANCE as $RUN_AS_USER (dry-run=$DRY_RUN)"
 
         # Deploy parameters are passed as env assignments prefixed to the remote
@@ -122,6 +131,8 @@ runs:
           --project "$PROJECT" \
           --tunnel-through-iap \
           --quiet \
+          --ssh-key-file="$SSH_KEYDIR/google_compute_engine" \
+          --ssh-key-expire-after=300s \
           --command "sudo -n su - ${RUN_AS_USER} -c \"${INNER}\"" < "$SCRIPT_PATH"
 
         echo "::endgroup::"
