@@ -708,9 +708,56 @@ universal-GEMM shader edit of Approach A). Probe HANGS / outlier MOVES when mark
 fusion-sensitivity (R8/R13), not a clean negative.
 
 **State:** tts-cpp probe **`8bba2619`** (split-capture) pushed to `tetherto/qvac-ext-lib-whisper.cpp`
-@ `QVAC-20557-mali-probe`; addon portfile re-pinned (SHA512 `d179a824…`); android-arm64 build GREEN locally
-(probe compiles). Next: local Adreno (adb `10BD1C1LEF0001R`, OpenCL) no-regression + marks-emit pre-gate →
-push qvac #2610 → `verified` label → read Pixel/Mali trisection. Workflow run `wxwefu5hf`.
+@ `QVAC-20557-mali-probe`; addon portfile re-pinned (SHA512 `d179a824…`). Workflow run `wxwefu5hf`.
+
+**LOCAL ADRENO PRE-GATE — GREEN (2026-06-16, device `10BD1C1LEF0001R`, OpenCL):** trisection emits cleanly,
+no crash, **K=64 CONFIRMED** (`dprobe_pw1_im2col ne=[64,54]`; pwconv1 expands 64→256, `dprobe_pw1_mulmat
+ne=[54,256]`), Adreno rms=0.037403 (no regression). **`dprobe_pw1_im2col` rms/min/max == `dprobe_layernorm`
+EXACTLY** (0.720668 / -3.2892 / 3.2276) ⇒ the pointwise im2col is a pure transpose (cannot create the outlier).
+Adreno GOLD for the Mali comparison: `pw1_mulmat` rms=1.403 min=-5.878 max=2.334; `pwconv1` rms=1.507
+min=-6.305 max=2.306 (Mali round-4 `pwconv1` max was **10.35** — the Mali round shows if that outlier is in
+`pw1_mulmat` [the bare K=64 mul_mat] or only post-bias).
+
+**ROUND-5 LIVE:** qvac #2610 @ **`66518cff`** pushed; device-farm run **`27608930766`** queued (default
+Mali-Vulkan path, F16 env dropped). Read Pixel/Mali `dprobe_pw1_im2col` / `dprobe_pw1_mulmat` / `dprobe_pwconv1`
+per the pre-registered three-way interpretation above.
+
+### ✅ ROUND-5 RESULT (run 27608930766, Pixel 9 / Mali-G715 + S25/Adreno control, 2026-06-16) — INTERPRETATION (b) CONFIRMED: the bare K=64 mul_mat is the broken op
+Apples-to-apples, SAME text (L=17), trisection on BOTH devices:
+```
+                  Adreno S25 (OpenCL, correct)        Mali Pixel 9 (Vulkan, broken)
+dprobe_layernorm  rms 0.744 min -4.281 max 2.777      rms 0.744 min -4.281 max 2.777   (BIT-IDENTICAL)
+dprobe_pw1_im2col rms 0.744 min -4.281 max 2.777      rms 0.744 min -4.281 max 2.777   (== layernorm; pure transpose)
+dprobe_pw1_mulmat rms 1.282 min -5.682 max  2.547     rms 1.255 min -9.104 max 10.408  <- OUTLIER FIRST APPEARS HERE
+dprobe_pwconv1    (post-bias) max 2.483               (post-bias) max 10.349           (≈ pre-bias; bias-add adds nothing)
+```
+**VERDICT:** the **bare non-broadcast K=64 `ggml_mul_mat` miscomputes on Mali** — the input (`pw1_im2col`) is
+BIT-IDENTICAL to Adreno yet the output diverges (a few elements ~2-4× too large; rms ~normal). **im2col is
+EXONERATED** (== layernorm, identical both devices). **The broadcast bias-add is EXONERATED** (`pwconv1` ≈
+`pw1_mulmat` on both). K-dependence holds (K=5/9 clean, K=64 broken). The outlier is **DETERMINISTIC** (pwconv1
+max=10.3491 identical in round-4 f16-off AND round-5 default); only the downstream NaN cascade is
+non-deterministic (Mali run-1: duration 1.40/latent 20 wrong + `text_emb` NaN → silent; Mali run-2: clean,
+wav rms 0.037). The same broken mul_mat hits the text encoder (K=64/128/256), CFM attention (K=64, ~20×/synth),
+vocoder (K≈256) → PERVASIVE → model-side reroute not viable. **PLAN APPROVED (`~/.claude/plans/mutable-kindling-book.md`):**
+fix the ggml-vulkan **non-coopmat F32 `mul_mm` reduction** (`mul_mm.comp` 305-349; auto Mali-scoped — coopmat
+devices use the other branch). H1 = Mali-deviceName-gated force-unaligned-pipeline (cheapest, ships-if-works).
+
+### ROUND-6 / H1 — Mali-gated force-unaligned F32 mul_mm pipeline (ggml-vulkan) — LIVE
+**Correction (verified in `ports/ggml-speech/portfile.cmake`):** the addon builds Android Vulkan with
+`GGML_VULKAN_DISABLE_COOPMAT=ON` → **Xclipse ALSO uses the non-coopmat `mul_mm` path** (and is correct there),
+so a fix in that path is NOT auto-Mali-scoped; it MUST be `deviceName("Mali")`-gated. The `[m=17,n=256,k=64]`
+case selects the **aligned small** pipeline `a_s` (`aligned`=true at ggml-vulkan.cpp:7924 since K%align==0, m>8,
+n>8) → the aligned vec4 no-bounds-check load (`mul_mm_funcs.glsl` LOAD_VEC_A=4) is exercised.
+**H1 (qvac-ext-ggml `47d7351d`, branch `QVAC-20557-mali-mulmat` off clean `44fd4817`):** in
+`ggml_vk_guess_matmul_pipeline` (~7491), Mali+F32 → force `aligned=false` → the bounds-checked UNALIGNED
+pipeline (`mmp->s`, LOAD_VEC_BATCH_A=2). Tests whether the aligned load is the culprit (same reduction either
+way, so it isolates the LOAD path). Addon `ports/ggml-speech` re-pinned `47d7351d` (SHA512 `e07c26b8…`);
+tts-cpp split-capture probe `8bba2619` + default Mali-Vulkan gpu-smoke kept.
+**Compile gate GREEN** (ggml-speech arm64-android-vulkan built). **Local Adreno pre-gate GREEN** (the rebuilt
+vulkan .so + .bare load+run; backendId=4 OpenCL, rms=0.037403 == baseline → no regression; gate inert on
+non-Mali, as designed). **DECISIVE READ on the Mali round:** `dprobe_pw1_mulmat` max **10.4 → ~2.5** (== Adreno
+control) ⇒ aligned load was the bug → ship the Mali gate; still ~10.4 ⇒ H2 (strengthen non-coopmat K-tile
+barriers `mul_mm.comp` 287/349) → H3 (WARP=32 vs HW subgroup=16 geometry).
 
 ## ✅ RESOLVED — PR #2605 CI failure (diagnosed + fixed 2026-06-15)
 **Issue:** #2605 CI (run 27562752301) failed despite #2605 NOT enabling Mali. Two relevant red
