@@ -29,6 +29,15 @@ env:
 permissions:
   contents: read
 
+# Serialize deploy-capable runs (push / workflow_dispatch) under one fixed group
+# so two runs can never roll the staging cluster at the same time — max-parallel
+# only serializes nodes within a single run. PR-validation runs stay grouped
+# per-ref so different PRs still run in parallel. Never cancel an in-flight
+# deploy.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.ref || 'deploy' }}
+  cancel-in-progress: false
+
 jobs:
   label-gate:
     name: Authorise (label-gate)
@@ -221,6 +230,7 @@ jobs:
       (needs.detect-changes.outputs.models_changed == 'true' || github.event_name == 'workflow_dispatch') &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       instances: ${{ steps.targets.outputs.instances }}
     steps:
@@ -255,6 +265,7 @@ jobs:
     if: |-
       needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (needs.detect-changes.outputs.models_changed == 'true' || github.event_name == 'workflow_dispatch') && (needs.validate-json.result == 'success' || needs.validate-json.result == 'skipped') && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.resolve-deploy-targets.result == 'success')
     runs-on: qvac-ubuntu2204-x64
+    timeout-minutes: 15
     environment: release
     permissions:
       contents: read
