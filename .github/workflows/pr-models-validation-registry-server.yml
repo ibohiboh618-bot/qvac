@@ -282,7 +282,7 @@ jobs:
           workload-identity-provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service-account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
           repo-path: ${{ vars.REGISTRY_NODE_REPO_PATH }}
-          ssh-user: ${{ vars.REGISTRY_NODE_SSH_USER || 'work' }}
+          run-as-user: ${{ vars.REGISTRY_NODE_RUN_AS_USER || 'work' }}
           deploy-sha: ${{ github.sha }}
           dry-run: ${{ github.event.inputs.deploy_dry_run || 'false' }}
 

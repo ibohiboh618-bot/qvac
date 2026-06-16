@@ -45,6 +45,17 @@ long-lived SSH key or service-account JSON is stored. SSH to the nodes goes
 **through IAP** (`gcloud compute ssh --tunnel-through-iap`), which manages
 ephemeral SSH keys and requires no inbound public SSH.
 
+**Identity vs. execution:** CI logs in **as the deploy service account** via
+OS Login — gcloud uses the active SA credentials, so the SSH principal is the
+SA's own derived POSIX user (e.g. `sa_106…`), never a human account. Every
+session is therefore attributable to `registry-deploy@…` in OS Login and Cloud
+Audit Logs. Once on the box, the session does `sudo -n su - <run-as-user>`
+(default `work`) — **not** for identity, but because the git checkout, the
+`node_modules`, and the **per-user pm2 daemon** are owned by `work`, so the
+reload must run as that user. `roles/compute.osAdminLogin` is what grants the SA
+the passwordless sudo this requires (the on-box sudo log records the
+`sa_… → work` elevation, keeping the privilege step auditable too).
+
 The deploy job runs on the self-hosted `qvac-ubuntu2204-x64` runner. The runner
 only needs **egress** to Google APIs (`oauth2.googleapis.com`,
 `sts.googleapis.com`, `iap.googleapis.com`, `compute.googleapis.com`). SSH
@@ -74,8 +85,8 @@ environment. The two credentials stay as **`release` environment secrets**
 | `GCP_PROJECT_ID` | project hosting the staging nodes |
 | `GCP_ZONE` | zone of the staging nodes, e.g. `europe-west6-a` |
 | `REGISTRY_STAGING_INSTANCES` | JSON array, e.g. `["registry-stg-01","registry-stg-02","registry-stg-03"]` |
-| `REGISTRY_NODE_REPO_PATH` | git checkout path on each node — absolute (`/home/work/qvac`) or relative to the work user's home (`qvac`) |
-| `REGISTRY_NODE_SSH_USER` | optional; login user that owns the checkout + pm2 process (default `work`) |
+| `REGISTRY_NODE_REPO_PATH` | git checkout path on each node — absolute (`/home/work/qvac`) or relative to the run-as-user's home (`qvac`) |
+| `REGISTRY_NODE_RUN_AS_USER` | optional; user that owns the checkout + pm2 process, sudo'd into after SA login (default `work`) |
 
 > Repository variables (not environment variables) are required here so the
 > un-environmented `resolve-deploy-targets` job can read the instance list.
@@ -134,16 +145,15 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 ### 4. IAM roles for the deploy SA
 
-CI logs in as a **fixed local user** (`work`) that owns the git checkout and
-the pm2 process — pm2 is per-user, so the reload must run as that user. That
-rules out OS Login (which derives its own POSIX usernames); instead
-`gcloud compute ssh` publishes an ephemeral key to the `work` user's
-`authorized_keys` via instance metadata. Least-privilege set:
+CI logs in **as the SA via OS Login** (its own derived POSIX user), then sudo's
+to the run-as-user (`work`) to operate on that user's checkout and pm2 daemon.
+`roles/compute.osAdminLogin` provides both the OS Login account and the
+**passwordless sudo** the unattended `sudo -n su - work` depends on.
 
 ```bash
 for role in \
   roles/iap.tunnelResourceAccessor \
-  roles/compute.instanceAdmin.v1 \
+  roles/compute.osAdminLogin \
   roles/compute.viewer ; do
   gcloud projects add-iam-policy-binding "<project>" \
     --member="serviceAccount:registry-deploy@<project>.iam.gserviceaccount.com" \
@@ -151,13 +161,19 @@ for role in \
 done
 ```
 
-> `roles/compute.instanceAdmin.v1` is broad. To tighten, replace it with a
-> custom role granting only `compute.instances.setMetadata` and
-> `compute.instances.get` — the permissions `gcloud compute ssh` needs to add
-> the ephemeral key.
->
-> Ensure OS Login is **disabled** on these nodes (`enable-oslogin=FALSE` or
-> unset) so the fixed `work` login is honored.
+Enable OS Login on the nodes (project- or instance-level) so the SA can log in:
+
+```bash
+gcloud compute project-info add-metadata \
+  --project="<project>" \
+  --metadata enable-oslogin=TRUE
+```
+
+> `roles/compute.osAdminLogin` grants the SA sudo on every instance in the
+> project. To narrow the blast radius, grant it at the **instance** level on the
+> three registry nodes instead of the project, or use a sudoers rule scoped to
+> `<sa-posix-user> ALL=(work) NOPASSWD: ALL` with the non-admin
+> `roles/compute.osLogin` role.
 
 ### 5. Firewall — allow IAP to reach SSH
 
@@ -193,6 +209,8 @@ appropriate. `35.235.240.0/20` is Google's published IAP forwarding range.
 | `resolve-deploy-targets` fails with "not set" | `vars.REGISTRY_STAGING_INSTANCES` missing/empty |
 | auth step fails | WIF provider/SA wrong, or repo not bound (step 3) |
 | `gcloud compute ssh` times out | IAP firewall (step 5) or `roles/iap.tunnelResourceAccessor` missing |
+| SSH login refused / `Permission denied (publickey)` | OS Login not enabled on the node, or SA lacks `roles/compute.osLogin`/`osAdminLogin` |
+| `sudo: a password is required` | SA lacks `roles/compute.osAdminLogin` (no passwordless sudo), or no NOPASSWD sudoers rule to the run-as-user |
 | "tracked files are dirty on the node" | someone edited tracked files on the box; reconcile before deploy |
 | health gate times out | process didn't rejoin as indexer; check `pm2 logs registry` (printed in the job output) |
 

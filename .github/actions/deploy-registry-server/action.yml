@@ -24,10 +24,10 @@ inputs:
     description: "Service account email CI impersonates for deploy"
     required: true
   repo-path:
-    description: "Path of the git checkout on the node — absolute (e.g. /home/work/qvac) or relative to the SSH user's home (e.g. qvac)"
+    description: "Path of the git checkout on the node — absolute (e.g. /home/work/qvac) or relative to the run-as-user's home (e.g. qvac)"
     required: true
-  ssh-user:
-    description: "Login user to SSH as; must own the git checkout and the pm2 process (pm2 is per-user)"
+  run-as-user:
+    description: "User that owns the git checkout and pm2 process; the SA's OS Login session sudo's to this user (pm2 is per-user)"
     required: false
     default: "work"
   deploy-sha:
@@ -58,8 +58,10 @@ runs:
   using: composite
   steps:
     # OIDC -> Workload Identity Federation. Keyless; no service-account JSON
-    # stored. The SA must hold roles/iap.tunnelResourceAccessor and
-    # roles/compute.instanceAdmin.v1 (or osLogin) on the target nodes — see
+    # stored. The SA logs in via OS Login as its own derived POSIX user (never a
+    # human account) and must hold roles/iap.tunnelResourceAccessor +
+    # roles/compute.osAdminLogin (osAdminLogin grants the passwordless sudo used
+    # to drop to the run-as-user) + roles/compute.viewer — see
     # docs/runbooks/registry-server-deploy.md for the GCP trust setup.
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -76,7 +78,7 @@ runs:
         INSTANCE: ${{ inputs.instance }}
         ZONE: ${{ inputs.zone }}
         PROJECT: ${{ inputs.project }}
-        SSH_USER: ${{ inputs.ssh-user }}
+        RUN_AS_USER: ${{ inputs.run-as-user }}
         REPO_PATH: ${{ inputs.repo-path }}
         DEPLOY_SHA: ${{ inputs.deploy-sha }}
         PKG_SUBDIR: ${{ inputs.pkg-subdir }}
@@ -93,25 +95,29 @@ runs:
           exit 1
         fi
 
-        echo "::group::Deploy $DEPLOY_SHA to $INSTANCE (dry-run=$DRY_RUN)"
+        echo "::group::Deploy $DEPLOY_SHA to $INSTANCE as $RUN_AS_USER (dry-run=$DRY_RUN)"
 
-        # The remote update script is fed over stdin; deploy parameters are set
-        # as environment variables on the remote command line. None of these are
-        # secrets, so plain interpolation is safe.
-        REMOTE_CMD="DEPLOY_SHA='${DEPLOY_SHA}'"
-        REMOTE_CMD="${REMOTE_CMD} REPO_PATH='${REPO_PATH}'"
-        REMOTE_CMD="${REMOTE_CMD} PKG_SUBDIR='${PKG_SUBDIR}'"
-        REMOTE_CMD="${REMOTE_CMD} PM2_PROCESS='${PM2_PROCESS}'"
-        REMOTE_CMD="${REMOTE_CMD} METRICS_PORT='${METRICS_PORT}'"
-        REMOTE_CMD="${REMOTE_CMD} HEALTH_TIMEOUT_SECONDS='${HEALTH_TIMEOUT_SECONDS}'"
-        REMOTE_CMD="${REMOTE_CMD} DRY_RUN='${DRY_RUN}'"
-        REMOTE_CMD="${REMOTE_CMD} bash -s"
+        # Deploy parameters are passed as env assignments prefixed to the remote
+        # command. None of these are secrets, so plain interpolation is safe.
+        INNER="DEPLOY_SHA='${DEPLOY_SHA}'"
+        INNER="${INNER} REPO_PATH='${REPO_PATH}'"
+        INNER="${INNER} PKG_SUBDIR='${PKG_SUBDIR}'"
+        INNER="${INNER} PM2_PROCESS='${PM2_PROCESS}'"
+        INNER="${INNER} METRICS_PORT='${METRICS_PORT}'"
+        INNER="${INNER} HEALTH_TIMEOUT_SECONDS='${HEALTH_TIMEOUT_SECONDS}'"
+        INNER="${INNER} DRY_RUN='${DRY_RUN}'"
+        INNER="${INNER} bash -s"
 
-        gcloud compute ssh "${SSH_USER}@${INSTANCE}" \
+        # Log in as the service account's OS Login user (gcloud uses the active
+        # SA credentials — no user@, never a human account), then sudo to the
+        # run-as-user to operate on its checkout and its per-user pm2 daemon.
+        # remote-update.sh is streamed on stdin and passes through
+        # gcloud ssh -> sudo -> su to the inner `bash -s`.
+        gcloud compute ssh "$INSTANCE" \
           --zone "$ZONE" \
           --project "$PROJECT" \
           --tunnel-through-iap \
           --quiet \
-          --command "$REMOTE_CMD" < "$SCRIPT_PATH"
+          --command "sudo -n su - ${RUN_AS_USER} -c \"${INNER}\"" < "$SCRIPT_PATH"
 
         echo "::endgroup::"

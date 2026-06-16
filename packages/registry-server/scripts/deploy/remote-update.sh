@@ -2,7 +2,8 @@
 #
 # remote-update.sh — deploy the registry-server package onto a single node.
 #
-# Runs ON a registry node (piped over `gcloud compute ssh --tunnel-through-iap`).
+# Runs ON a registry node, executed as the run-as-user (e.g. `work`) via
+# `sudo su -` after the SA logs in over `gcloud compute ssh --tunnel-through-iap`.
 # Updates the node's git checkout to an exact commit, reinstalls dependencies,
 # regenerates spec artifacts, gracefully reloads the pm2 process, then blocks
 # until the node reports indexer status via its local Prometheus endpoint.
