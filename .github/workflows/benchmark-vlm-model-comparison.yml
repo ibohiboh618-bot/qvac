@@ -43,7 +43,7 @@ on:
         type: string
         default: "two-models"
       matrix_preset:
-        description: "  task group: smoke (1 task), cognitive (5 VQA×5), ocr (ocr-small + 1 light ocr-page), ocr-high-mp (4 heavy ocr-page docs, desktop), full (cognitive+ocr). Forwarded to every leg."
+        description: "  task group: smoke (1 task), cognitive (5 VQA×5), ocr (1 light ocr-page doc), ocrhighmp (all 5 ocr-page docs, desktop), full (cognitive + ocr-small + 1 light ocr-page). Forwarded to every leg."
         required: false
         type: string
         default: "full"

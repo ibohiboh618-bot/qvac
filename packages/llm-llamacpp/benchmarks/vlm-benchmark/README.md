@@ -196,8 +196,9 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    - Dispatch: `-f matrix_mode=…` (every leg; forwarded to phones as device env).
 
 **4. Preset** — task group: `smoke` (1 task, wiring check) · `cognitive` (5 VQA tasks × 5) ·
-   `ocr` (all `ocr-small` phrases + the 1 light `ocr-page` doc — fits the mobile session) ·
-   `ocr-high-mp` (the 4 heavy high-MP `ocr-page` docs — desktop-oriented) · `full` (cognitive + ocr).
+   `ocr` (1 light `ocr-page` doc — quick document-OCR check, fits the mobile session) ·
+   `ocrhighmp` (all 5 high-MP `ocr-page` docs — desktop-oriented) ·
+   `full` (cognitive + `ocr-small` + the 1 light `ocr-page`).
    - Config: `defaultPreset: '…'` (and the `presets` definitions: tasks/samples/repeats).
    - Dispatch: `-f matrix_preset=…` (every leg; forwarded to phones as device env).
      Keep mobile light (`base` or below); `full` risks the Device Farm session window.
@@ -230,7 +231,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 |---|---|---|
 | `run_matrix` | — | **must be true** to run the matrix at all |
 | `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (every leg) |
-| `matrix_preset` | `config.defaultPreset` | `smoke` \| `cognitive` \| `ocr` \| `ocr-high-mp` \| `full` (every leg) |
+| `matrix_preset` | `config.defaultPreset` | `smoke` \| `cognitive` \| `ocr` \| `ocrhighmp` \| `full` (every leg) |
 | `matrix_models` | `config.defaultModels` | catalog names / `[label=]<llm-url>\|<mmproj-url>[@ctx=N]` / `json:[…]` (CONTRACT.md §3) |
 | `matrix_sources` | — | builds under comparison: `addon` \| `fabric@<ref>` \| `upstream@<ref>` (`addon@candidate/baseline` reserved, A2) |
 | `matrix_scenarios` | `config.defaultScenario` | task set (single `default` today) |
