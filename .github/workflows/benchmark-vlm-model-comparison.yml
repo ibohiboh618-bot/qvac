@@ -43,10 +43,10 @@ on:
         type: string
         default: "two-models"
       matrix_preset:
-        description: "  run size (independent of mode): smoke (1 task×1×1), base (5 tasks×3×1), full (5 tasks×5×1). Overrides config.defaultPreset on desktop."
+        description: "  task group: smoke (1 task, wiring check), cognitive (5 VQA tasks×5), ocr (OCR tasks×5), full (cognitive+ocr×5). Forwarded to every leg."
         required: false
         type: string
-        default: "base"
+        default: "full"
       matrix_scenarios:
         description: "  workload scenario (benchmarks/vlm-benchmark/scenarios.cjs): vqa-suite (default) | image-description | ocr-highmp"
         required: false

@@ -195,7 +195,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    - Config: `mode: 'two-models' | 'several-sources'`.
    - Dispatch: `-f matrix_mode=…` (every leg; forwarded to phones as device env).
 
-**4. Preset** — run size (`smoke` 1×1×1 · `base` 5×3×1 · `full` 5×5×1).
+**4. Preset** — task group: `smoke` (1 task, wiring check) · `cognitive` (5 VQA tasks × 5) · `ocr` (OCR tasks × 5) · `full` (cognitive + ocr × 5).
    - Config: `defaultPreset: '…'` (and the `presets` definitions: tasks/samples/repeats).
    - Dispatch: `-f matrix_preset=…` (every leg; forwarded to phones as device env).
      Keep mobile light (`base` or below); `full` risks the Device Farm session window.
@@ -228,7 +228,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 |---|---|---|
 | `run_matrix` | — | **must be true** to run the matrix at all |
 | `matrix_mode` | `config.mode` | `two-models` \| `several-sources` (every leg) |
-| `matrix_preset` | `config.defaultPreset` | `smoke` \| `base` \| `full` (every leg) |
+| `matrix_preset` | `config.defaultPreset` | `smoke` \| `cognitive` \| `ocr` \| `full` (every leg) |
 | `matrix_models` | `config.defaultModels` | catalog names / `[label=]<llm-url>\|<mmproj-url>[@ctx=N]` / `json:[…]` (CONTRACT.md §3) |
 | `matrix_sources` | — | builds under comparison: `addon` \| `fabric@<ref>` \| `upstream@<ref>` (`addon@candidate/baseline` reserved, A2) |
 | `matrix_scenarios` | `config.defaultScenario` | task set (single `default` today) |
@@ -240,7 +240,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 
 ```bash
 gh workflow run benchmark-vlm-model-comparison.yml --ref <branch> \
-  -f run_matrix=true -f matrix_mode=two-models -f matrix_preset=base \
+  -f run_matrix=true -f matrix_mode=two-models -f matrix_preset=full \
   -f matrix_models="qwen3.5-q8,challenger=https://huggingface.co/org/NewVLM-GGUF/resolve/<sha>/NewVLM-Q4_K_M.gguf|https://huggingface.co/org/NewVLM-GGUF/resolve/<sha>/mmproj-F16.gguf" \
   -f matrix_desktop=linux-cpu,linux-gpu,macos-gpu \
   -f matrix_mobile=s25-cpu,s25-gpu,iphone17

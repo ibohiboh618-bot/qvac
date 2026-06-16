@@ -304,8 +304,6 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     return { cer: mean(cs), wer: mean(ws), bleu: mean(bs), n: rs.length }
   }
   const OCR_ROWS = [{ k: 'cer', label: 'CER ↓' }, { k: 'wer', label: 'WER ↓' }, { k: 'bleu', label: 'BLEU ↑' }]
-  const pctFaster = (f, q) => (q != null && f != null && f !== 0) ? ((f - q) / f * 100) : null
-  const fmtDelta = p => p == null ? '—' : (p >= 0 ? '+' : '') + p.toFixed(1) + '%'
 
   const L = []
   L.push(`## ${title}\n`)
@@ -382,7 +380,7 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     }
     L.push('')
     L.push(`### Speed: ${base} vs ${candidate} (lower = faster; metric is mmproj-encode on desktop, TTFT on mobile)\n`)
-    L.push(`| Platform · device | metric | ${base} | ${candidate} | candidate faster |`)
+    L.push(`| Platform · device | metric | ${base} | ${candidate} | Δ ms (cand−base, −=faster) |`)
     L.push('|---|---|---|---|---|')
     for (const host of hosts) {
       for (const dv of devs) {
@@ -394,7 +392,10 @@ function build (rows, vision, meta, provText, title, opts = {}) {
         const bv = useEnc ? (b && b.ve) : (b && b.ttft)
         const cv = useEnc ? (c && c.ve) : (c && c.ttft)
         const d = useEnc ? 1 : 0
-        L.push(`| ${host || '—'} · ${dv.toUpperCase()} | ${metric} | ${fmtNum(bv, d)} | ${fmtNum(cv, d)} | ${fmtDelta(pctFaster(bv, cv))} |`)
+        // Absolute ms delta — robust near zero, unlike a "% faster" that explodes when
+        // the baseline is a few ms (e.g. GPU mmproj-encode).
+        const dms = (bv != null && cv != null) ? cv - bv : null
+        L.push(`| ${host || '—'} · ${dv.toUpperCase()} | ${metric} | ${fmtNum(bv, d)} | ${fmtNum(cv, d)} | ${dms == null ? '—' : (dms >= 0 ? '+' : '') + dms.toFixed(d)} |`)
       }
     }
     L.push('')

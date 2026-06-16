@@ -160,24 +160,25 @@ module.exports = {
   // on macmini, timing-probe elsewhere). Consumed by methodology.cjs.
   methodology: { warmupBlocks: 1, measuredBlocks: 3, statistic: 'median', interleave: true, stability: 'auto' },
 
-  // ════════════════════════ PRESET — how much is run ════════════════════════
-  // A preset is purely the run size (tasks × samples × repeats); it is independent of
-  // the mode. The fallback on every target when QVAC_VLM_PRESET is unset (the workflow
-  // sets it everywhere, incl. phones via the pushed device config). Per-field env
-  // overrides:
+  // ════════════════════════ PRESET — which tasks run ════════════════════════
+  // A preset selects a TASK GROUP (and the run size). The fallback on every target
+  // when QVAC_VLM_PRESET is unset (the workflow sets it everywhere, incl. phones via
+  // the pushed device config). Per-field env overrides:
   //   QVAC_VLM_SAMPLES→samplesPerTask · QVAC_VLM_REPEATS→repeats
   //   QVAC_VLM_DEVICES→devices (csv) · QVAC_VLM_TASKS→tasks (csv)
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
-  defaultPreset: 'base',
+  defaultPreset: 'full',
 
+  // The two task groups (cognitive = VQA reasoning, ocr = text recognition). Kept here
+  // so a preset can run one group in isolation (e.g. for the mobile session budget).
   presets: {
-    // smoke — first task of the active scenario, 1 image, 1 repeat: a single
-    // inference per config (wiring check). maxTasks (not a task list) so it
-    // works under any task set, not just the VQA tasks.
+    // smoke — first task only, 1 image: a single inference per config (wiring check).
     smoke: { tasks: null, maxTasks: 1, samplesPerTask: 1, repeats: 1, devices: null },
-    // base — DEFAULT eval: all the active scenario's tasks × 3 samples × 1 repeat.
-    base: { tasks: null, samplesPerTask: 3, repeats: 1, devices: null },
-    // full — all scenario tasks × 5 samples × 1 repeat (the complete fixture).
+    // cognitive — the 5 VQA reasoning tasks × 5 samples.
+    cognitive: { tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d'], samplesPerTask: 5, repeats: 1, devices: null },
+    // ocr — the OCR text-recognition tasks × 5 samples (lighter; fits the mobile session window).
+    ocr: { tasks: ['ocr-small', 'ocr-page'], samplesPerTask: 5, repeats: 1, devices: null },
+    // full — cognitive + ocr (all tasks) × 5 samples (the complete fixture).
     full: { tasks: null, samplesPerTask: 5, repeats: 1, devices: null }
   }
 }
