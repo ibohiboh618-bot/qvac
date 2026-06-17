@@ -1,0 +1,74 @@
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -5074,6 +5074,71 @@
+         embeds.uncond.c_vector = latents.clip_vision_output;
+     }
+ 
++    {
++        // [COND-DIAG] host-side text-conditioning (Gemma -> embeddings-connectors)
++        // stats + env-gated dump/load, to isolate the text encoder's cross-backend
++        // contribution from the DiT denoiser. Raw format: int64 numel then float32.
++        auto cond_diag_stats = [](const char* stage, const sd::Tensor<float>& t) {
++            int64_t n = t.numel();
++            if (n <= 0) {
++                return;
++            }
++            const float* d = t.data();
++            double sum = 0.0, sumsq = 0.0;
++            float mn = d[0], mx = d[0];
++            for (int64_t i = 0; i < n; ++i) {
++                double v = (double)d[i];
++                sum += v;
++                sumsq += v * v;
++                if (d[i] < mn) mn = d[i];
++                if (d[i] > mx) mx = d[i];
++            }
++            fprintf(stderr,
++                    "[COND-DIAG] stage=%s numel=%lld mean=%.8f l2=%.6f min=%.6f max=%.6f\n",
++                    stage, (long long)n, sum / (double)n, std::sqrt(sumsq), (double)mn, (double)mx);
++            fflush(stderr);
++        };
++        cond_diag_stats("cond", embeds.cond.c_crossattn);
++        if (!embeds.uncond.c_crossattn.empty()) {
++            cond_diag_stats("uncond", embeds.uncond.c_crossattn);
++        }
++        const char* cond_dump = getenv("LTX_DUMP_COND");
++        if (cond_dump != nullptr) {
++            FILE* df = fopen(cond_dump, "wb");
++            if (df != nullptr) {
++                int64_t n = embeds.cond.c_crossattn.numel();
++                fwrite(&n, sizeof(n), 1, df);
++                fwrite(embeds.cond.c_crossattn.data(), sizeof(float), (size_t)n, df);
++                fclose(df);
++                fprintf(stderr, "[COND-DIAG] dumped cond c_crossattn numel=%lld -> %s\n",
++                        (long long)n, cond_dump);
++            } else {
++                fprintf(stderr, "[COND-DIAG] failed to open dump path %s\n", cond_dump);
++            }
++            fflush(stderr);
++        }
++        const char* cond_load = getenv("LTX_LOAD_COND");
++        if (cond_load != nullptr) {
++            FILE* lf = fopen(cond_load, "rb");
++            if (lf != nullptr) {
++                int64_t n = 0;
++                if (fread(&n, sizeof(n), 1, lf) == 1 && n == embeds.cond.c_crossattn.numel()) {
++                    size_t got = fread(embeds.cond.c_crossattn.data(), sizeof(float), (size_t)n, lf);
++                    fprintf(stderr, "[COND-DIAG] loaded cond c_crossattn numel=%lld read=%zu <- %s\n",
++                            (long long)n, got, cond_load);
++                } else {
++                    fprintf(stderr,
++                            "[COND-DIAG] cond mismatch file=%lld expected=%lld; keeping computed cond\n",
++                            (long long)n, (long long)embeds.cond.c_crossattn.numel());
++                }
++                fclose(lf);
++            } else {
++                fprintf(stderr, "[COND-DIAG] failed to open load path %s\n", cond_load);
++            }
++            fflush(stderr);
++        }
++    }
++
+     int64_t t1 = ggml_time_ms();
+     LOG_INFO("get_learned_condition completed, taking %.2fs", (t1 - prepare_start_ms) * 1.0f / 1000);
+ 
