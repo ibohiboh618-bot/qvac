@@ -2,8 +2,8 @@
 #
 # remote-update.sh — deploy the registry-server package onto a single node.
 #
-# Runs ON a registry node, executed as the run-as-user (e.g. `work`) via
-# `sudo su -` after the SA logs in over `gcloud compute ssh --tunnel-through-iap`.
+# Runs ON a registry node, executed as the run-as-user via `sudo su -` after the
+# SA logs in over `gcloud compute ssh --tunnel-through-iap`.
 #
 # Modes (env MODE):
 #   live      (default) checkout the pinned commit, npm install, build:spec,

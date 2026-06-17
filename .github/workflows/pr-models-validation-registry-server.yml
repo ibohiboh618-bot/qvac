@@ -298,7 +298,7 @@ jobs:
           set -euo pipefail
           name="$(printf '%s' "$INSTANCES_JSON" | jq -r ".[$IDX].name")"
           zone="$(printf '%s' "$INSTANCES_JSON" | jq -r ".[$IDX].zone")"
-          user="${RUN_AS_USER:-work}"
+          user="${RUN_AS_USER:?REGISTRY_NODE_RUN_AS_USER secret is not set}"
           for v in "$name" "$zone" "$user" "$(hostname)" "$(whoami)" "${RUNNER_NAME:-}"; do
             [ -n "$v" ] && echo "::add-mask::$v"
           done

@@ -24,12 +24,11 @@ inputs:
     description: "Service account email CI impersonates for deploy"
     required: true
   repo-path:
-    description: "Path of the git checkout on the node — absolute (e.g. /home/work/qvac) or relative to the run-as-user's home (e.g. qvac)"
+    description: "Path of the git checkout on the node (absolute, or relative to the run-as-user's home)"
     required: true
   run-as-user:
-    description: "User that owns the git checkout and pm2 process; the SA's OS Login session sudo's to this user (pm2 is per-user)"
-    required: false
-    default: "work"
+    description: "User that owns the git checkout and the per-user pm2 process; the login session sudo's to this user"
+    required: true
   deploy-sha:
     description: "Exact commit SHA to deploy"
     required: true
