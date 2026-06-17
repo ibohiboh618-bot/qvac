@@ -240,7 +240,10 @@ function benchmarkModel (modelName, quant) {
                     embPerSecStd: stdOf(embPerSecValues),
                     cosine,
                     inputTokens,
-                    sampleCount: ppTpsValues.length,
+                    // Richest series: ppTPS can be null on a zero-prefill-time
+                    // edge while latency is still valid, so don't let it under-
+                    // report the sample count.
+                    sampleCount: Math.max(ppTpsValues.length, latencyValues.length, embPerSecValues.length),
                     status: 'ok',
                     model: `${spec.id}-${quant}`
                   }))
