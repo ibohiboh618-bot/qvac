@@ -9,6 +9,10 @@
 #   live      (default) checkout the pinned commit, npm install, build:spec,
 #             pm2 reload, then block until the node reports indexer status
 #   dry-run   reachability/preflight only — no checkout/reload, no mutation
+#   rehearse  prove the full mechanics in an ISOLATED throwaway clone + a
+#             throwaway pm2 process (clone, npm install, build:spec, pm2
+#             start/stop), then clean up. The live repo and live pm2 process
+#             are never touched.
 #
 # Configuration via environment variables (set on the ssh command line) so no
 # secret or value is interpolated into a logged shell string:
@@ -19,7 +23,8 @@
 #   PM2_PROCESS            pm2 process name (default: registry)
 #   METRICS_PORT          local Prometheus port to health-check (default: 9210)
 #   HEALTH_TIMEOUT_SECONDS time to wait for indexer status (default: 120)
-#   MODE                  live | dry-run (default: live)
+#   MODE                  live | dry-run | rehearse (default: live)
+#   REHEARSAL_DIR         throwaway clone dir for rehearse (default: $HOME/qvac-deploy-rehearsal)
 #
 set -euo pipefail
 
@@ -30,6 +35,7 @@ PM2_PROCESS="${PM2_PROCESS:-registry}"
 METRICS_PORT="${METRICS_PORT:-9210}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-120}"
 MODE="${MODE:-live}"
+REHEARSAL_DIR="${REHEARSAL_DIR:-$HOME/qvac-deploy-rehearsal}"
 
 log() { printf '[remote-update] %s\n' "$*"; }
 fail() { printf '[remote-update] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -55,6 +61,65 @@ command -v pm2 >/dev/null || fail "pm2 not found on node"
 command -v curl >/dev/null || fail "curl not found on node"
 
 [ -d "$REPO_PATH/.git" ] || fail "REPO_PATH '$REPO_PATH' is not a git checkout"
+
+# Rehearsal: full mechanics in isolation, live repo + live pm2 untouched.
+run_rehearsal() {
+  local test_app="${PM2_PROCESS}-rehearsal"
+
+  # Safety: never operate on the live repo or the live pm2 process.
+  [ "$REHEARSAL_DIR" != "$REPO_PATH" ] || fail "REHEARSAL_DIR must not equal REPO_PATH"
+  case "$REHEARSAL_DIR" in
+    *rehearsal*) : ;;
+    *) fail "REHEARSAL_DIR must contain 'rehearsal' as a guard: $REHEARSAL_DIR" ;;
+  esac
+  [ "$test_app" != "$PM2_PROCESS" ] || fail "rehearsal pm2 name collides with the live process"
+
+  # Always clean up the throwaway clone + pm2 process, even on failure.
+  # shellcheck disable=SC2064
+  trap "pm2 delete '$test_app' >/dev/null 2>&1 || true; rm -rf '$REHEARSAL_DIR'" EXIT
+
+  log "REHEARSAL on $(hostname) — isolated; live '$PM2_PROCESS' and '$REPO_PATH' are not touched"
+  log "identity: $(id -un) (uid $(id -u)), home $HOME"
+
+  log "Cloning into $REHEARSAL_DIR and checking out $DEPLOY_SHA"
+  rm -rf "$REHEARSAL_DIR"
+  git clone --quiet "$REPO_PATH" "$REHEARSAL_DIR"
+  # The local clone's 'origin' points at REPO_PATH (a local path), which may not
+  # yet have the deploy SHA. Fetch the exact commit from the real upstream — this
+  # also validates the node's network reachability to GitHub.
+  local origin_url
+  origin_url="$(git -C "$REPO_PATH" remote get-url origin)"
+  git -C "$REHEARSAL_DIR" fetch --quiet "$origin_url" "$DEPLOY_SHA"
+  git -C "$REHEARSAL_DIR" checkout --quiet --force "$DEPLOY_SHA"
+  log "Checked out $(git -C "$REHEARSAL_DIR" rev-parse --short HEAD) in throwaway clone"
+
+  log "npm install (in rehearsal clone — validates npm reachability)"
+  ( cd "$REHEARSAL_DIR/$PKG_SUBDIR" && npm install --no-audit --no-fund )
+  log "npm run build:spec (in rehearsal clone)"
+  ( cd "$REHEARSAL_DIR/$PKG_SUBDIR" && npm run build:spec )
+
+  log "pm2 lifecycle test with throwaway process '$test_app'"
+  printf 'setInterval(function () {}, 1000)\n' > "$REHEARSAL_DIR/_rehearsal_keepalive.js"
+  pm2 delete "$test_app" >/dev/null 2>&1 || true
+  pm2 start "$REHEARSAL_DIR/_rehearsal_keepalive.js" --name "$test_app" >/dev/null
+  sleep 2
+  if pm2 jlist | grep -q "\"name\":\"$test_app\""; then
+    log "pm2 start: ok"
+  else
+    fail "pm2 failed to start throwaway process '$test_app'"
+  fi
+  pm2 stop "$test_app" >/dev/null
+  pm2 delete "$test_app" >/dev/null
+  log "pm2 stop + delete: ok"
+
+  log "REHEARSAL complete — clone, npm install, build:spec and pm2 start/stop all succeeded; cleaned up."
+}
+
+if [ "$MODE" = "rehearse" ]; then
+  run_rehearsal
+  exit 0
+fi
+
 cd "$REPO_PATH"
 
 # Fail-stop on drift: a deploy node's tracked tree must be clean, otherwise a
