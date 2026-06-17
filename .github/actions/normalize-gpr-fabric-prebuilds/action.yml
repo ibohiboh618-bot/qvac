@@ -44,6 +44,29 @@ runs:
         pkg_name="$(
           node -e 'console.log(require("./node_modules/@qvac/fabric/package.json").name)'
         )"
+
+        # The GPR publish renames @qvac/fabric -> @tetherto/fabric-mono in
+        # package.json but does NOT rebuild, so the on-disk .bare modules keep
+        # their build-time names (qvac__fabric.bare / qvac__fabric@0.bare).
+        # cmake-bare derives the consumer's Windows delay-load directive from the
+        # installed package name; with the GPR name it emits
+        # /DELAYLOAD:tetherto__fabric-mono@0.bare, which matches none of the
+        # frozen qvac__fabric@0.bare imports carried by the import library. The
+        # directive is ignored, the runtime dependency is linked eagerly, and
+        # LoadLibrary(<consumer>.bare) fails at addon load on Windows ("The
+        # specified module could not be found"). Restore the build-time name so
+        # cmake-bare derives qvac__fabric for both the prebuild lookup and the
+        # delay-load directive. (Linux/macOS are unaffected: they bind by the
+        # baked SONAME qvac__fabric@0.bare regardless of the npm name.)
+        if [ "${pkg_name}" != "@qvac/fabric" ]; then
+          echo "Restoring fabric package name ${pkg_name} -> @qvac/fabric"
+          fabric_pkg="${fabric_root}/package.json"
+          tmp_pkg="$(mktemp)"
+          node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); j.name="@qvac/fabric"; fs.writeFileSync(process.argv[2], JSON.stringify(j, null, 2) + "\n")' "${fabric_pkg}" "${tmp_pkg}"
+          mv "${tmp_pkg}" "${fabric_pkg}"
+          pkg_name="@qvac/fabric"
+        fi
+
         expected_bare="$(
           node -e "const n=process.argv[1]; console.log(n.replace(/^@/,'').replace('/','__') + '.bare')" "${pkg_name}"
         )"
