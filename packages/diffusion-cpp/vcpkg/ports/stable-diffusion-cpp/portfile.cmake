@@ -12,6 +12,7 @@ vcpkg_from_git(
     PATCHES
         0001-attn-diag-logging.patch
         0002-latent-diag-logging.patch
+        0003-vae-decode-diag-logging.patch
 )
 
 set(SD_FLASH_ATTN OFF)
