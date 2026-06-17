@@ -8,10 +8,10 @@ const {
   round,
   similarityStats,
   cartesianProduct,
-  average
+  average,
+  stddev
 } = require('./math')
-
-const INPUT_MODES = ['single', 'array']
+const { INPUT_MODES } = require('./_sweep-grid')
 
 function createAddonRuntimeLogger (debugEnabled) {
   if (!debugEnabled) {
@@ -38,6 +38,19 @@ function normalizeEmbeddings (rawEmbeddings) {
   return rawEmbeddings[0].map((vector) => Array.from(vector))
 }
 
+// Prefill throughput (ppTPS). The addon only emits tokens_per_second when
+// t_p_eval_ms > 0 (BertModel.cpp), so a sub-millisecond prefill would leave it
+// absent; recompute it from total_tokens/total_time_ms (the same n_p_eval *
+// 1000 / t_p_eval_ms formula) whenever there is measurable prefill time, so a
+// healthy fast run still reports throughput instead of a null.
+function prefillTokensPerSecond (runtimeStats) {
+  if (runtimeStats.tokens_per_second != null) return runtimeStats.tokens_per_second
+  const ms = runtimeStats.total_time_ms
+  const tokens = runtimeStats.total_tokens
+  if (ms != null && ms > 0 && tokens != null) return tokens * 1000 / ms
+  return null
+}
+
 function buildAddonConfig (runtimeConfig, options = {}) {
   const debugEnabled = !!options.debugEnabled
   const config = { verbosity: debugEnabled ? '2' : '0' }
@@ -57,9 +70,14 @@ function checkModelExists (modelDir, modelName) {
   return fs.existsSync(path.join(modelDir, modelName))
 }
 
+// Highest-fidelity available build, used as the cosine-similarity reference:
+// F16 where the model ships it, else the best available quant.
+const FIDELITY_ORDER = ['F16', 'Q8_0', 'Q6_K', 'Q4_K_M', 'Q4_1', 'Q4_0']
+
 function buildCases (modelDef, sweep) {
-  const baseQuant = modelDef.quantizations[0]
   const defaults = modelDef.defaults
+  const baseQuant = FIDELITY_ORDER.find((quant) => !!resolveModelName(modelDef, quant)) ||
+    modelDef.quantizations[0]
   if (baseQuant == null) {
     throw new Error(`No baseline quantization configured for model "${modelDef.id}"`)
   }
@@ -87,14 +105,13 @@ function buildCases (modelDef, sweep) {
     supportedQuants,
     sweep.device,
     sweep.batchSize,
-    sweep.noMmap,
     sweep.flashAttn
   ])
 
-  for (const [quantization, device, batchSize, noMmap, flashAttn] of combos) {
+  for (const [quantization, device, batchSize, flashAttn] of combos) {
     for (const inputMode of INPUT_MODES) {
       cases.push({
-        caseId: `${modelDef.id}__q=${quantization}__dev=${device}__bs=${batchSize}__mmap=${noMmap ? 'off' : 'on'}__fa=${flashAttn}__input=${inputMode}`,
+        caseId: `${modelDef.id}__q=${quantization}__dev=${device}__bs=${batchSize}__fa=${flashAttn}__input=${inputMode}`,
         parameter: 'full-grid',
         quantization,
         modelName: resolveModelName(modelDef, quantization),
@@ -102,7 +119,6 @@ function buildCases (modelDef, sweep) {
           ...defaults,
           device,
           batchSize,
-          noMmap,
           flashAttn
         },
         inputMode,
@@ -115,9 +131,14 @@ function buildCases (modelDef, sweep) {
   return cases
 }
 
+// Embedding is a single forward pass (prefill only), so every metric here is a
+// prefill or end-to-end quantity — there is no decode phase. The renderer reads:
+//   ppTpsMean/ppTpsStd      prefill tokens/sec (addon tokens_per_second)
+//   latencyMsMean/latencyMsStd  prefill time in ms (addon total_time_ms)
+//   embPerSecMean/embPerSecStd  embeddings/sec = sequences / (prefill_ms / 1000)
+//   inputTokens             tokens fed to the model for this case
+// loadMs/runMs/unloadMs are kept for the legacy .jsonl/.md reporters.
 function aggregateRunMetrics (runMetrics) {
-  const runMsValues = runMetrics.map((x) => x.runMs)
-  const tpsValues = runMetrics.map((x) => x.tps).filter((x) => x != null)
   const repeatsSucceeded = runMetrics.length
   if (repeatsSucceeded === 0) {
     return {
@@ -125,17 +146,41 @@ function aggregateRunMetrics (runMetrics) {
       loadMs: null,
       runMs: null,
       unloadMs: null,
-      tps: null
+      tps: null,
+      ppTpsMean: null,
+      ppTpsStd: null,
+      latencyMsMean: null,
+      latencyMsStd: null,
+      embPerSecMean: null,
+      embPerSecStd: null,
+      inputTokens: null
     }
   }
-  const runMsTotal = runMsValues.reduce((acc, value) => acc + value, 0)
+
+  const wallMsValues = runMetrics.map((x) => x.wallMs).filter((x) => x != null)
+  const prefillMsValues = runMetrics.map((x) => x.prefillMs).filter((x) => x != null)
+  const ppTpsValues = runMetrics.map((x) => x.ppTps).filter((x) => x != null)
+  // One embeddings/sec sample per repeat, from that repeat's own prefill time.
+  const embPerSecValues = runMetrics
+    .map((x) => (x.prefillMs != null && x.prefillMs > 0 && x.embeddingCount != null)
+      ? x.embeddingCount / (x.prefillMs / 1000)
+      : null)
+    .filter((x) => x != null)
+  const inputTokens = runMetrics.find((x) => x.totalTokens != null)?.totalTokens ?? null
 
   return {
     repeats: repeatsSucceeded,
     loadMs: round(runMetrics[0].loadMs, 3),
-    runMs: round(runMsTotal / repeatsSucceeded, 3),
+    runMs: wallMsValues.length ? round(average(wallMsValues), 3) : null,
     unloadMs: round(runMetrics[0].unloadMs, 3),
-    tps: tpsValues.length ? round(average(tpsValues), 3) : null
+    tps: ppTpsValues.length ? round(average(ppTpsValues), 3) : null,
+    ppTpsMean: ppTpsValues.length ? round(average(ppTpsValues), 3) : null,
+    ppTpsStd: ppTpsValues.length ? round(stddev(ppTpsValues), 3) : null,
+    latencyMsMean: prefillMsValues.length ? round(average(prefillMsValues), 3) : null,
+    latencyMsStd: prefillMsValues.length ? round(stddev(prefillMsValues), 3) : null,
+    embPerSecMean: embPerSecValues.length ? round(average(embPerSecValues), 3) : null,
+    embPerSecStd: embPerSecValues.length ? round(stddev(embPerSecValues), 3) : null,
+    inputTokens
   }
 }
 
@@ -166,16 +211,26 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
 
     for (let repeat = 1; repeat <= repeats; repeat++) {
       try {
+        const runStart = process.hrtime()
         const response = await model.run(inputs)
         const rawEmbeddings = await response.await()
+        const wallMs = elapsedMs(runStart)
         const runtimeStats = response.stats
+        const embeddings = normalizeEmbeddings(rawEmbeddings)
         if (!firstEmbeddings) {
-          firstEmbeddings = normalizeEmbeddings(rawEmbeddings)
+          firstEmbeddings = embeddings
         }
+        // ppTPS = prefill tokens/sec; prefillMs = prefill time; wallMs = end-to-end
+        // run latency; embeddingCount = sequences embedded in this run (used to
+        // derive embeddings/sec). Embedding is a single forward pass, so there is
+        // no decode phase and no generated-token metric.
         runMetrics.push({
           loadMs,
-          runMs: runtimeStats.total_time_ms,
-          tps: runtimeStats.tokens_per_second,
+          prefillMs: runtimeStats.total_time_ms,
+          wallMs,
+          ppTps: prefillTokensPerSecond(runtimeStats),
+          totalTokens: runtimeStats.total_tokens,
+          embeddingCount: embeddings.length,
           unloadMs: null
         })
       } catch (error) {

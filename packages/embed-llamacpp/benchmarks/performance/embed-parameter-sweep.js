@@ -11,7 +11,7 @@ const {
   PARAMETER_SWEEP
 } = require('./embed-parameter-sweep.config')
 const { createProgressReporter } = require('./progress')
-const { tsFileStamp, toMarkdown, toJsonLines } = require('./reporters')
+const { tsFileStamp, toMarkdown, toReportJson, toJsonLines } = require('./reporters')
 const { buildCases, runModelCases } = require('./case-runner')
 
 function loadLocalEmbedAddon () {
@@ -70,6 +70,22 @@ function parseArgs (argv) {
   return parsed
 }
 
+// --models <comma-list> limits the sweep to those manifest ids (used for a
+// quick CI plumbing check); empty runs the full manifest. Unknown ids fail
+// loudly rather than silently running a smaller grid than intended.
+function selectModels (allModels, value) {
+  const ids = String(value || '').split(',').map((x) => x.trim()).filter(Boolean)
+  if (ids.length === 0) return allModels
+  const missing = ids.filter((id) => !allModels.some((m) => m.id === id))
+  if (missing.length) {
+    throw new Error(
+      `Unknown model id(s) in --models: ${missing.join(', ')}. ` +
+      `Available: ${allModels.map((m) => m.id).join(', ')}`
+    )
+  }
+  return allModels.filter((m) => ids.includes(m.id))
+}
+
 function parseRepeats (value) {
   if (value == null) return DEFAULT_REPEATS
   const repeats = Number(value)
@@ -95,7 +111,7 @@ async function main () {
     )
   }
   const inputsByBatchSize = JSON.parse(fs.readFileSync(inputsFilePath, 'utf8'))
-  const selectedModels = MODELS
+  const selectedModels = selectModels(MODELS, args.models)
 
   fs.mkdirSync(resultsDir, { recursive: true })
   const report = {
@@ -134,11 +150,16 @@ async function main () {
 
   report.finishedAt = new Date().toISOString()
   const stamp = tsFileStamp()
+  const jsonPath = path.join(resultsDir, `embed-parameter-sweep-${stamp}.json`)
   const jsonlPath = path.join(resultsDir, `embed-parameter-sweep-${stamp}.jsonl`)
   const mdPath = path.join(resultsDir, `embed-parameter-sweep-${stamp}.md`)
+  fs.writeFileSync(jsonPath, JSON.stringify(toReportJson(report), null, 2))
   fs.writeFileSync(jsonlPath, toJsonLines(report))
   fs.writeFileSync(mdPath, toMarkdown(report))
   debugLogger.log('\nDone.')
+  debugLogger.log(`JSON: ${jsonPath}`)
+  debugLogger.log(`JSONL: ${jsonlPath}`)
+  debugLogger.log(`MD:   ${mdPath}`)
 }
 
 main().catch((error) => {

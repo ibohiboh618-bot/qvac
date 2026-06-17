@@ -56,6 +56,37 @@ function toMarkdown (report) {
   return `${lines.join('\n')}\n`
 }
 
+// Per-run JSON the renderer ingests: models[].cases[], each case carrying
+// caseId/parameter/quantization/modelName/inputMode/runtimeConfig/isBaseline/
+// metrics/similarity/status/repeatsAttempted/repeatsSucceeded/error.
+function toReportJson (report) {
+  return {
+    startedAt: report.startedAt,
+    finishedAt: report.finishedAt,
+    repeats: report.repeats,
+    models: report.models.map((model) => ({
+      modelId: model.modelId,
+      source: model.source,
+      modelDir: model.modelDir,
+      cases: model.cases.map((item) => ({
+        caseId: item.caseId,
+        parameter: item.parameter,
+        quantization: item.quantization,
+        modelName: item.modelName,
+        inputMode: item.inputMode,
+        runtimeConfig: item.runtimeConfig,
+        isBaseline: item.isBaseline,
+        metrics: item.metrics,
+        similarity: item.similarity,
+        status: item.status,
+        repeatsAttempted: item.repeatsAttempted,
+        repeatsSucceeded: item.repeatsSucceeded,
+        error: item.error
+      }))
+    }))
+  }
+}
+
 function toJsonLines (report) {
   const lines = []
   for (const model of report.models) {
@@ -89,5 +120,6 @@ function toJsonLines (report) {
 module.exports = {
   tsFileStamp,
   toMarkdown,
+  toReportJson,
   toJsonLines
 }

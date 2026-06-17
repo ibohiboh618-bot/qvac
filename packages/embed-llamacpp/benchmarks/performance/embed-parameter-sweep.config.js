@@ -2,6 +2,7 @@
 
 const fs = require('bare-fs')
 const path = require('bare-path')
+const { PARAMETER_SWEEP } = require('./_sweep-grid')
 
 const DEFAULT_RESULTS_DIR = path.resolve(__dirname, 'results', 'parameter-sweep')
 const DEFAULT_MODELS_DIR = path.resolve(__dirname, 'models')
@@ -10,13 +11,16 @@ const RESOLVED_MODELS_PATH = path.resolve(__dirname, 'resolved-models.json')
 const DEFAULT_INPUTS_FILE = path.resolve(__dirname, 'inputs.json')
 const DEFAULT_REPEATS = 5
 
-// Benchmark-controlled runtime defaults used as the baseline reference.
+// Baseline reference config (cosine-similarity is measured against its
+// embeddings): CPU, flash-attn off, batch-size 256. The reference quantization
+// is the highest-fidelity build per model (F16 where available, else the best
+// quant) — chosen in buildCases, not here.
 const BENCH_DEFAULT_RUNTIME = {
-  device: 'gpu',
-  batchSize: 512,
+  device: 'cpu',
+  batchSize: 256,
   noMmap: false,
   flashAttn: 'off',
-  ngl: 99
+  ngl: 0
 }
 
 // Optional per-model runtime overrides. Only add entries when a model needs
@@ -89,13 +93,9 @@ function loadModelsFromManifest () {
 
 const MODELS = loadModelsFromManifest()
 
-const PARAMETER_SWEEP = {
-  quantization: ['Q4_0', 'Q4_K_M', 'Q8_0', 'F16'],
-  device: ['cpu', 'gpu'],
-  batchSize: [256, 512, 1024, 2048],
-  noMmap: [false, true],
-  flashAttn: ['off', 'on']
-}
+// Sweep axes (PARAMETER_SWEEP) live in ./_sweep-grid so the Node renderer can
+// share them as its coverage denominator without loading this bare-fs module.
+// ubatch-size and mmap are not swept (mmap is held at its default).
 
 module.exports = {
   DEFAULT_RESULTS_DIR,
