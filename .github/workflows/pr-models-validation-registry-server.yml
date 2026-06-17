@@ -18,11 +18,10 @@ on:
   workflow_dispatch:
     inputs:
       deploy_mode:
-        description: "Manual-run deploy mode: dry-run (preflight only), rehearse (isolated clone + throwaway pm2 process), or live. sync-staging runs only for live."
+        description: "Manual-run deploy mode: dry-run (preflight only) or live. sync-staging runs only for live."
         type: choice
         options:
           - dry-run
-          - rehearse
           - live
         default: dry-run
 
@@ -269,7 +268,7 @@ jobs:
       - label-gate
       - resolve-deploy-targets
     if: |-
-      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (needs.detect-changes.outputs.models_changed == 'true' || github.event_name == 'workflow_dispatch') && (needs.validate-json.result == 'success' || needs.validate-json.result == 'skipped') && ((needs.test.result == 'success' || needs.test.result == 'skipped') || github.event.inputs.deploy_mode == 'dry-run' || github.event.inputs.deploy_mode == 'rehearse') && needs.resolve-deploy-targets.result == 'success')
+      needs.label-gate.outputs.authorised == 'true' && (always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (needs.detect-changes.outputs.models_changed == 'true' || github.event_name == 'workflow_dispatch') && (needs.validate-json.result == 'success' || needs.validate-json.result == 'skipped') && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.resolve-deploy-targets.result == 'success')
     runs-on: qvac-ubuntu2204-x64
     timeout-minutes: 15
     environment: release

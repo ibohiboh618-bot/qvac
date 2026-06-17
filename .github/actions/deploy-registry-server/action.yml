@@ -50,7 +50,7 @@ inputs:
     required: false
     default: "120"
   mode:
-    description: "live (checkout + reload), dry-run (preflight only), or rehearse (isolated clone + throwaway pm2 process; live process untouched)"
+    description: "live (checkout + reload) or dry-run (preflight only, no mutation)"
     required: false
     default: "live"
 
@@ -115,7 +115,7 @@ runs:
         _check deploy-sha     "$DEPLOY_SHA"              '^[0-9a-f]{7,40}$'
         _check metrics-port   "$METRICS_PORT"            '^[0-9]+$'
         _check health-timeout "$HEALTH_TIMEOUT_SECONDS"  '^[0-9]+$'
-        _check mode           "$MODE"                    '^(live|dry-run|rehearse)$'
+        _check mode           "$MODE"                    '^(live|dry-run)$'
 
         # Short-lived SSH material on this persistent (and possibly shared)
         # self-hosted runner: generate the keypair in a per-job temp dir that is
