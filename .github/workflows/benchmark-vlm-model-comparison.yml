@@ -115,7 +115,7 @@ jobs:
           echo "repository=$repo" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
       # Resolve the mobile timeout (minutes) so matrix-mobile can forward it to the
-      # reusable workflow's mocha_timeout_ms / android_per_test_timeout_minutes inputs.
+      # reusable workflow's mocha_timeout_ms / per_test_timeout_minutes inputs.
       # Precedence: workflow input > config.cjs `mobileTimeoutMin` > '' (pipeline default).
       - name: Checkout benchmark config (mobile-timeout default)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
@@ -583,9 +583,11 @@ jobs:
       qvac_perf_only: false
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
       # Mobile timeout (Option 2): empty = the reusable workflow's defaults
-      # (35-min Mocha / 30-min Android per-test) are kept untouched.
+      # (35-min Mocha / Android 30-min / iOS 20-min per-test) are kept untouched.
+      # per_test_timeout_minutes is the platform-neutral knob (raises the
+      # generated-spec ceiling on Android AND iOS) — needed for the iPhone leg.
       mocha_timeout_ms: ${{ needs.context.outputs.mobile_mocha_ms }}
-      android_per_test_timeout_minutes: ${{ needs.context.outputs.mobile_pertest_min }}
+      per_test_timeout_minutes: ${{ needs.context.outputs.mobile_pertest_min }}
 
   # ── Matrix mode: combine ───────────────────────────────────────────
   # Aggregates [VLMROW]/[VLMSEG]/[VLMMETA] markers from every matrix log
