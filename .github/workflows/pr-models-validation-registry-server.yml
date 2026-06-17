@@ -221,10 +221,11 @@ jobs:
         shell: bash
         run: npm install && npm run lint && npm run test:unit
 
-  # Resolve the list of staging nodes to deploy to. vars.REGISTRY_STAGING_INSTANCES
-  # is a JSON array of GCE instance names, e.g. ["registry-stg-01","registry-stg-02"].
-  # Fails loudly if unset so a misconfiguration blocks the deploy rather than
-  # silently skipping it.
+  # Resolve the deploy targets into opaque matrix indices. The instance list is a
+  # repository SECRET (secrets.REGISTRY_STAGING_INSTANCES — a JSON array of
+  # {name,zone}) so node names/zones never appear in public logs, and the matrix
+  # uses bare indices so they never appear in job names either. Fails loudly if
+  # unset so a misconfiguration blocks the deploy rather than silently skipping.
   resolve-deploy-targets:
     needs: [authorize, detect-changes, label-gate]
     if: |-
@@ -235,24 +236,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      instances: ${{ steps.targets.outputs.instances }}
+      indices: ${{ steps.targets.outputs.indices }}
     steps:
-      - name: Resolve staging instances
+      - name: Resolve staging target count
         id: targets
         shell: bash
         env:
-          INSTANCES_JSON: ${{ vars.REGISTRY_STAGING_INSTANCES }}
+          INSTANCES_JSON: ${{ secrets.REGISTRY_STAGING_INSTANCES }}
         run: |
           set -euo pipefail
           if [ -z "${INSTANCES_JSON:-}" ]; then
-            echo "::error::vars.REGISTRY_STAGING_INSTANCES is not set (expected a JSON array of GCE instance names)"
+            echo "::error::secrets.REGISTRY_STAGING_INSTANCES is not set (JSON array of {name,zone})"
             exit 1
           fi
-          if ! echo "$INSTANCES_JSON" | jq -e 'type == "array" and length > 0 and all(.[]; has("name") and has("zone"))' >/dev/null; then
-            echo "::error::vars.REGISTRY_STAGING_INSTANCES must be a non-empty JSON array of {\"name\",\"zone\"} objects"
+          if ! printf '%s' "$INSTANCES_JSON" | jq -e 'type == "array" and length > 0 and all(.[]; has("name") and has("zone"))' >/dev/null; then
+            echo "::error::secrets.REGISTRY_STAGING_INSTANCES must be a non-empty JSON array of {name,zone}"
             exit 1
           fi
-          echo "instances=$(echo "$INSTANCES_JSON" | jq -c .)" >> "$GITHUB_OUTPUT"
+          # Emit opaque indices only — never node names/zones (public logs).
+          echo "indices=$(printf '%s' "$INSTANCES_JSON" | jq -c '[range(length)]')" >> "$GITHUB_OUTPUT"
 
   # Deploy code + data (incl. licenses) to every staging node BEFORE sync runs,
   # so whichever indexer the sync RPC reaches already knows any new license.
@@ -277,8 +279,36 @@ jobs:
       fail-fast: true
       max-parallel: 1
       matrix:
-        target: ${{ fromJSON(needs.resolve-deploy-targets.outputs.instances || '[]') }}
+        index: ${{ fromJSON(needs.resolve-deploy-targets.outputs.indices || '[]') }}
     steps:
+      # FIRST step: register every infra identifier as a log mask BEFORE any
+      # other step can echo it (checkout paths, gcloud output, remote-script
+      # logs). Node name/zone come from the secret instance list (indexed by the
+      # opaque matrix index); project/repo-path/run-as-user are secrets too. This
+      # keeps the public Actions log free of staging topology.
+      - name: Mask infra identifiers & resolve target
+        id: tgt
+        shell: bash
+        env:
+          INSTANCES_JSON: ${{ secrets.REGISTRY_STAGING_INSTANCES }}
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          RUN_AS_USER: ${{ secrets.REGISTRY_NODE_RUN_AS_USER }}
+          IDX: ${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          name="$(printf '%s' "$INSTANCES_JSON" | jq -r ".[$IDX].name")"
+          zone="$(printf '%s' "$INSTANCES_JSON" | jq -r ".[$IDX].zone")"
+          user="${RUN_AS_USER:-work}"
+          for v in "$name" "$zone" "$user" "$(hostname)" "$(whoami)" "${RUNNER_NAME:-}"; do
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done
+          [ -n "${PROJECT:-}" ] && echo "::add-mask::${name}.c.${PROJECT}.internal"
+          {
+            echo "name=$name"
+            echo "zone=$zone"
+            echo "user=$user"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Manual Workspace Cleanup
         run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
         shell: bash
@@ -287,16 +317,16 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
 
-      - name: Deploy to ${{ matrix.target.name }}
+      - name: Deploy (node index ${{ matrix.index }})
         uses: ./.github/actions/deploy-registry-server
         with:
-          instance: ${{ matrix.target.name }}
-          zone: ${{ matrix.target.zone }}
-          project: ${{ vars.GCP_PROJECT_ID }}
+          instance: ${{ steps.tgt.outputs.name }}
+          zone: ${{ steps.tgt.outputs.zone }}
+          project: ${{ secrets.GCP_PROJECT_ID }}
           workload-identity-provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service-account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-          repo-path: ${{ vars.REGISTRY_NODE_REPO_PATH }}
-          run-as-user: ${{ vars.REGISTRY_NODE_RUN_AS_USER || 'work' }}
+          repo-path: ${{ secrets.REGISTRY_NODE_REPO_PATH }}
+          run-as-user: ${{ steps.tgt.outputs.user }}
           deploy-sha: ${{ github.sha }}
           mode: ${{ github.event.inputs.deploy_mode || 'live' }}
 
