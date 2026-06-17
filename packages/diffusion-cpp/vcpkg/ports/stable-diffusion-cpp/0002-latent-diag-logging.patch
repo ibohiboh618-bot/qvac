@@ -1,0 +1,31 @@
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -2070,6 +2070,28 @@
+                 LOG_WARN("Abort requested by host; stopping sampling");
+                 return {};
+             }
++            {
++                // [LATENT-DIAG] per-step host-side latent statistics, emitted to
++                // compare the denoise trajectory across backends (Vulkan vs Metal).
++                const float* xd = x.data();
++                int64_t xn      = x.numel();
++                double sum = 0.0, sumsq = 0.0;
++                float mn = xn > 0 ? xd[0] : 0.0f;
++                float mx = xn > 0 ? xd[0] : 0.0f;
++                for (int64_t i = 0; i < xn; ++i) {
++                    double v = (double)xd[i];
++                    sum += v;
++                    sumsq += v * v;
++                    if (xd[i] < mn) mn = xd[i];
++                    if (xd[i] > mx) mx = xd[i];
++                }
++                double mean = xn > 0 ? sum / (double)xn : 0.0;
++                double l2   = std::sqrt(sumsq);
++                fprintf(stderr,
++                        "[LATENT-DIAG] step=%d sigma=%.6f numel=%lld mean=%.8f l2=%.6f min=%.6f max=%.6f\n",
++                        step, (double)sigma, (long long)xn, mean, l2, (double)mn, (double)mx);
++                fflush(stderr);
++            }
+             if (step == 1 || step == -1) {
+                 pretty_progress(0, (int)steps, 0);
+             }

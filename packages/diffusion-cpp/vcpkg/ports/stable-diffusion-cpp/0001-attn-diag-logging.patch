@@ -1,0 +1,26 @@
+--- a/src/ggml_extend.hpp
++++ b/src/ggml_extend.hpp
+@@ -1384,6 +1384,23 @@
+         }
+     }
+ 
++    {
++        // [ATTN-DIAG] one-time report of which attention path the active backend
++        // actually selected. Added to confirm Metal vs Vulkan divergence.
++        static bool attn_diag_flash    = false;
++        static bool attn_diag_fallback = false;
++        if (flash_attn && kqv != nullptr && !attn_diag_flash) {
++            attn_diag_flash = true;
++            fprintf(stderr, "[ATTN-DIAG] flash_attn ACTIVE (fused F16 flash_attn_ext) d_head=%ld n_head=%ld L_q=%ld L_k=%ld\n",
++                    (long)d_head, (long)n_head, (long)L_q, (long)L_k); fflush(stderr);
++        }
++        if (flash_attn && kqv == nullptr && !attn_diag_fallback) {
++            attn_diag_fallback = true;
++            fprintf(stderr, "[ATTN-DIAG] flash_attn requested but backend UNSUPPORTED -> FALLBACK to F32 matmul+softmax d_head=%ld n_head=%ld L_q=%ld L_k=%ld\n",
++                    (long)d_head, (long)n_head, (long)L_q, (long)L_k); fflush(stderr);
++        }
++    }
++
+     if (kqv == nullptr) {
+         // if (flash_attn) {
+         //     LOG_DEBUG("fallback to default attention, L_q:%d L_k:%d n_head:%d C:%d d_head:%d N:%d", L_q, L_k, n_head, C, d_head, N);

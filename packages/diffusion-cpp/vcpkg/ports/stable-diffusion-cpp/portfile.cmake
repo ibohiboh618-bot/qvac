@@ -9,6 +9,9 @@ vcpkg_from_git(
     OUT_SOURCE_PATH SOURCE_PATH
     URL "https://github.com/tetherto/qvac-ext-stable-diffusion.cpp.git"
     REF 6a13b9cacc09f29eae7a1fe03603260909f01cf0
+    PATCHES
+        0001-attn-diag-logging.patch
+        0002-latent-diag-logging.patch
 )
 
 set(SD_FLASH_ATTN OFF)
