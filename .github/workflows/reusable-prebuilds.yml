@@ -255,16 +255,6 @@ jobs:
           gpr-token: ${{ secrets.GITHUB_TOKEN }}
           npm-token: ${{ secrets.NPM_TOKEN }}
 
-      - name: Link local @qvac/fabric
-        uses: ./.github/actions/link-local-qvac-fabric
-        with:
-          workdir: ${{ env.WORKDIR }}
-          build-if-missing: "true"
-          platform: ${{ matrix.platform }}
-          arch: ${{ matrix.arch }}
-          tags: ${{ matrix.tags || '' }}
-          flags: ${{ matrix.flags || '' }}
-
       - name: Install npm dependencies
         working-directory: ${{ env.WORKDIR }}
         shell: bash
