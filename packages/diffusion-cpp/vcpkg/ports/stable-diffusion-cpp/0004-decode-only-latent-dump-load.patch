@@ -1,0 +1,50 @@
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -5102,6 +5102,47 @@
+               (int)video_latent.shape()[2],
+               (int)video_latent.shape()[3]);
+     // auto z = sd::load_tensor_from_file_as_tensor<float>("ltx_vae_z.bin");
++    {
++        // [DECODE-ONLY-DIAG] env-gated dump/load of the post-diffusion video latent
++        // so the VAE decode can be compared in isolation across backends. With
++        // LTX_LOAD_LATENT set, both backends decode a bit-identical latent: any
++        // remaining pixel divergence is then purely the decode kernels (else it is
++        // upstream latent drift). Raw format: int64 numel followed by numel float32.
++        const char* dump_path = getenv("LTX_DUMP_LATENT");
++        if (dump_path != nullptr) {
++            FILE* df = fopen(dump_path, "wb");
++            if (df != nullptr) {
++                int64_t n = video_latent.numel();
++                fwrite(&n, sizeof(n), 1, df);
++                fwrite(video_latent.data(), sizeof(float), (size_t)n, df);
++                fclose(df);
++                fprintf(stderr, "[DECODE-ONLY-DIAG] dumped video latent numel=%lld -> %s\n",
++                        (long long)n, dump_path);
++            } else {
++                fprintf(stderr, "[DECODE-ONLY-DIAG] failed to open dump path %s\n", dump_path);
++            }
++            fflush(stderr);
++        }
++        const char* load_path = getenv("LTX_LOAD_LATENT");
++        if (load_path != nullptr) {
++            FILE* lf = fopen(load_path, "rb");
++            if (lf != nullptr) {
++                int64_t n = 0;
++                if (fread(&n, sizeof(n), 1, lf) == 1 && n == video_latent.numel()) {
++                    size_t got = fread(video_latent.data(), sizeof(float), (size_t)n, lf);
++                    fprintf(stderr, "[DECODE-ONLY-DIAG] loaded video latent numel=%lld read=%zu <- %s\n",
++                            (long long)n, got, load_path);
++                } else {
++                    fprintf(stderr, "[DECODE-ONLY-DIAG] latent mismatch file=%lld expected=%lld; keeping computed latent\n",
++                            (long long)n, (long long)video_latent.numel());
++                }
++                fclose(lf);
++            } else {
++                fprintf(stderr, "[DECODE-ONLY-DIAG] failed to open load path %s\n", load_path);
++            }
++            fflush(stderr);
++        }
++    }
+     int64_t t4            = ggml_time_ms();
+     sd::Tensor<float> vid = sd_ctx->sd->decode_first_stage(video_latent, true);
+     int64_t t5            = ggml_time_ms();
