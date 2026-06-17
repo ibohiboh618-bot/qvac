@@ -366,9 +366,11 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   } else {
     // Comparison axis is the model: base cell vs candidate cell, per platform · device.
     // One-liner verdict: candidate vs baseline averaged across every platform·device leg
-    // in this run. Speed = TTFT (the one latency metric present on every platform); quality
-    // = VQA overall % when VQA tasks ran, otherwise OCR BLEU (higher = better) as the proxy.
-    // Each leg gets equal weight (mean of per-leg relative %). Two-models mode only.
+    // in this run. Speed = per-leg mean of the two latency metrics that exist on BOTH
+    // cells — vis-encode (mmproj) + TTFT — falling back to whichever one is present (mobile
+    // legs usually have TTFT only). Quality = VQA overall % when VQA tasks ran, otherwise
+    // OCR BLEU (higher = better). Each leg gets equal weight (mean of per-leg relative %).
+    // Two-models mode only.
     const speedPcts = []
     const qualPcts = []
     for (const host of hosts) {
@@ -376,7 +378,13 @@ function build (rows, vision, meta, provText, title, opts = {}) {
         const b = groupStats(`${host}|${base}|${dv}`)
         const c = groupStats(`${host}|${candidate}|${dv}`)
         if (!b || !c) continue
-        if (b.ttft != null && c.ttft != null && b.ttft > 0) speedPcts.push((b.ttft - c.ttft) / b.ttft * 100)
+        const bParts = []; const cParts = []
+        if (b.ve != null && c.ve != null) { bParts.push(b.ve); cParts.push(c.ve) }
+        if (b.ttft != null && c.ttft != null) { bParts.push(b.ttft); cParts.push(c.ttft) }
+        if (bParts.length) {
+          const bs = mean(bParts); const cs = mean(cParts)
+          if (bs > 0) speedPcts.push((bs - cs) / bs * 100)
+        }
         if (b.overall != null && c.overall != null && b.overall > 0) {
           qualPcts.push((c.overall - b.overall) / b.overall * 100)
         } else {
@@ -390,8 +398,18 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     const qp = mean(qualPcts)
     const legs = Math.max(speedPcts.length, qualPcts.length)
     const verdict = (v, better, worse) => v == null ? 'n/a' : `**${v >= 0 ? better : worse} ${Math.abs(v).toFixed(1)}%**`
-    L.push(`**Summary:** candidate **${candidate}** is ${verdict(sp, 'faster', 'slower')} than baseline **${base}** (TTFT), ` +
-      `with ${verdict(qp, 'better', 'worse')} quality — averaged across ${legs} platform·device leg${legs === 1 ? '' : 's'}.\n`)
+    // Leading emoji summarises the verdict at a glance: 🚀 candidate wins (faster, quality
+    // not worse) · ⚖️ trade-off (faster but lower quality, or slower but better) · 🐢 slower
+    // · 📊 indeterminate (no comparable metric).
+    const fast = sp == null ? null : sp >= 0
+    const good = qp == null ? null : qp >= 0
+    let icon = '📊'
+    if (fast === true && good !== false) icon = '🚀'
+    else if (fast === true && good === false) icon = '⚖️'
+    else if (fast === false && good === true) icon = '⚖️'
+    else if (fast === false) icon = '🐢'
+    L.push(`> ${icon} **Summary** — candidate **${candidate}** is ${verdict(sp, 'faster', 'slower')} than baseline **${base}** _(vis-encode + TTFT)_, ` +
+      `with ${verdict(qp, 'better', 'worse')} quality, averaged across ${legs} platform·device leg${legs === 1 ? '' : 's'}.\n`)
     L.push(`Two models — **${base}** (base) vs **${candidate}** (candidate), per platform · device.\n`)
     L.push(`### Quality — overall %: ${base} vs ${candidate}\n`)
     L.push(`| Platform · device | ${base} % | ${candidate} % | Δ (pp, cand−base) |`)
