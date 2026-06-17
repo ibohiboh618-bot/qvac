@@ -9,28 +9,40 @@
 //
 // Embeddings are a single prefill-only forward pass, so one shard per
 // (model x quant) cell sweeps the rest of the axes (device x batchSize x
-// flashAttn x inputMode) INTERNALLY on the device. The cells come from the
-// benchmark model manifest, not a hardcoded list, so the shards always track
-// what the manifest ships.
+// flashAttn x inputMode) INTERNALLY on the device.
+//
+// The cells are hardcoded here rather than read from the manifest because the
+// mobile Device Farm bundler only bundles test/integration, so this module
+// (reachable from the on-device shards) must not require anything outside it.
+// The desktop sweep + renderer read benchmarks/performance/models.manifest.json
+// directly; these cells mirror it. scripts/generate-benchmark-shards.js --check
+// asserts they stay in sync with the manifest (read under Node), so they cannot
+// silently drift.
+const CELLS = [
+  { model: 'embeddingGemma', quant: 'Q8_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main' },
+  { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main' },
+  { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main' },
+  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main' },
+  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main' },
+  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q4_K_M', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main' },
+  { model: 'Qwen3-embedding-4B-gguf', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main' }
+]
 
-// The (model, quant) cells are read from the benchmark performance manifest
-// (the same file the desktop sweep and the renderer's coverage read), so the
-// mobile shards never drift from the models the addon actually benchmarks. A
-// relative JSON require resolves under both Node (generator + renderer) and the
-// Bare shard runner, avoiding a runtime-specific path module.
-const manifest = require('../../benchmarks/performance/models.manifest.json')
+// Sweep axes + input modes for the mobile sweep. The desktop copy of these
+// lives in benchmarks/performance/_sweep-grid.js; the small axis literals are
+// duplicated here so this module stays self-contained for the mobile bundler.
+const PARAMETER_SWEEP = {
+  quantization: ['Q4_0', 'Q4_K_M', 'Q8_0', 'F16'],
+  device: ['cpu', 'gpu'],
+  batchSize: [256, 512, 1024, 2048],
+  flashAttn: ['off', 'on']
+}
+const INPUT_MODES = ['single', 'array']
 
-// Flatten the manifest into one cell per (modelId, quant), preserving manifest
-// order so the shard list and workflow groups are stable.
+// One cell per (modelId, quant), preserving order so the shard list and
+// workflow groups are stable.
 function matrix () {
-  const out = []
-  for (const model of (manifest.models || [])) {
-    const quants = model.gguf && Array.isArray(model.gguf.quantizations) ? model.gguf.quantizations : []
-    for (const quant of quants) {
-      out.push({ model: model.id, quant, repo: model.gguf.repo, revision: model.gguf.revision })
-    }
-  }
-  return out
+  return CELLS.map((cell) => ({ model: cell.model, quant: cell.quant, repo: cell.repo, revision: cell.revision }))
 }
 
 // Filename slug: lowercase, drop dots, underscores -> dashes.
@@ -79,7 +91,7 @@ function shardContents (cell) {
 }
 
 // One workflow matrix entry per model, each carrying that model's quant groups
-// in manifest order, matching the mobile-benchmark job's test_groups. Grouping
+// in matrix order, matching the mobile-benchmark job's test_groups. Grouping
 // by model keeps each Device Farm batch to a single set of weights so its
 // quants download once.
 function workflowBatches () {
@@ -100,5 +112,7 @@ module.exports = {
   mobileShardKey,
   runFunctionName,
   shardContents,
-  workflowBatches
+  workflowBatches,
+  PARAMETER_SWEEP,
+  INPUT_MODES
 }

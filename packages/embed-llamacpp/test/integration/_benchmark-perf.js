@@ -21,10 +21,54 @@ const GGMLBert = require('../../index.js')
 const { safeTest, downloadFile } = require('./utils')
 const { attachSpecLogger } = require('./spec-logger')
 const { recordPerformance, isMobile } = require('./_perf-helper.js')
-const { matrix } = require('./_benchmark-matrix.js')
-const { PARAMETER_SWEEP, INPUT_MODES } = require('../../benchmarks/performance/_sweep-grid.js')
-const { prefillTokensPerSecond } = require('../../benchmarks/performance/case-runner.js')
-const { cosineSimilarity, average, stddev } = require('../../benchmarks/performance/math.js')
+const { matrix, PARAMETER_SWEEP, INPUT_MODES } = require('./_benchmark-matrix.js')
+
+// Inlined from benchmarks/performance/math.js + case-runner.js so this runner
+// stays self-contained for the mobile Device Farm bundler (which only bundles
+// test/integration). Kept byte-identical in behavior to the desktop copies.
+function cosineSimilarity (a, b) {
+  if (a.length !== b.length) {
+    throw new Error(`Vector length mismatch: ${a.length} vs ${b.length}`)
+  }
+  let dotProduct = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB)
+  if (denominator < 1e-12) return 1.0 * Math.sign(dotProduct)
+  return dotProduct / denominator
+}
+
+function average (values) {
+  if (!values.length) return null
+  let sum = 0
+  for (const value of values) sum += value
+  return sum / values.length
+}
+
+function stddev (values) {
+  if (!values.length) return null
+  if (values.length === 1) return 0
+  const avg = average(values)
+  let varianceSum = 0
+  for (const value of values) {
+    const diff = value - avg
+    varianceSum += diff * diff
+  }
+  return Math.sqrt(varianceSum / values.length)
+}
+
+function prefillTokensPerSecond (runtimeStats) {
+  if (runtimeStats.tokens_per_second != null) return runtimeStats.tokens_per_second
+  const ms = runtimeStats.total_time_ms
+  const tokens = runtimeStats.total_tokens
+  if (ms != null && ms > 0 && tokens != null) return tokens * 1000 / ms
+  return null
+}
 
 // Measured repetitions per config, reported as mean +/- stddev (matching the
 // desktop sweep). Repeating on-device guards against a single shot skewed by

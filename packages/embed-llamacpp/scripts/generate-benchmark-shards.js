@@ -29,6 +29,7 @@ const {
 const integrationDir = path.resolve(__dirname, '..', 'test', 'integration')
 const mobileAutoFile = path.resolve(__dirname, '..', 'test', 'mobile', 'integration.auto.cjs')
 const workflowFile = path.resolve(__dirname, '..', '..', '..', '.github', 'workflows', 'benchmark-perf-embed-llamacpp.yml')
+const manifestFile = path.resolve(__dirname, '..', 'benchmarks', 'performance', 'models.manifest.json')
 
 const mode = process.argv.includes('--check')
   ? 'check'
@@ -65,6 +66,35 @@ function checkGroups () {
     }
   }
   return bad
+}
+
+// Drift guard: the matrix cells in _benchmark-matrix.js are hardcoded (so the
+// mobile bundler need not reach into benchmarks/performance), so assert they
+// still mirror models.manifest.json, read here under Node with fs. Compares the
+// (model, quant, repo, revision) cells the manifest yields against matrix().
+function checkManifest () {
+  if (!fs.existsSync(manifestFile)) {
+    console.error(`MISMATCH: benchmark manifest not found at ${manifestFile}`)
+    return 1
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+  const fromManifest = []
+  for (const model of (manifest.models || [])) {
+    const quants = model.gguf && Array.isArray(model.gguf.quantizations) ? model.gguf.quantizations : []
+    for (const quant of quants) {
+      fromManifest.push(`${model.id}|${quant}|${model.gguf.repo}|${model.gguf.revision}`)
+    }
+  }
+  const fromMatrix = matrix().map((c) => `${c.model}|${c.quant}|${c.repo}|${c.revision}`)
+  const expected = JSON.stringify(fromManifest)
+  const actual = JSON.stringify(fromMatrix)
+  if (expected !== actual) {
+    console.error('MISMATCH: _benchmark-matrix.js cells have drifted from models.manifest.json')
+    console.error(`  manifest: ${expected}`)
+    console.error(`  matrix:   ${actual}`)
+    return 1
+  }
+  return 0
 }
 
 // Verify the committed integration.auto.cjs is in lockstep with the matrix on
@@ -151,7 +181,7 @@ if (mode === 'groups') {
     console.log(JSON.stringify(batch.groups))
   }
 } else if (mode === 'check') {
-  const bad = checkGroups() + checkMobileAuto()
+  const bad = checkManifest() + checkGroups() + checkMobileAuto()
   if (bad) {
     console.error('\nCommitted benchmark artifacts are out of sync with _benchmark-matrix.js.')
     console.error('Run: npm run generate:benchmark-shards && npm run test:mobile:generate, then commit integration.auto.cjs + the workflow groups.')
