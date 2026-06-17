@@ -100,8 +100,10 @@
       "runQwen35ImageFruitPlatePerfTest",
       "runQwen35ImageHighResAuroraPerfTest"
     ],
-    "groupVisionCache": [
-      "runVisionCacheGemma4Test",
+    "visionCacheGemma": [
+      "runVisionCacheGemma4Test"
+    ],
+    "visionCacheQwen35": [
       "runVisionCacheQwen35Test"
     ]
   }
