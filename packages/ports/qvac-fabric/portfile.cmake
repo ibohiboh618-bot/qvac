@@ -6,8 +6,8 @@ vcpkg_from_github(
   # at the PR #148 Metal CONV_2D_DW merge. This lets the addon be tested on
   # Device Farm with the CPU-kernel detection win before the PR merges and is
   # cut as a tag + a registry port.
-  REF 69ff143b62802c1f14451d17af656411a44b8dc0
-  SHA512 e05edcf84e9b0483fabcfe8f6b5cea45dab8e88a79c136fe344ff3f971bcb7743b2c5ebe876c962fb314fb3332870c1007db6f176e25a15214ffbf68b82cd050
+  REF b64c886647b669224f0147de33c16c1ab6da011c
+  SHA512 05e6129abb6f92d68d3a79ae35d0a4d5aa8a37c41725c05e9218dc20aed021400eb2bf811adec929febf33ebce2b9049d98993959775b0da0cc7620179354e57
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
