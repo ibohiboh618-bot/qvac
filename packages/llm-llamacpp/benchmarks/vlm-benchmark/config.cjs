@@ -169,6 +169,14 @@ module.exports = {
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
   defaultPreset: 'full',
 
+  // Mobile (AWS Device Farm) per-leg timeout in MINUTES — the in-repo default the CI
+  // workflow reads when its `mobile_timeout_min` input is empty. Raises the WDIO/Mocha
+  // per-test ceiling + the Android generated-spec per-test ceiling so a heavier preset
+  // can finish on-device (capped by the 120-min Device-Farm / GitHub job ceilings).
+  // null = use the shared pipeline default (35-min Mocha / 30-min Android per-test);
+  // the workflow input, when set, overrides this.
+  mobileTimeoutMin: null,
+
   // The two task groups (cognitive = VQA reasoning, ocr = text recognition). Kept here
   // so a preset can run one group in isolation (e.g. for the mobile session budget).
   // `ids` = an explicit fixture-item allowlist (overrides tasks/samples — used to pick

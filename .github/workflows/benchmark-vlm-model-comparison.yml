@@ -47,11 +47,6 @@ on:
         required: false
         type: string
         default: "full"
-      matrix_scenarios:
-        description: "  workload scenario (benchmarks/vlm-benchmark/scenarios.cjs): vqa-suite (default) | image-description | ocr-highmp"
-        required: false
-        type: string
-        default: ""
       matrix_desktop:
         description: "  desktop legs, comma-sep <os>-<backend>: linux-cpu,linux-gpu,macos-cpu,macos-gpu,macmini-cpu,macmini-gpu,windows-cpu,windows-gpu (macos = GitHub-hosted VM, macmini = bare-metal M4)"
         required: false
@@ -64,6 +59,11 @@ on:
         default: ""
       matrix_mobile:
         description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s26,s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's26-cpu,s26-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
+        required: false
+        type: string
+        default: ""
+      mobile_timeout_min:
+        description: "  mobile per-leg timeout in MINUTES — raises the Device-Farm WDIO/Mocha per-test + Android generated-spec ceiling for this run (capped by the 120-min DF/GH job ceilings). Empty = config.cjs `mobileTimeoutMin`; if that is null, the pipeline default (35-min Mocha / 30-min Android per-test)."
         required: false
         type: string
         default: ""
@@ -90,6 +90,8 @@ jobs:
       desktop_count: ${{ steps.dmatrix.outputs.count }}
       mobile_matrix: ${{ steps.mmatrix.outputs.value }}
       mobile_count: ${{ steps.mmatrix.outputs.count }}
+      mobile_mocha_ms: ${{ steps.tmo.outputs.mocha_ms }}
+      mobile_pertest_min: ${{ steps.tmo.outputs.pertest_min }}
       engine: ${{ steps.sources.outputs.engine }}
       fabric_ref: ${{ steps.sources.outputs.fabric_ref }}
       upstream_ref: ${{ steps.sources.outputs.upstream_ref }}
@@ -112,6 +114,35 @@ jobs:
           ref="${INPUT_REF:-$REF_NAME}"
           echo "repository=$repo" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      # Resolve the mobile timeout (minutes) so matrix-mobile can forward it to the
+      # reusable workflow's mocha_timeout_ms / android_per_test_timeout_minutes inputs.
+      # Precedence: workflow input > config.cjs `mobileTimeoutMin` > '' (pipeline default).
+      - name: Checkout benchmark config (mobile-timeout default)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          repository: ${{ steps.ctx.outputs.repository }}
+          ref: ${{ steps.ctx.outputs.ref }}
+          sparse-checkout: |
+            packages/llm-llamacpp/benchmarks/vlm-benchmark
+          sparse-checkout-cone-mode: false
+      - id: tmo
+        shell: bash
+        env:
+          INPUT_MIN: ${{ inputs.mobile_timeout_min }}
+        run: |
+          min="$INPUT_MIN"
+          if [ -z "$min" ]; then
+            min=$(node -e 'try{const c=require("./packages/llm-llamacpp/benchmarks/vlm-benchmark/config.cjs");process.stdout.write(c.mobileTimeoutMin==null?"":String(c.mobileTimeoutMin))}catch(e){}' || true)
+          fi
+          if [ -n "$min" ]; then
+            echo "mocha_ms=$((min*60000))" >> "$GITHUB_OUTPUT"
+            echo "pertest_min=$min" >> "$GITHUB_OUTPUT"
+            echo "Mobile timeout: ${min} min (Mocha $((min*60000)) ms, Android per-test ${min} min)"
+          else
+            echo "mocha_ms=" >> "$GITHUB_OUTPUT"
+            echo "pertest_min=" >> "$GITHUB_OUTPUT"
+            echo "Mobile timeout: pipeline default (35-min Mocha / 30-min Android per-test)"
+          fi
       - id: dmatrix
         shell: bash
         env:
@@ -400,7 +431,6 @@ jobs:
           QVAC_VLM_SAMPLES: ${{ inputs.matrix_samples }} # '' → use the preset's value
           QVAC_VLM_DEVICES: ${{ matrix.backend }}
           QVAC_VLM_MODELS: ${{ inputs.matrix_models }} # '' → config defaults (CONTRACT.md §3)
-          QVAC_VLM_SCENARIOS: ${{ inputs.matrix_scenarios }} # '' → config.defaultScenario
           QVAC_VLM_SOURCE_ID: addon
           NO_GPU: ${{ matrix.no_gpu }}
         run: |
@@ -545,13 +575,17 @@ jobs:
       platforms: ${{ matrix.platform }}
       device_manufacturer: ${{ matrix.manufacturer }}
       device_model: ${{ matrix.model }}
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_scenarios != '' && format(';QVAC_VLM_SCENARIOS={0}', inputs.matrix_scenarios) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
       artifact_suffix: ${{ matrix.token }}
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
       qvac_perf_only: false
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
+      # Mobile timeout (Option 2): empty = the reusable workflow's defaults
+      # (35-min Mocha / 30-min Android per-test) are kept untouched.
+      mocha_timeout_ms: ${{ needs.context.outputs.mobile_mocha_ms }}
+      android_per_test_timeout_minutes: ${{ needs.context.outputs.mobile_pertest_min }}
 
   # ── Matrix mode: combine ───────────────────────────────────────────
   # Aggregates [VLMROW]/[VLMSEG]/[VLMMETA] markers from every matrix log

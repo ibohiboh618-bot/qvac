@@ -218,7 +218,8 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    reported per task, **not gated** (different models are compared, so there's no
    candidate-vs-baseline accuracy regression to gate on). OCR tasks score by CER/WER/BLEU
    in a separate table.
-   - Dispatch: `-f matrix_scenarios=…` (single set today; forwarded to phones as device env).
+   - Config: `config.defaultScenario` (single `default` set today; no dispatch input —
+     the `workflow_dispatch` input budget is capped at 10 and `mobile_timeout_min` took the slot).
 
 **8. Samples / repeats / tasks.**
    - Samples — Config: preset `samplesPerTask`; Dispatch: `-f matrix_samples=N`.
@@ -234,10 +235,10 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 | `matrix_preset` | `config.defaultPreset` | `smoke` \| `cognitive` \| `ocr1page` \| `ocr5pages` \| `full` (every leg) |
 | `matrix_models` | `config.defaultModels` | catalog names / `[label=]<llm-url>\|<mmproj-url>[@ctx=N]` / `json:[…]` (CONTRACT.md §3) |
 | `matrix_sources` | — | builds under comparison: `addon` \| `fabric@<ref>` \| `upstream@<ref>` (`addon@candidate/baseline` reserved, A2) |
-| `matrix_scenarios` | `config.defaultScenario` | task set (single `default` today) |
 | `matrix_desktop` | — | desktop legs: `{linux,macos,macmini,windows}-{cpu,gpu}` (any subset) |
-| `matrix_mobile` | — | mobile legs: `{s25,pixel9,iphone16,iphone17,iphone17pro}[-{cpu,gpu}]` (any subset; empty = none; two-models only) |
+| `matrix_mobile` | — | mobile legs: `{s26,s25,pixel9,iphone16,iphone17,iphone17pro}[-{cpu,gpu}]` (any subset; empty = none; two-models only) |
 | `matrix_samples` | preset `samplesPerTask` | override samples/task, every leg (empty = default) |
+| `mobile_timeout_min` | `config.mobileTimeoutMin` | mobile per-leg timeout (min) — raises the Device-Farm Mocha/Android per-test ceiling (≤120; empty = config, null config = 35/30 default) |
 
 **Example** — two-models, mixed leg selection, base preset, one ad-hoc model:
 

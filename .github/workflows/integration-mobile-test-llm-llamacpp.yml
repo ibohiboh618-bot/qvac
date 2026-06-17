@@ -76,6 +76,16 @@ on:
         type: string
         required: false
         default: ""
+      mocha_timeout_ms:
+        description: "Override the WDIO/Mocha per-test timeout in ms (mochaOpts.timeout). Default '' keeps the established 2100000 (35 min) — unchanged for existing callers."
+        type: string
+        required: false
+        default: ""
+      android_per_test_timeout_minutes:
+        description: "Override the Android generated-spec per-test timeout in minutes. Default '' keeps the established 30 — unchanged for existing callers."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -206,8 +216,9 @@ jobs:
           # QVAC-17830: VLM image tests on Android exceed the 20-minute
           # default per-test ceiling. Paired with mocha-timeout-ms on
           # upload-to-devicefarm below (35 min) so the WDIO/Mocha
-          # session outlives any single test.
-          android-per-test-timeout-minutes: '30'
+          # session outlives any single test. Caller-overridable
+          # (android_per_test_timeout_minutes); '' keeps the 30-min default.
+          android-per-test-timeout-minutes: ${{ inputs.android_per_test_timeout_minutes != '' && inputs.android_per_test_timeout_minutes || '30' }}
 
       # LLM ships with its own dedicated Device Farm project + iOS pool
       # (the LLM_* secrets), historically because LLM runs more often
@@ -227,7 +238,8 @@ jobs:
           enables-perf: 'true'
           # QVAC-17830: 35-minute WDIO/Mocha ceiling so the runner
           # outlives the per-test 30-minute ceiling enforced above.
-          mocha-timeout-ms: '2100000'
+          # Caller-overridable (mocha_timeout_ms); '' keeps 2100000.
+          mocha-timeout-ms: ${{ inputs.mocha_timeout_ms != '' && inputs.mocha_timeout_ms || '2100000' }}
           qvac-perf-runs: ${{ inputs.qvac_perf_runs }}
           qvac-perf-warmup-runs: ${{ inputs.qvac_perf_warmup_runs }}
           qvac-perf-only: ${{ inputs.qvac_perf_only }}
