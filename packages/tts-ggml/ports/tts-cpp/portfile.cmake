@@ -1,22 +1,23 @@
 # tts-cpp — LOCAL OVERLAY PORT (Android GPU validation; DO NOT MERGE).
 #
 # Replaces the registry tts-cpp port so the tts-ggml prebuild builds the
-# Android-GPU fixes not yet published to qvac-registry-vcpkg. Pins
-# tetherto/qvac-ext-lib-whisper.cpp @ aa2c9056 (4 commits on master ed749556):
-#   1. dlopen reroute: Supertonic's direct CPU-backend calls are unlinkable
-#      under GGML_BACKEND_DL=ON; route ggml_get_type_traits_cpu(...)->from_float
-#      to ggml_quantize_chunk() and ggml_backend_is_cpu() to the registry shim
-#      tts_cpp::detail::backend_is_cpu() (else the addon SIGABRTs at dlopen on
-#      Android, killing all Android e2e).
-#   2. keep Supertonic K/V attention F32 on OpenCL (no F32xF16 mat-vec kernel).
-#   3. explicit GPU attention when the backend can't run flash-attn (Adreno /
-#      Xclipse OpenCL route FLASH_ATTN_EXT to CPU) so the per-step CFM attention
-#      stays GPU-resident instead of going stale on a CPU bridge.
-#   4. allowlist Samsung Xclipse (Vulkan) as a 2nd Android GPU vendor + report a
-#      gpu_unsupported() policy-decline fallback (Mali stays CPU).
+# Android-GPU work not yet published to qvac-registry-vcpkg. Pins
+# tetherto/qvac-ext-lib-whisper.cpp @ 0072e665 (PR #54 — the consolidated
+# QVAC-20557 Android-GPU stack on master):
+#   - dlopen reroute: route Supertonic's direct CPU-backend calls
+#     (from_float / backend_is_cpu) through ggml-base under GGML_BACKEND_DL=ON
+#     (else the addon SIGABRTs at dlopen on Android).
+#   - keep Supertonic K/V attention/weights F32 on OpenCL (no F32xF16 mat-vec).
+#   - explicit GPU attention when the backend can't run flash-attn (Adreno /
+#     Xclipse route FLASH_ATTN_EXT to CPU) so CFM attention stays GPU-resident.
+#   - allowlist Samsung Xclipse (Vulkan) + a gpu_unsupported() policy-decline.
+#   - ARM Mali / Valhall: model-side st_mul_mat output-pad works around the
+#     driver's small-output-dim mul_mat miscompute; Mali-Vulkan is allowlisted
+#     for Supertonic only (Chatterbox stays CPU on Mali via gpu_unsupported).
+# ggml-speech overlay stays stock at 44fd4817 — no ggml change.
 #
 # TEMPORARY: remove this overlay (and the overlay-ports entry in
-# vcpkg-configuration.json) once the fixes are published to the registry and
+# vcpkg-configuration.json) once the fix is published to the registry and
 # consumed via vcpkg.json.
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
@@ -25,8 +26,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF aa2c9056c425aec7bacab70d79ea3d66b531ba1f
-    SHA512 2fc32d81e4ce9e759fd18544d8eb1f6e900628cd8806a7a679420a80bcb980dc5b70514afacf8f3302b0d4aa67ba336e76f8e117a06ccea971a4ff4df0de8686
+    REF 0072e6653bbca209660372ca1a97db1e2185cbf5
+    SHA512 035e9e5ed38848c0662362b929119e8106705d4a18582e8bbe797a91863d9a5bf286459b0dd48a0f1547717e1f4451b4bc1260dccf9ad8ad0016befc8752219b
     HEAD_REF master
 )
 

@@ -91,7 +91,7 @@ function expectsGpu () {
   )
 }
 
-function assertGpuBackend (t, engineTag, stats) {
+function assertGpuBackend (t, engineTag, stats, { allowAndroidCpuFallback = false } = {}) {
   if (!stats) {
     t.fail(`${engineTag}/GPU: no response.stats returned (cannot verify backend)`)
     return
@@ -101,12 +101,14 @@ function assertGpuBackend (t, engineTag, stats) {
   const name = backendIdToName(id)
   console.log(`[${engineTag}/GPU] backendDevice=${dev} backendId=${id} (${name}) gpuUnsupported=${stats.gpuUnsupported}`)
 
-  // On Android the GPU is engaged only on validated vendors (Adreno → OpenCL,
-  // Samsung Xclipse → Vulkan). Other Android GPUs (e.g. ARM Mali) are routed to
-  // CPU by the tts-cpp allowlist — a correct fallback, not a regression — and
-  // the engine flags it via stats.gpuUnsupported. Accept that CPU result.
-  if (platform === 'android' && dev === 0 && stats.gpuUnsupported) {
-    t.pass(`${engineTag}/android: GPU present but unsupported vendor (e.g. Mali); correctly using CPU`)
+  // Android GPU validation is per-engine. Adreno → OpenCL and Xclipse → Vulkan
+  // run both engines on the GPU. ARM Mali is GPU-validated for Supertonic (the
+  // model-side st_mul_mat output-pad works around the Valhall mul_mat miscompute)
+  // but NOT Chatterbox (no such mitigation), so tts-cpp admits Mali only for
+  // Supertonic; Chatterbox falls back to CPU on Mali and flags gpuUnsupported.
+  // Accept that CPU result only for engines that opt in (Chatterbox), never Supertonic.
+  if (platform === 'android' && allowAndroidCpuFallback && dev === 0 && stats.gpuUnsupported) {
+    t.pass(`${engineTag}/android: GPU present but unsupported for this engine (e.g. Mali); correctly using CPU`)
     return
   }
 
@@ -186,7 +188,9 @@ test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
     console.log(result.output)
     t.ok(result.passed, 'Chatterbox/GPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Chatterbox/GPU produced audio')
-    assertGpuBackend(t, 'Chatterbox', result.data.stats)
+    // Chatterbox has no Mali mul_mat mitigation, so on Mali it correctly falls back
+    // to CPU (gpuUnsupported) — accept that. Adreno/Xclipse still require the GPU.
+    assertGpuBackend(t, 'Chatterbox', result.data.stats, { allowAndroidCpuFallback: true })
     assertAudibleRms(t, 'Chatterbox/GPU', result.data.samples)
   } finally {
     try { await model.unload() } catch (_e) {}
@@ -194,9 +198,9 @@ test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
 })
 
 test('Supertonic GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  // Android GPU is enabled for both engines (the loadLocked __ANDROID__ guards
-  // are removed). Adreno auto-selects OpenCL(4); Mali/Xclipse auto-select
-  // Vulkan(3) — assertGpuBackend accepts either.
+  // Supertonic runs on the GPU on every validated Android vendor: Adreno →
+  // OpenCL(4); Xclipse + Mali → Vulkan(3). Mali is GPU-validated for Supertonic
+  // via the model-side st_mul_mat output-pad, so no CPU fallback is accepted here.
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
