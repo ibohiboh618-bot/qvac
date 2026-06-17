@@ -211,3 +211,4 @@ Compact badges for use alongside other shields/badges in your README.
 ```
 [![Built with QVAC](https://raw.githubusercontent.com/tetherto/qvac/refs/heads/main/docs/branding/qvac-badge-green-dark.svg)](https://github.com/tetherto/qvac)
 ```
+
