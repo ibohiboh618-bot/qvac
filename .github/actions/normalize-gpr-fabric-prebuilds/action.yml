@@ -1,10 +1,14 @@
 name: Normalize GPR fabric prebuilds
 description: >-
-  GPR publishes @qvac/fabric as @tetherto/fabric-mono, so cmake-bare looks for
-  tetherto__fabric-mono.bare while the tarball still ships qvac__fabric.bare.
-  Symlink the published bare module names to the on-disk prebuilds. Optionally
-  overlay a single locally-built platform prebuild without touching share/ or
-  include/ from GPR.
+  GPR publishes @qvac/fabric as @tetherto/fabric-mono. bare-link and cmake-bare
+  derive a bare addon's identity from package.json `.name`, so the rename makes
+  them emit/resolve `tetherto__fabric-mono` instead of the canonical
+  `qvac__fabric@0.bare` that consumer addons bake as their DT_NEEDED. This
+  action first rewrites the installed fabric package `.name` back to the
+  canonical `@qvac/fabric` (fixing Android/iOS linking), then symlinks the
+  published bare module names to the on-disk prebuilds for any tool that still
+  looks them up by the renamed scope. Optionally overlays a single locally-built
+  platform prebuild without touching share/ or include/ from GPR.
 
 inputs:
   workdir:
@@ -29,6 +33,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Normalize @qvac/fabric package identity (canonical name)
+      shell: bash
+      run: node "${GITHUB_ACTION_PATH}/normalize-fabric-name.cjs" "${{ inputs.workdir }}"
+
     - name: Symlink GPR fabric bare module names
       shell: bash
       working-directory: ${{ inputs.workdir }}
