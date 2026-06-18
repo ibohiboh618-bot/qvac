@@ -318,14 +318,37 @@ bool MtmdLlmContext::evalMessageWithTools(
     throw qvac_errors::StatusError(
         ADDON_ID, toString(ContextOverflow), errorMsg);
   }
-  if (current_.pos + nPositions >= nCtxI32 ||
-      current_.cacheTokens + nTokens >= nCtxI32) {
+  // Generation headroom: the prefill must leave room not just for the prompt
+  // but for the tokens we are about to generate. n_predict > 0 reserves exactly
+  // that many; n_predict < 0 (unlimited, the documented default) reserves a
+  // minimum; n_predict == 0 is prefill-only. Shared with the A3 guard below so
+  // the slide trigger and the guard use the same threshold — otherwise a prompt
+  // that fits but leaves no room to generate falls into a "dead zone" where no
+  // slide fires yet the guard throws, even though sliding (n_discarded > 0)
+  // could have freed the room.
+  constexpr size_t kMinGenerationHeadroom = 64;
+  constexpr size_t kSafetyMargin = 16;
+  size_t nPredict;
+  if (params_.n_predict > 0) {
+    nPredict = static_cast<size_t>(params_.n_predict);
+  } else if (params_.n_predict == 0) {
+    nPredict = 0;
+  } else {
+    nPredict = kMinGenerationHeadroom;
+  }
+  if (nPredict > nCtx) {
+    nPredict = nCtx;
+  }
+  const auto genHeadroom = static_cast<llama_pos>(nPredict + kSafetyMargin);
+
+  if (current_.pos + nPositions + genHeadroom > nCtxI32 ||
+      current_.cacheTokens + nTokens + genHeadroom > nCtxI32) {
     auto outcome = trySlidePrefill(
         modelCtx_.lctx,
         seqId_,
         current_,
         protectedPrefix_,
-        ContextUsage{nPositions, nTokens},
+        ContextUsage{nPositions + genHeadroom, nTokens + genHeadroom},
         nDiscarded_,
         tools_,
         defaultContextSliderOps());
@@ -355,11 +378,18 @@ bool MtmdLlmContext::evalMessageWithTools(
               outcome.discarded));
       break;
     case ContextSlideOutcome::Kind::Overflow: {
+      resetMedia();
       std::string errorMsg = string_format(
-          "[MtmdLlm] context overflow at prefill step (%d tokens, max "
-          "%d)\n",
-          current_.cacheTokens + nTokens,
-          nCtxI32);
+          "[MtmdLlm] context overflow at prefill step: nPast=%d + prompt=%d "
+          "positions + generation headroom=%d would exceed n_ctx=%d, and "
+          "sliding could not free enough room (n_discarded=%d). Increase "
+          "ctx_size, raise n_discarded (sliding window), reduce image "
+          "resolution, or shorten the conversation.\n",
+          current_.pos,
+          nPositions,
+          genHeadroom,
+          nCtxI32,
+          nDiscarded_);
       throw qvac_errors::StatusError(
           ADDON_ID, toString(ContextOverflow), errorMsg);
     }
@@ -379,38 +409,23 @@ bool MtmdLlmContext::evalMessageWithTools(
     }
   }
 
-  // QVAC-19118 A3: after sliding, check whether the post-slide nPast +
-  // prompt + n_predict + safety margin still fits in n_ctx. This catches
-  // the case where the prompt technically fits but leaves no room for
-  // generation (e.g. Qwen3VL + 2250x3000 image at ctx=4096).
+  // QVAC-19118 A3: final safety net. The headroom-aware slide above normally
+  // frees room for generation (or throws Overflow if it cannot), so on a
+  // recoverable conversation this does not fire. It still guards the cases the
+  // slide cannot help with — n_discarded == 0 (sliding disabled) or a single
+  // image larger than the window — which leave no room to generate even after a
+  // full wipe. Fail here with an actionable error instead of after the expensive
+  // encode + decode or a mid-generation overflow.
   {
     const size_t nPastPostSlide = static_cast<size_t>(current_.pos);
-    // Reserve a minimum generation headroom when n_predict < 0 (unlimited
-    // generation — the documented default). Image tokens cannot be slid
-    // mid-generation, so a prompt that fills the context to within a handful
-    // of tokens is effectively doomed; catch it here with the actionable
-    // error below instead of after the expensive encode + decode.
-    // n_predict == 0 is prefill-only (generates nothing), so it needs no
-    // headroom and must not be rejected for leaving no room to generate.
-    constexpr size_t kMinGenerationHeadroom = 64;
-    size_t nPredict;
-    if (params_.n_predict > 0) {
-      nPredict = static_cast<size_t>(params_.n_predict);
-    } else if (params_.n_predict == 0) {
-      nPredict = 0;
-    } else {
-      nPredict = kMinGenerationHeadroom;
-    }
-    if (nPredict > nCtx)
-      nPredict = nCtx;
-    constexpr size_t kSafetyMargin = 16;
     const size_t nPromptPositions = static_cast<size_t>(nPositions);
     if (nPastPostSlide + nPromptPositions + nPredict + kSafetyMargin > nCtx) {
       resetMedia();
       std::string errorMsg = string_format(
           "[MtmdLlm] context overflow at prefill step: nPast=%zu + "
           "prompt=%zu positions + n_predict=%zu + safety=%zu would exceed "
-          "n_ctx=%zu. Reduce image resolution or increase ctx_size.\n",
+          "n_ctx=%zu. Increase ctx_size, enable/raise n_discarded (sliding "
+          "window), or reduce image resolution.\n",
           nPastPostSlide,
           nPromptPositions,
           nPredict,
