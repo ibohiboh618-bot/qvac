@@ -155,7 +155,7 @@ runs:
 
     - name: Normalize @qvac/fabric package identity (addon)
       shell: bash
-      run: node "${GITHUB_WORKSPACE}/.github/actions/normalize-gpr-fabric-prebuilds/normalize-fabric-name.cjs" "addon/${{ inputs.addon-workdir }}"
+      run: node "${GITHUB_ACTION_PATH}/normalize-fabric-name.cjs" "addon/${{ inputs.addon-workdir }}"
 
     - name: Normalize GPR fabric prebuild names
       shell: bash
@@ -248,7 +248,7 @@ runs:
 
     - name: Normalize @qvac/fabric package identity (test framework)
       shell: bash
-      run: node "${GITHUB_WORKSPACE}/.github/actions/normalize-gpr-fabric-prebuilds/normalize-fabric-name.cjs" "test-framework"
+      run: node "${GITHUB_ACTION_PATH}/normalize-fabric-name.cjs" "test-framework"
 
     - name: Normalize GPR fabric prebuild names in test framework
       shell: bash
