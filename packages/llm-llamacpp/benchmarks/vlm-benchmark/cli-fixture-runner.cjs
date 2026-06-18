@@ -27,6 +27,13 @@ const BACKEND = arg('backend', 'cpu')
 const SAMPLES = parseInt(arg('samples', '3'), 10)
 const REPEATS = parseInt(arg('repeats', '3'), 10)
 const TASKS = (arg('tasks', '') || '').split(',').map(s => s.trim()).filter(Boolean)
+// Per-task sample caps (mirror the addon preset's taskSamples, e.g. {"ocr-page":1});
+// falls back to the global --samples. Keeps the CLI legs item-aligned with the addon.
+const TASK_SAMPLES = JSON.parse(arg('task-samples', '{}') || '{}')
+// Per-task decode budget — OCR transcriptions need far more tokens than VQA answers,
+// matching harness.cjs so CLI OCR output isn't truncated (which would wreck CER/WER).
+const TASK_NPREDICT = { 'ocr-page': 768, 'ocr-small': 96 }
+const DEFAULT_NPREDICT = 128
 const MAIN_ORIGIN = arg('main-origin', 'Qwen3.5-0.8B-Q8_0')
 const MMPROJ_ORIGIN = arg('mmproj-origin', 'Qwen3.5-0.8B mmproj-Q8_0')
 
@@ -38,7 +45,8 @@ function selectedItems () {
   return fixture.items.filter(it => {
     if (TASKS.length && !TASKS.includes(it.task)) return false
     seen[it.task] = (seen[it.task] || 0) + 1
-    return seen[it.task] <= SAMPLES
+    const cap = (TASK_SAMPLES[it.task] != null) ? TASK_SAMPLES[it.task] : SAMPLES
+    return seen[it.task] <= cap
   })
 }
 
@@ -67,7 +75,7 @@ function main () {
       imagePath: mediaPath(item.image),
       prompt: item.prompt,
       ctxSize: 4096,
-      nPredict: 128,
+      nPredict: TASK_NPREDICT[item.task] || DEFAULT_NPREDICT,
       backend: BACKEND,
       temperature: 0,
       seed: 42,
