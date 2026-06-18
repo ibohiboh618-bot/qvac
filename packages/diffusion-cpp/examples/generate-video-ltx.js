@@ -92,13 +92,14 @@ async function main () {
     config: {
       threads: 4,
       device: 'gpu',
-      diffusion_fa: true,
-      offload_to_cpu: true,
-      vae_tiling: true,
+      diffusion_fa: (process.env.DIFFUSION_FA || 'true') === 'true',
+      offload_to_cpu: (process.env.OFFLOAD_TO_CPU || 'true') === 'true',
+      clip_on_cpu: (process.env.CLIP_ON_CPU || 'false') === 'true',
+      vae_tiling: (process.env.VAE_TILING || 'true') === 'true',
       // LTX video VAE convolutions go through the direct (im2col-free) path to
       // avoid the CPU im2col F16 assert; the audio VAE F32 conv path is handled
       // by the ggml 2026-06-06 conv_1d type fix.
-      vae_conv_direct: true
+      vae_conv_direct: (process.env.VAE_CONV_DIRECT || 'true') === 'true'
     },
     opts: { stats: true },
     logger: console
