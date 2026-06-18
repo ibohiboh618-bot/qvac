@@ -20,17 +20,10 @@ const test = require('brittle')
 const fs = require('bare-fs')
 const path = require('bare-path')
 const os = require('bare-os')
-const process = require('bare-process')
 const { ensureModel, getMediaPath } = require('./utils')
 const { describeImage, checkKeywordsInText } = require('./_image-common.js')
 const { recordPerformance } = require('./_perf-helper.js')
 const LlmLlamacpp = require('../../index.js')
-const { setLogger, releaseLogger } = require('../../addonLogging')
-
-setLogger((priority, message) => {
-  const names = { 0: 'ERROR', 1: 'WARNING', 2: 'INFO', 3: 'DEBUG' }
-  console.log(`[C++] [${names[priority] || priority}]: ${message}`)
-})
 
 const platform = os.platform()
 const arch = os.arch()
@@ -131,7 +124,6 @@ async function setup (t, modelConfig, extraConfig = {}) {
     config: {
       device: useCpu ? 'cpu' : 'gpu',
       ...modelConfig.visionConfig,
-      verbosity: '3',
       ...extraConfig
     },
     logger: console,
@@ -393,8 +385,6 @@ function runVisionCacheTests (modelConfig) {
     )
   })
 }
-
-process.once('exit', () => { releaseLogger() })
 
 module.exports = {
   runVisionCacheTests,
