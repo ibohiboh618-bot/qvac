@@ -16,6 +16,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, "..", "..", "..");
 const addonsDir = path.join(__dirname, "src", "main", "addons");
 
+// bare-link derives a bare addon's identity from package.json `.name`. When
+// @qvac/fabric is pulled from GPR (as @tetherto/fabric-mono, or any future
+// @tetherto/* wrapper) the rename makes bare-link emit the runtime as
+// `libtetherto__fabric-mono.*.so` and rewrite the wrong DT_NEEDED, leaving the
+// canonical `qvac__fabric@0.bare` that consumer addons bake as their dependency
+// unresolved on-device. Realign the installed fabric `.name` with the canonical
+// `@qvac/fabric` before linking. No-op once fabric ships under @qvac on npm.
+normalizeFabricName(projectRoot);
+
 if (fs.existsSync(addonsDir)) {
   console.log("[QVAC] Cleaning existing addons directory...");
   fs.rmSync(addonsDir, { recursive: true, force: true });
@@ -60,4 +69,53 @@ for await (const resource of link(
   pkg,
 )) {
   console.log("Wrote", resource);
+}
+
+function normalizeFabricName(root) {
+  const CANONICAL = "@qvac/fabric";
+
+  function rewrite(pkgJsonPath) {
+    let pkg;
+    try {
+      pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+    } catch {
+      return;
+    }
+    if (pkg.name === CANONICAL) return;
+    pkg.name = CANONICAL;
+    fs.writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2) + "\n");
+    console.log(`[QVAC] Normalized @qvac/fabric name in ${pkgJsonPath}`);
+  }
+
+  function walk(nodeModulesDir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(nodeModulesDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const full = path.join(nodeModulesDir, entry.name);
+      if (entry.name === "@qvac") {
+        const fabricPkg = path.join(full, "fabric", "package.json");
+        if (fs.existsSync(fabricPkg)) rewrite(fabricPkg);
+      }
+      if (entry.name.startsWith("@")) {
+        let scoped;
+        try {
+          scoped = fs.readdirSync(full, { withFileTypes: true });
+        } catch {
+          scoped = [];
+        }
+        for (const s of scoped) {
+          if (s.isDirectory()) walk(path.join(full, s.name, "node_modules"));
+        }
+      } else {
+        walk(path.join(full, "node_modules"));
+      }
+    }
+  }
+
+  walk(path.join(root, "node_modules"));
 }

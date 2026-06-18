@@ -153,6 +153,10 @@ runs:
         echo "Installing addon dependencies..."
         npm install
 
+    - name: Normalize @qvac/fabric package identity (addon)
+      shell: bash
+      run: node "${GITHUB_WORKSPACE}/.github/actions/normalize-gpr-fabric-prebuilds/normalize-fabric-name.cjs" "addon/${{ inputs.addon-workdir }}"
+
     - name: Normalize GPR fabric prebuild names
       shell: bash
       working-directory: addon/${{ inputs.addon-workdir }}
@@ -241,6 +245,10 @@ runs:
           exit 1
         fi
         echo "Test app built successfully"
+
+    - name: Normalize @qvac/fabric package identity (test framework)
+      shell: bash
+      run: node "${GITHUB_WORKSPACE}/.github/actions/normalize-gpr-fabric-prebuilds/normalize-fabric-name.cjs" "test-framework"
 
     - name: Normalize GPR fabric prebuild names in test framework
       shell: bash
