@@ -9,8 +9,9 @@
 #
 # The URL list is built fresh each run by `build-urls.mjs`, checked with
 # lychee, and parsed by `parse-lychee.mjs`. Only HTTP 404s trigger an alert:
-# a single Slack message is posted to #product-sdk and the run is marked
-# failed. The list of broken URLs stays in the GitHub Actions job summary and
+# a single Slack message is posted to #product-sdk via the Slack bot
+# (chat.postMessage) and the run is marked failed. The list of broken URLs
+# stays in the GitHub Actions job summary and
 # is never sent to Slack. Transient errors (timeouts / DNS / 5xx) are recorded
 # in the summary but do not alert.
 name: Docs Health Check
@@ -87,10 +88,15 @@ jobs:
         if: steps.parse.outputs.count_404 > 0
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
-          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
+          # Posts via the Slack bot (chat.postMessage), matching the
+          # qvac-workbench pattern (_notify-publish-summary.yml). The bot is a
+          # member of the channel and holds the `chat:write` scope.
+          # Channel C09MQ34GCH5 = #qvac-product-sdk.
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             {
+              "channel": "C09MQ34GCH5",
               "text": "Docs Site Alert: broken pages detected during the daily health check",
               "blocks": [
                 {
