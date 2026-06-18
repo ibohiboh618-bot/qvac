@@ -2,7 +2,7 @@
 #
 # Replaces the registry tts-cpp port so the tts-ggml prebuild builds the
 # Android-GPU work not yet published to qvac-registry-vcpkg. Pins
-# tetherto/qvac-ext-lib-whisper.cpp @ 0072e665 (PR #54 — the consolidated
+# tetherto/qvac-ext-lib-whisper.cpp @ 45602048 (PR #54 — the consolidated
 # QVAC-20557 Android-GPU stack on master):
 #   - dlopen reroute: route Supertonic's direct CPU-backend calls
 #     (from_float / backend_is_cpu) through ggml-base under GGML_BACKEND_DL=ON
@@ -12,8 +12,9 @@
 #     Xclipse route FLASH_ATTN_EXT to CPU) so CFM attention stays GPU-resident.
 #   - allowlist Samsung Xclipse (Vulkan) + a gpu_unsupported() policy-decline.
 #   - ARM Mali / Valhall: model-side st_mul_mat output-pad works around the
-#     driver's small-output-dim mul_mat miscompute; Mali-Vulkan is allowlisted
-#     for Supertonic only (Chatterbox stays CPU on Mali via gpu_unsupported).
+#     driver's small-output-dim mul_mat miscompute; Mali keeps weights F32 (the
+#     pad only covers F32 operands); Mali-Vulkan is allowlisted for Supertonic
+#     only (Chatterbox stays CPU on Mali via gpu_unsupported).
 # ggml-speech overlay stays stock at 44fd4817 — no ggml change.
 #
 # TEMPORARY: remove this overlay (and the overlay-ports entry in
@@ -26,8 +27,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 0072e6653bbca209660372ca1a97db1e2185cbf5
-    SHA512 035e9e5ed38848c0662362b929119e8106705d4a18582e8bbe797a91863d9a5bf286459b0dd48a0f1547717e1f4451b4bc1260dccf9ad8ad0016befc8752219b
+    REF 4560204843e5d901ca27a6ef0881f6469f917cb1
+    SHA512 90326458cb9bd2ab282e8c690a817e60318c04328727904be4d0787ba6159b039566f5954d99a273ee069932941389bef1189fee2f0b7eff627e6de8b9c11cf0
     HEAD_REF master
 )
 
