@@ -460,25 +460,32 @@ jobs:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
           key: vlm-cli-v3-${{ matrix.host }}-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
 
-      # Windows several-sources (Experiment B): the runner has no Visual Studio, so the
-      # VS generator can't build. Use the repo's actual Windows toolchain — clang/LLVM via
-      # setup-llvm — with the Ninja generator. setup-llvm installs+wires clang/clang++;
-      # we add cmake (Kitware) + Ninja and point cmake at clang. Linux/macOS unaffected.
-      - name: Install clang/LLVM (Windows several-sources)
-        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
-        uses: ./.github/actions/setup-llvm
-      - name: Setup CMake + Ninja + clang generator (Windows several-sources)
+      # Windows several-sources: the runner has no Visual Studio (VS generator fails) and
+      # the GH-Actions user can't run choco (permission denied). But clang/LLVM is already
+      # installed at C:\Program Files\LLVM. So skip choco entirely — put the pre-installed
+      # clang on PATH, download cmake + Ninja (zip, no install), and build via Ninja+clang.
+      - name: Setup clang + Ninja + cmake (Windows several-sources)
         if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
         shell: powershell
         run: |
-          $ver = "3.31.6"
-          $dir = "$env:RUNNER_TEMP\cmake-$ver-windows-x86_64"
-          if (-not (Test-Path "$dir\bin\cmake.exe")) {
-            Invoke-WebRequest "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-x86_64.zip" -OutFile "$env:RUNNER_TEMP\cmake.zip"
-            Expand-Archive "$env:RUNNER_TEMP\cmake.zip" -DestinationPath "$env:RUNNER_TEMP" -Force
+          $tmp = $env:RUNNER_TEMP
+          # cmake (Kitware zip)
+          $cm = "$tmp\cmake-3.31.6-windows-x86_64"
+          if (-not (Test-Path "$cm\bin\cmake.exe")) {
+            Invoke-WebRequest "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip" -OutFile "$tmp\cmake.zip"
+            Expand-Archive "$tmp\cmake.zip" -DestinationPath $tmp -Force
           }
-          "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
-          choco install ninja -y --no-progress
+          "$cm\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          # Ninja (release zip — avoids choco, which is permission-blocked on this runner)
+          if (-not (Test-Path "$tmp\ninja\ninja.exe")) {
+            Invoke-WebRequest "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile "$tmp\ninja.zip"
+            Expand-Archive "$tmp\ninja.zip" -DestinationPath "$tmp\ninja" -Force
+          }
+          "$tmp\ninja" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          # Pre-installed clang (setup-llvm provisions it at this path on the runners)
+          if (Test-Path "C:\Program Files\LLVM\bin\clang.exe") {
+            "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          }
           "CMAKE_GENERATOR=Ninja" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "CXX=clang++" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
