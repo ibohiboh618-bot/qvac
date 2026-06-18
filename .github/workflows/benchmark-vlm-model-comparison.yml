@@ -38,7 +38,7 @@ on:
         type: boolean
         default: true
       matrix_mode:
-        description: "  matrix mode: two-models (f16 vs q8, addon) or several-sources (addon+fabric-cli+upstream-cli, Linux-only)"
+        description: "  matrix mode: two-models (f16 vs q8, addon) or several-sources (addon+fabric-cli+upstream-cli; desktop only — builds native CLIs, so Linux/macOS/Windows, no mobile)"
         required: false
         type: string
         default: "two-models"
@@ -198,7 +198,7 @@ jobs:
           MATRIX_MODE: ${{ inputs.matrix_mode }}
         run: |
           cells='[]'
-          # Mobile runs the addon only; several-sources (native CLIs) is Linux-only.
+          # Mobile runs the addon only; several-sources (native CLIs) is desktop-only.
           if [[ "$RUN_MATRIX" == "true" && "$MATRIX_MODE" != "several-sources" && -n "$MATRIX_MOBILE" ]]; then
             IFS=',' read -ra tokens <<< "$MATRIX_MOBILE"
             for raw in "${tokens[@]}"; do
@@ -444,17 +444,18 @@ jobs:
 
       # several-sources only: build native fabric/upstream llama-mtmd-cli and run
       # them over the SAME fixture, appending [VLMROW]/[VLMSEG] markers to the addon
-      # log so aggregate.js renders a 3-source comparison. Linux-only — the vendored
-      # CLI build is only proven there; a macOS leg in this mode still runs the addon.
+      # log so aggregate.js renders a 3-source comparison. Desktop-only (no mobile):
+      # build-cli-sources.js compiles per-OS (Vulkan on linux/win, Metal on darwin),
+      # so every desktop leg builds its own CLIs and reports a per-platform comparison.
       - name: Cache CLI builds (several-sources)
-        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'linux'
+        if: inputs.matrix_mode == 'several-sources'
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
-          key: vlm-cli-v3-linux-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
+          key: vlm-cli-v3-${{ matrix.host }}-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
 
       - name: Build + run fabric/upstream CLIs over the fixture (several-sources)
-        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'linux'
+        if: inputs.matrix_mode == 'several-sources'
         working-directory: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark
         shell: bash
         env:
