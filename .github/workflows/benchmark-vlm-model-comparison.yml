@@ -460,11 +460,14 @@ jobs:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
           key: vlm-cli-v3-${{ matrix.host }}-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
 
-      # Windows several-sources: the self-hosted runner's bash shell exposes neither
-      # cmake nor the MSVC toolchain. Fetch Kitware cmake onto PATH (matches
-      # pr-test-inference-addon-cpp) and select the VS 2022 generator so cmake locates
-      # cl.exe itself — no vcvars sourcing needed. Linux/macOS already have cmake+clang.
-      - name: Setup CMake + MSVC generator (Windows several-sources)
+      # Windows several-sources (Experiment B): the runner has no Visual Studio, so the
+      # VS generator can't build. Use the repo's actual Windows toolchain — clang/LLVM via
+      # setup-llvm — with the Ninja generator. setup-llvm installs+wires clang/clang++;
+      # we add cmake (Kitware) + Ninja and point cmake at clang. Linux/macOS unaffected.
+      - name: Install clang/LLVM (Windows several-sources)
+        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
+        uses: ./.github/actions/setup-llvm
+      - name: Setup CMake + Ninja + clang generator (Windows several-sources)
         if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
         shell: powershell
         run: |
@@ -475,8 +478,10 @@ jobs:
             Expand-Archive "$env:RUNNER_TEMP\cmake.zip" -DestinationPath "$env:RUNNER_TEMP" -Force
           }
           "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
-          "CMAKE_GENERATOR=Visual Studio 17 2022" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-          "CMAKE_GENERATOR_PLATFORM=x64" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          choco install ninja -y --no-progress
+          "CMAKE_GENERATOR=Ninja" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CXX=clang++" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Build + run fabric/upstream CLIs over the fixture (several-sources)
         if: inputs.matrix_mode == 'several-sources'
