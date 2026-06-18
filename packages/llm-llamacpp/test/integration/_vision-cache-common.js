@@ -355,8 +355,20 @@ function runVisionCacheTests (modelConfig) {
     //    this delta isolates the LLM-prefill skip.
     const kvKey = `vision-cache-perf-${modelConfig.label}`.replace(/[^A-Za-z0-9_-]/g, '-')
     const kvPrompt = 'Describe the animal in this image.'
-    const kvCold = await describeImage(inference, elephantPath, kvPrompt, { cacheKey: kvKey, saveCacheToDisk: true })
-    const kvWarm = await describeImage(inference, elephantPath, kvPrompt, { cacheKey: kvKey, saveCacheToDisk: true })
+    // The cacheKey doubles as the on-disk session path. Start from a clean
+    // session and clean up after: a stale session left by a prior run is
+    // reloaded on the cold run and overflows the context (CONTEXT_OVERFLOW), so
+    // re-runs would not be reproducible.
+    if (fs.existsSync(kvKey)) fs.unlinkSync(kvKey)
+    t.teardown(() => { if (fs.existsSync(kvKey)) fs.unlinkSync(kvKey) })
+    // Bound generation so saveCacheToDisk persists a small [prompt + response]
+    // session: an unbounded cold response would fill the 4096 ctx, and the warm
+    // run (which restores that session and re-evaluates the prompt) would
+    // overflow. The assertion below is about prompt tokens re-evaluated, not
+    // generation length, so capping predict keeps the session small.
+    const kvRun = { cacheKey: kvKey, saveCacheToDisk: true, generationParams: { predict: 64 } }
+    const kvCold = await describeImage(inference, elephantPath, kvPrompt, kvRun)
+    const kvWarm = await describeImage(inference, elephantPath, kvPrompt, kvRun)
     recordCacheImprovement(modelConfig, 'kv-cache', kvCold, kvWarm)
     const kvColdPrompt = Number((kvCold.stats && kvCold.stats.promptTokens) || 0)
     const kvWarmPrompt = Number((kvWarm.stats && kvWarm.stats.promptTokens) || 0)
