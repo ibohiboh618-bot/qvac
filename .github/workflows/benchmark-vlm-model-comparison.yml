@@ -454,6 +454,24 @@ jobs:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
           key: vlm-cli-v3-${{ matrix.host }}-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
 
+      # Windows several-sources: the self-hosted runner's bash shell exposes neither
+      # cmake nor the MSVC toolchain. Fetch Kitware cmake onto PATH (matches
+      # pr-test-inference-addon-cpp) and select the VS 2022 generator so cmake locates
+      # cl.exe itself — no vcvars sourcing needed. Linux/macOS already have cmake+clang.
+      - name: Setup CMake + MSVC generator (Windows several-sources)
+        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
+        shell: powershell
+        run: |
+          $ver = "3.31.6"
+          $dir = "$env:RUNNER_TEMP\cmake-$ver-windows-x86_64"
+          if (-not (Test-Path "$dir\bin\cmake.exe")) {
+            Invoke-WebRequest "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-x86_64.zip" -OutFile "$env:RUNNER_TEMP\cmake.zip"
+            Expand-Archive "$env:RUNNER_TEMP\cmake.zip" -DestinationPath "$env:RUNNER_TEMP" -Force
+          }
+          "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          "CMAKE_GENERATOR=Visual Studio 17 2022" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CMAKE_GENERATOR_PLATFORM=x64" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
       - name: Build + run fabric/upstream CLIs over the fixture (several-sources)
         if: inputs.matrix_mode == 'several-sources'
         working-directory: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark
