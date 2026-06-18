@@ -8,8 +8,8 @@
  */
 
 import Module from "bare-module";
-import process from "process";
-import path from "path";
+import process from "bare-process";
+import path from "bare-path";
 import fs from "bare-fs";
 import { pathToFileURL } from "bare-url";
 

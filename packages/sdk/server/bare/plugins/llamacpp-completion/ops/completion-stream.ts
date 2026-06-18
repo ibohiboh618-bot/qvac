@@ -399,6 +399,21 @@ async function* processModelResponse(
     ...(responseWithStats.stats?.backendDevice !== undefined && {
       backendDevice: responseWithStats.stats.backendDevice,
     }),
+    ...(responseWithStats.stats?.visionCacheHits !== undefined && {
+      visionCacheHits: responseWithStats.stats.visionCacheHits,
+    }),
+    ...(responseWithStats.stats?.visionCacheMisses !== undefined && {
+      visionCacheMisses: responseWithStats.stats.visionCacheMisses,
+    }),
+    ...(responseWithStats.stats?.visionCacheEvictions !== undefined && {
+      visionCacheEvictions: responseWithStats.stats.visionCacheEvictions,
+    }),
+    ...(responseWithStats.stats?.visionCacheDistinctImages !== undefined && {
+      visionCacheDistinctImages: responseWithStats.stats.visionCacheDistinctImages,
+    }),
+    ...(responseWithStats.stats?.visionCachePeakBytes !== undefined && {
+      visionCachePeakBytes: responseWithStats.stats.visionCachePeakBytes,
+    }),
   };
 
   return {

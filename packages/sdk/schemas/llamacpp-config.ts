@@ -65,6 +65,20 @@ export const llmConfigBaseSchema = z.object({
    * Reasoning channel token budget. `-1` = unrestricted, `0` = disabled.
    */
   reasoning_budget: z.union([z.literal(-1), z.literal(0)]).optional(),
+  /**
+   * Vision prefix cache for multimodal models: caches post-projection image
+   * embeddings keyed by image hash so a repeated image skips the CLIP encode +
+   * mmproj projection. Enabled by default; pass `false` / `"false"` / `"0"` to
+   * disable. (The addon also accepts the hyphen alias `vision-cache`.)
+   */
+  vision_cache: z
+    .union([z.boolean(), z.enum(["true", "false", "0", "1"])])
+    .optional(),
+  /**
+   * Memory budget (MB) for the vision prefix cache; least-recently-used entries
+   * are evicted once exceeded. Defaults to `100` in the addon.
+   */
+  vision_cache_budget_mb: z.number().optional(),
   projectionModelSrc: modelSrcInputSchema.optional(),
 });
 

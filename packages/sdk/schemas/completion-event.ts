@@ -14,6 +14,13 @@ export const completionStatsSchema = z.object({
   promptTokens: z.number().optional(),
   generatedTokens: z.number().optional(),
   backendDevice: z.enum(["cpu", "gpu"]).optional(),
+  // Vision prefix cache counters (multimodal models). Present only when the
+  // addon ran the vision pipeline; a cache hit skips CLIP encode + projection.
+  visionCacheHits: z.number().optional(),
+  visionCacheMisses: z.number().optional(),
+  visionCacheEvictions: z.number().optional(),
+  visionCacheDistinctImages: z.number().optional(),
+  visionCachePeakBytes: z.number().optional(),
 });
 
 export type CompletionStats = z.infer<typeof completionStatsSchema>;

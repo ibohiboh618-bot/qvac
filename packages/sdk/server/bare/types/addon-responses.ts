@@ -5,6 +5,11 @@ export interface LlmStats {
   promptTokens?: number;
   generatedTokens?: number;
   backendDevice?: "cpu" | "gpu";
+  visionCacheHits?: number;
+  visionCacheMisses?: number;
+  visionCacheEvictions?: number;
+  visionCacheDistinctImages?: number;
+  visionCachePeakBytes?: number;
 }
 
 export interface LlmResponse {

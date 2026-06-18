@@ -314,5 +314,8 @@
       "optional": true
     }
   },
-  "patchedDependencies": {}
+  "patchedDependencies": {},
+  "trustedDependencies": [
+    "unrs-resolver"
+  ]
 }
