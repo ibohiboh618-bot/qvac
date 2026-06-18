@@ -1,8 +1,8 @@
 {
   "name": "tts-cpp",
   "version-date": "2026-06-05",
-  "port-version": 0,
-  "description": "LOCAL OVERLAY of tts-cpp pinned at qvac-ext-lib-whisper.cpp@f7d4d6c (= the published 2026-06-05 pin 128dae42 + one fix commit). Reroutes Supertonic's direct ggml_get_type_traits_cpu()->from_float and ggml_backend_is_cpu() calls (unlinkable under GGML_BACKEND_DL on Android) to ggml_quantize_chunk() and the tts_cpp::detail::backend_is_cpu() registry shim, so the tts-ggml addon dlopen's cleanly on Android. Temporary QVAC-19254 follow-up; remove once published to the registry.",
+  "port-version": 1,
+  "description": "LOCAL OVERLAY of tts-cpp pinned at qvac-ext-lib-whisper.cpp@f7d4d6c (the 0.2.4 base = published 2026-06-05 pin 128dae42 + Android dlopen fix) with the QVAC-20616 end-of-speech fix applied on top as patches/0001-qvac-20616-eos-stop.patch (QVAC-21056 backport of the fix shipped upstream in tts-cpp master b95ad447 / PR #53). Stops the Chatterbox multilingual model rambling random tokens after inference, and keeps the Android dlopen reroute (ggml_get_type_traits_cpu / ggml_backend_is_cpu -> ggml_quantize_chunk + registry shim) so the addon loads on Android. Temporary 0.2.x-line overlay.",
   "homepage": "https://github.com/tetherto/qvac-ext-lib-whisper.cpp/tree/master/tts-cpp",
   "license": "MIT",
   "dependencies": [

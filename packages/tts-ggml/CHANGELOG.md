@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-06-18
+
+### Fixed
+
+- **End-of-speech robustness for the Chatterbox multilingual engine
+  (QVAC-21056 — backport of QVAC-20616).** Fixes the model emitting up to ~20s
+  of random tokens after the intended text finishes. The `tts-cpp` overlay now
+  applies the QVAC-20616 end-of-speech fix on top of the `f7d4d6c` base as
+  `patches/0001-qvac-20616-eos-stop.patch`: an alignment-based EOS analyzer
+  (ports the reference `AlignmentStreamAnalyzer` cross-attention signal,
+  extracted from the GGML graph via an in-graph attention probe) layered with a
+  heuristic stop controller (EOS confidence, n-gram repetition, text-length
+  budget), per-language calibration, and a `suppress_eos` anti-clipping path.
+  Same fix shipped upstream in `tts-cpp` master `b95ad447` (PR #53) and consumed
+  from the registry by the 0.3.x line (`tts-cpp 2026-06-18`); carried here as an
+  in-package patch so the 0.2.x line stays on the proven `f7d4d6c` base.
+
+### Changed
+
+- `tts-cpp` overlay `port-version` `0` → `1` (same `2026-06-05` / `f7d4d6c`
+  base, now with the QVAC-20616 EOS patch applied). No base-commit, registry, or
+  baseline change.
+
 ## [0.2.4] - 2026-06-15
 
 ### Fixed

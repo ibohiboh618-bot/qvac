@@ -1,0 +1,2251 @@
+diff --git a/tts-cpp/CMakeLists.txt b/tts-cpp/CMakeLists.txt
+index 65702e0f..e92b52ab 100644
+--- a/tts-cpp/CMakeLists.txt
++++ b/tts-cpp/CMakeLists.txt
+@@ -239,6 +239,8 @@ set(TTS_CPP_LIB_SOURCES
+     src/campplus.cpp
+     src/s3tokenizer.cpp
+     src/t3_mtl.cpp
++    src/t3_stop_controller.cpp
++    src/t3_alignment_analyzer.cpp
+     src/supertonic_gguf.cpp
+     src/supertonic_preprocess.cpp
+     src/supertonic_vocoder.cpp
+@@ -479,6 +481,7 @@ if (TTS_CPP_BUILD_TESTS)
+     # DISABLED tests via tts_cpp_register_test(REQUIRES ...).
+     set(_tcb_t3_turbo_gguf      "${TTS_CPP_TEST_MODEL_DIR}/chatterbox-t3-turbo.gguf")
+     set(_tcb_t3_mtl_gguf        "${TTS_CPP_TEST_MODEL_DIR}/chatterbox-t3-mtl.gguf")
++    set(_tcb_t3_mtl_q4_gguf     "${TTS_CPP_TEST_MODEL_DIR}/chatterbox-t3-mtl-q4_0.gguf")
+     set(_tcb_s3gen_gguf         "${TTS_CPP_TEST_MODEL_DIR}/chatterbox-s3gen.gguf")
+     set(_tcb_s3gen_mtl_gguf     "${TTS_CPP_TEST_MODEL_DIR}/chatterbox-s3gen-mtl.gguf")
+     set(_tcb_super_gguf         "${TTS_CPP_TEST_MODEL_DIR}/supertonic.gguf")
+@@ -592,6 +595,33 @@ if (TTS_CPP_BUILD_TESTS)
+         ARGS     "${_tcb_s3gen_gguf}" "${_tcb_s3gen_ref}/wav_16k.npy" "${_tcb_s3gen_ref}/log_mel.npy" "${_tcb_s3gen_ref}/speech_tokens.npy"
+         REQUIRES "${_tcb_s3gen_gguf}" "${_tcb_s3gen_ref}/wav_16k.npy" "${_tcb_s3gen_ref}/log_mel.npy" "${_tcb_s3gen_ref}/speech_tokens.npy")
+ 
++    # QVAC-20616: attention-free end-of-speech stop controller.  Pure host
++    # logic with no model / ggml dependency, so it links only its own source
++    # and always runs (no fixture REQUIRES).
++    add_executable(test-t3-stop-controller
++        test/test_t3_stop_controller.cpp
++        src/t3_stop_controller.cpp)
++    target_include_directories(test-t3-stop-controller PRIVATE src)
++    tts_cpp_apply_ccache(test-t3-stop-controller)
++    tts_cpp_register_test(test-t3-stop-controller LABEL "cpu")
++
++    # QVAC-20616 Phase 2: alignment analyzer state machine.  Pure host logic,
++    # no model / ggml dependency, so it always runs.
++    add_executable(test-t3-alignment-analyzer
++        test/test_t3_alignment_analyzer.cpp
++        src/t3_alignment_analyzer.cpp)
++    target_include_directories(test-t3-alignment-analyzer PRIVATE src)
++    tts_cpp_apply_ccache(test-t3-alignment-analyzer)
++    tts_cpp_register_test(test-t3-alignment-analyzer LABEL "cpu")
++
++    # QVAC-20616 #1: MTL sampler EOS-suppression.  Pure logit math but links the
++    # library (sample_next_token_mtl lives in the t3_mtl TU); no model required.
++    add_executable(test-mtl-sampler test/test_mtl_sampler.cpp)
++    target_link_libraries(test-mtl-sampler PRIVATE tts-cpp ggml tts-cpp-backend-defs)
++    target_include_directories(test-mtl-sampler PRIVATE ggml/include src)
++    tts_cpp_apply_ccache(test-mtl-sampler)
++    tts_cpp_register_test(test-mtl-sampler LABEL "cpu")
++
+     add_executable(test-mtl-tokenizer test/test_mtl_tokenizer.cpp)
+     target_link_libraries(test-mtl-tokenizer PRIVATE tts-cpp)
+     target_include_directories(test-mtl-tokenizer PRIVATE src)
+@@ -714,6 +744,46 @@ if (TTS_CPP_BUILD_TESTS)
+         endif()
+     endforeach()
+ 
++    # QVAC-20616 #2: end-to-end EOS round-trip regression.  Drives tts-cli to
++    # synthesize a set of English phrases, transcribes with whisper-cli, and
++    # asserts the transcription is close to the input (CER guard -> catches
++    # clipping) and not much longer (ramble guard -> catches the trailing-token
++    # bug re-appearing).  Pure orchestration; auto-disabled unless the MTL
++    # GGUFs + whisper-cli + a Whisper model + tts-cli are all present.
++    add_executable(test-eos-roundtrip test/test_eos_roundtrip.cpp)
++    target_include_directories(test-eos-roundtrip PRIVATE src)
++    tts_cpp_apply_ccache(test-eos-roundtrip)
++    if (_mtl_asr_enabled AND TARGET tts-cli)
++        tts_cpp_register_test(test-eos-roundtrip
++            LABEL    "fixture;asr"
++            ARGS     --tts-cli       "$<TARGET_FILE:tts-cli>"
++                     --t3            "${_tcb_t3_mtl_gguf}"
++                     --s3gen         "${_tcb_s3gen_mtl_gguf}"
++                     --whisper-cli   "${WHISPER_CLI}"
++                     --whisper-model "${WHISPER_MODEL}"
++                     --lang          "en"
++                     --tmp           "${_mtl_out_dir}"
++            REQUIRES "${_tcb_t3_mtl_gguf}" "${_tcb_s3gen_mtl_gguf}")
++
++        # QVAC-20616 #3: same round-trip on the quantized (Q4_0) T3 the mobile
++        # app ships, to confirm the aligned heads still track under
++        # quantization.  Uses the f16 S3Gen (the S3Gen Q4_0 path is a separate
++        # converter limitation).  Auto-disabled until the Q4_0 T3 GGUF exists.
++        tts_cpp_register_test(test-eos-roundtrip-q4_0
++            EXE      test-eos-roundtrip
++            LABEL    "fixture;asr"
++            ARGS     --tts-cli       "$<TARGET_FILE:tts-cli>"
++                     --t3            "${_tcb_t3_mtl_q4_gguf}"
++                     --s3gen         "${_tcb_s3gen_mtl_gguf}"
++                     --whisper-cli   "${WHISPER_CLI}"
++                     --whisper-model "${WHISPER_MODEL}"
++                     --lang          "en"
++                     --tmp           "${_mtl_out_dir}"
++            REQUIRES "${_tcb_t3_mtl_q4_gguf}" "${_tcb_s3gen_mtl_gguf}")
++    else()
++        message(STATUS "tts-cpp: test-eos-roundtrip built but not registered (needs whisper-cli + model + tts-cli)")
++    endif()
++
+     add_executable(test-streaming
+         test/test_streaming.cpp
+         src/chatterbox_tts.cpp
+diff --git a/tts-cpp/src/chatterbox_cli.cpp b/tts-cpp/src/chatterbox_cli.cpp
+index 53716102..c2dc88c3 100644
+--- a/tts-cpp/src/chatterbox_cli.cpp
++++ b/tts-cpp/src/chatterbox_cli.cpp
+@@ -54,6 +54,9 @@
+ #include "tts-cpp/chatterbox/s3gen_pipeline.h"
+ #include "tts-cpp/supertonic/engine.h"
+ #include "chatterbox_t3_internal.h"
++#include "t3_alignment_analyzer.h"
++#include "t3_mtl.h"
++#include "t3_stop_controller.h"
+ #include "t3_mtl.h"
+ #include "npy.h"
+ #include "voice_features.h"
+@@ -2049,11 +2052,36 @@ int tts_cpp_cli_main(int argc, char ** argv) {
+             constexpr int MAX_RETRIES = 3;
+             auto rng_snapshot = rng;
+ 
++            // QVAC-20616: shared end-of-speech stop controller (same logic as
++            // chatterbox::Engine::run_t3).  Disabled for Turbo so that path is
++            // unchanged.  Params depend only on the (constant-across-retries)
++            // segment text length, so build once and reset per attempt.
++            const t3_stop_params stop_p = is_mtl
++                ? make_mtl_stop_params(model.hparams.stop_speech_token, sp_mtl.cfg_weight,
++                                       (int) seg_text_tokens[si].size(), params.n_predict)
++                : t3_stop_params{};
++            t3_stop_controller stop_ctrl;
++
+             std::vector<int32_t> generated, best_generated;
+             for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
+                 rng = rng_snapshot;
+                 rng.discard((size_t)attempt * 1009);   // move to a different RNG stream each retry
+ 
++                // QVAC-20616 Phase 2: alignment-based EOS.  Configure the
++                // in-graph probe and reset the analyzer for this segment.  The
++                // probe leaves the forward graph unchanged when alignment is
++                // disabled / unsupported (Turbo, very short text, env override,
++                // or the batched GPU path where the probe is not wired yet); the
++                // analyzer then stays dormant and the Phase 1 controller is the
++                // sole stop signal.
++                const int align_S = t3_align_begin_generation(model, (int) seg_text_tokens[si].size());
++                t3_alignment_analyzer align_az;
++                const bool align_on = (align_S > 0);
++                if (align_on) {
++                    align_az.reset(t3_align_params_for_language(params.language, align_S));
++                }
++                bool align_forced_eos = false;
++
+                 std::vector<float> logits;
+                 std::vector<float> logits_c, logits_u;
+                 int prompt_len = 0;
+@@ -2070,6 +2098,7 @@ int tts_cpp_cli_main(int argc, char ** argv) {
+                 int n_past = prompt_len;
+                 generated.clear();
+                 generated.reserve(params.n_predict + 1);
++                stop_ctrl.reset(stop_p);
+ 
+                 int32_t current = is_mtl
+                     ? sample_next_token_mtl(logits_c, logits_u, generated, sp_mtl, rng,
+@@ -2078,7 +2107,8 @@ int tts_cpp_cli_main(int argc, char ** argv) {
+                 generated.push_back(current);
+ 
+                 bool stopped_by_stop_token = false;
+-                bool stopped_by_repetition  = false;
++                bool ctrl_forced_eos       = false;
++                t3_stop_reason ctrl_reason = t3_stop_reason::none;
+                 for (int i = 0; i < params.n_predict; ++i) {
+                     if (current == model.hparams.stop_speech_token) { stopped_by_stop_token = true; break; }
+                     if (n_past + 1 > model.hparams.n_ctx) { fprintf(stderr, "KV cache full\n"); break; }
+@@ -2091,44 +2121,68 @@ int tts_cpp_cli_main(int argc, char ** argv) {
+                     }
+                     if (!step_ok) throw std::runtime_error("step eval failed");
+                     ++n_past;
+-                    current = is_mtl
+-                        ? sample_next_token_mtl(logits_c, logits_u, generated, sp_mtl, rng,
+-                                                model.hparams.stop_speech_token)
+-                        : sample_next_token(logits, generated, params, rng);
++
++                    // QVAC-20616 Phase 2: alignment-based force-EOS.  Feed the
++                    // alignment row for the just-evaluated position (token
++                    // `current`); if the analyzer reports the text is fully
++                    // spoken (long tail / backtracking), emit the stop token
++                    // instead of sampling.  Falls back to the Phase 1
++                    // controller's EOS-confidence when the probe is unavailable.
++                    const t3_align_action aa = align_on
++                        ? align_az.step(t3_align_last_row(), current)
++                        : t3_align_action::none;
++                    bool force_eos_now = (aa == t3_align_action::force_eos);
++                    if (force_eos_now) align_forced_eos = true;
++                    if (!force_eos_now && is_mtl &&
++                        stop_ctrl.force_eos((int) generated.size(), logits_c, logits_u)) {
++                        force_eos_now   = true;
++                        ctrl_forced_eos = true;
++                    }
++                    if (force_eos_now) {
++                        current = model.hparams.stop_speech_token;
++                    } else {
++                        const bool suppress = (aa == t3_align_action::suppress_eos);
++                        current = is_mtl
++                            ? sample_next_token_mtl(logits_c, logits_u, generated, sp_mtl, rng,
++                                                    model.hparams.stop_speech_token, suppress)
++                            : sample_next_token(logits, generated, params, rng);
++                    }
+                     generated.push_back(current);
++                    if (current == model.hparams.stop_speech_token) { stopped_by_stop_token = true; break; }
+ 
+-                    // Port of the token_repetition check in the Python
+-                    // AlignmentStreamAnalyzer. MTL T3 sometimes emits a
+-                    // plausible end-of-speech silence cadence mid-utterance
+-                    // and then hallucinates more low-energy content before
+-                    // eventually stopping. Two consecutive identical tokens
+-                    // signal this cadence; gated to MTL because the Turbo
+-                    // codebook has a different cadence signature and to a
+-                    // 60-token minimum so we don't fire on the first
+-                    // utterance of short multilingual inputs. We trim only
+-                    // the trailing duplicate (resize(n-1)) and leave the
+-                    // legitimate prior token; the downstream pop_back()
+-                    // handles the stop-speech token.
+-                    constexpr int kMtlMinTokensBeforeCadence = 60;
+-                    if (is_mtl && generated.size() >= 2 &&
+-                        (int)generated.size() > kMtlMinTokensBeforeCadence) {
+-                        size_t n = generated.size();
+-                        if (generated[n - 1] == generated[n - 2]) {
+-                            generated.resize(n - 1);
+-                            stopped_by_repetition = true;
+-                            break;
+-                        }
++                    // Repetition cadence / budget backstop (MTL only).
++                    const t3_post_result pr = stop_ctrl.post_check(generated);
++                    if (pr.reason != t3_stop_reason::none) {
++                        if (pr.trim_tail > 0 && (int) generated.size() >= pr.trim_tail)
++                            generated.resize(generated.size() - (size_t) pr.trim_tail);
++                        ctrl_reason = pr.reason;
++                        break;
+                     }
+                 }
+ 
++                if (align_on) t3_align_reset();
++
+                 if (!generated.empty() && generated.back() == model.hparams.stop_speech_token)
+                     generated.pop_back();
+ 
+-                if (stopped_by_repetition && params.verbose) {
+-                    fprintf(stderr, "  [t3 segment %zu/%zu] stopped on 2x repeated token (%d) "
+-                                    "at %zu tokens; MTL end-of-speech cadence\n",
+-                            si + 1, N_SEG, generated.empty() ? -1 : (int)generated.back(),
+-                            generated.size());
++                if (params.verbose && (align_forced_eos || ctrl_forced_eos ||
++                                       ctrl_reason != t3_stop_reason::none)) {
++                    const char * why = align_forced_eos                          ? "alignment end-of-text"
++                                     : ctrl_forced_eos                           ? "EOS confidence"
++                                     : ctrl_reason == t3_stop_reason::repetition ? "repetition cadence"
++                                     : ctrl_reason == t3_stop_reason::budget     ? "token budget"
++                                     :                                             "?";
++                    fprintf(stderr, "  [t3 segment %zu/%zu] stop: %s at %zu tokens\n",
++                            si + 1, N_SEG, why, generated.size());
++                }
++                // Self-check observability: alignment was active but never
++                // reached end-of-text -> the probed heads may not be tracking
++                // alignment for this model (we relied on the Phase 1 fallback).
++                if (params.verbose && align_on && !align_az.complete() &&
++                    generated.size() > 8) {
++                    fprintf(stderr, "  [t3 segment %zu/%zu] note: alignment never completed; "
++                                    "relied on fallback (aligned heads may need recalibration)\n",
++                            si + 1, N_SEG);
+                 }
+ 
+                 // Keep the longest attempt as the fallback in case every
+diff --git a/tts-cpp/src/chatterbox_engine.cpp b/tts-cpp/src/chatterbox_engine.cpp
+index 8eb9fc46..9622b4f5 100644
+--- a/tts-cpp/src/chatterbox_engine.cpp
++++ b/tts-cpp/src/chatterbox_engine.cpp
+@@ -14,7 +14,9 @@
+ #include "gpt2_bpe.h"
+ #include "mtl_tokenizer.h"
+ #include "npy.h"
++#include "t3_alignment_analyzer.h"
+ #include "t3_mtl.h"
++#include "t3_stop_controller.h"
+ #include "tts-cpp/chatterbox/s3gen_pipeline.h"
+ #include "voice_encoder.h"
+ #include "voice_features.h"
+@@ -491,6 +493,34 @@ struct Engine::Impl {
+         std::vector<int32_t> generated;
+         generated.reserve((size_t) opts.n_predict + 1);
+ 
++        // QVAC-20616: attention-free end-of-speech stop controller.  The MTL
++        // T3 often fails to emit stop_speech_token after it has finished the
++        // input text and rambles — a repeated near-silent cadence (audible as
++        // gutural / empty sounds) or fresh hallucinated content — until it
++        // hits n_predict (~40 s of audio).  The controller folds three
++        // signals into one place: (1) force EOS once the model's own argmax
++        // has preferred the stop token for several consecutive steps but
++        // sampling kept missing it, (2) detect a stuck repetition cadence,
++        // (3) a generous text-length-derived budget as a last-resort backstop.
++        // It is disabled for Turbo (default-constructed params) so that path
++        // is unchanged.  See src/t3_stop_controller.h.
++        t3_stop_controller stop_ctrl;
++        stop_ctrl.reset(is_mtl
++            ? make_mtl_stop_params(model.hparams.stop_speech_token, sp.cfg_weight,
++                                   (int) text_tokens.size(), opts.n_predict)
++            : t3_stop_params{});
++
++        // QVAC-20616 Phase 2: alignment-based EOS (primary signal on the CPU
++        // path).  Configures the in-graph probe; a no-op (graph unchanged) for
++        // Turbo / short text / the batched GPU path, where the Phase 1
++        // controller above remains the stop signal.
++        const int align_S = t3_align_begin_generation(model, (int) text_tokens.size());
++        t3_alignment_analyzer align_az;
++        const bool align_on = (align_S > 0);
++        if (align_on) {
++            align_az.reset(t3_align_params_for_language(opts.language, align_S));
++        }
++
+         int32_t current = is_mtl
+             ? sample_next_token_mtl(logits_c, logits_u, generated, sp, rng,
+                                     model.hparams.stop_speech_token)
+@@ -511,30 +541,37 @@ struct Engine::Impl {
+                 throw std::runtime_error("Engine: T3 step eval failed");
+             }
+             ++n_past;
+-            current = is_mtl
+-                ? sample_next_token_mtl(logits_c, logits_u, generated, sp, rng,
+-                                        model.hparams.stop_speech_token)
+-                : sample_next_token_ex(logits, generated, sp, rng);
++            const t3_align_action aa = align_on
++                ? align_az.step(t3_align_last_row(), current)
++                : t3_align_action::none;
++            bool force_eos_now = (aa == t3_align_action::force_eos);
++            if (!force_eos_now && is_mtl &&
++                stop_ctrl.force_eos((int) generated.size(), logits_c, logits_u)) {
++                force_eos_now = true;
++            }
++            if (force_eos_now) {
++                current = model.hparams.stop_speech_token;
++            } else {
++                const bool suppress = (aa == t3_align_action::suppress_eos);
++                current = is_mtl
++                    ? sample_next_token_mtl(logits_c, logits_u, generated, sp, rng,
++                                            model.hparams.stop_speech_token, suppress)
++                    : sample_next_token_ex(logits, generated, sp, rng);
++            }
+             generated.push_back(current);
++            if (current == model.hparams.stop_speech_token) break;
+ 
+-            // Port of AlignmentStreamAnalyzer's token_repetition guard
+-            // (mirrors chatterbox_cli.cpp).  MTL T3 sometimes emits a
+-            // plausible end-of-speech silence cadence mid-utterance and
+-            // then hallucinates low-energy content (silence -> hissing
+-            // -> garbage tokens) until n_predict, producing tens of
+-            // seconds of trailing junk.  Three consecutive identical
+-            // tokens cleanly signal the cadence without firing on normal
+-            // speech; gated to MTL because Turbo's codebook has a
+-            // different signature.
+-            if (is_mtl && generated.size() >= 3) {
+-                const size_t n = generated.size();
+-                if (generated[n - 1] == generated[n - 2] &&
+-                    generated[n - 2] == generated[n - 3]) {
+-                    break;
++            const t3_post_result pr = stop_ctrl.post_check(generated);
++            if (pr.reason != t3_stop_reason::none) {
++                if (pr.trim_tail > 0 && (int) generated.size() >= pr.trim_tail) {
++                    generated.resize(generated.size() - (size_t) pr.trim_tail);
+                 }
++                break;
+             }
+         }
+ 
++        if (align_on) t3_align_reset();
++
+         if (!generated.empty() && generated.back() == model.hparams.stop_speech_token) {
+             generated.pop_back();
+         }
+diff --git a/tts-cpp/src/chatterbox_t3_internal.h b/tts-cpp/src/chatterbox_t3_internal.h
+index 3d3b9197..7beff235 100644
+--- a/tts-cpp/src/chatterbox_t3_internal.h
++++ b/tts-cpp/src/chatterbox_t3_internal.h
+@@ -361,12 +361,19 @@ void t3_release_caches();
+ // cascade), returns `stop_token` so the caller's stop check fires cleanly
+ // instead of emitting a pseudo-random in-vocab id.  Pass
+ // `model.hparams.stop_speech_token` from the speech-decode loop.
++// `suppress_stop_token` (QVAC-20616 Phase 2): when true, the stop token's
++// (CFG-combined) logit is forced to -inf before the sampling cascade so it
++// cannot be drawn this step.  The alignment analyzer sets this while the text
++// is still being spoken (alignment has not reached the end), preventing the
++// model from truncating the utterance early (the "dropped first/last word /
++// near-empty output" failure mode on out-of-distribution cloned voices).
+ int32_t sample_next_token_mtl(
+     const std::vector<float> &         logits_cond,
+     const std::vector<float> &         logits_uncond,
+     const std::vector<int32_t> &       generated,
+     const chatterbox_sampling_params & params,
+     std::mt19937 &                     rng,
+-    int32_t                            stop_token);
++    int32_t                            stop_token,
++    bool                               suppress_stop_token = false);
+ 
+ } // namespace tts_cpp::chatterbox::detail
+diff --git a/tts-cpp/src/t3_alignment_analyzer.cpp b/tts-cpp/src/t3_alignment_analyzer.cpp
+new file mode 100644
+index 00000000..9128b4ee
+--- /dev/null
++++ b/tts-cpp/src/t3_alignment_analyzer.cpp
+@@ -0,0 +1,180 @@
++#include "t3_alignment_analyzer.h"
++
++#include <algorithm>
++#include <cstdlib>
++#include <cstring>
++#include <unordered_map>
++
++namespace tts_cpp::chatterbox::detail {
++
++namespace {
++
++int env_int(const char * name, int fallback) {
++    const char * v = std::getenv(name);
++    if (!v || v[0] == '\0') return fallback;
++    char * end = nullptr;
++    long parsed = std::strtol(v, &end, 10);
++    return end == v ? fallback : (int) parsed;
++}
++
++float env_float(const char * name, float fallback) {
++    const char * v = std::getenv(name);
++    if (!v || v[0] == '\0') return fallback;
++    char * end = nullptr;
++    float parsed = std::strtof(v, &end);
++    return end == v ? fallback : parsed;
++}
++
++bool env_is_false(const char * name) {
++    const char * v = std::getenv(name);
++    if (!v || v[0] == '\0') return false;
++    return std::strcmp(v, "0") == 0 || std::strcmp(v, "false") == 0 ||
++           std::strcmp(v, "off") == 0;
++}
++
++} // namespace
++
++void t3_alignment_analyzer::reset(const t3_align_analyzer_params & p) {
++    p_             = p;
++    frame_         = 0;
++    text_position_ = 0;
++    complete_      = false;
++    completed_at_  = -1;
++    tail_sum_.assign((size_t) std::max(0, p_.tail_cols), 0.0);
++    early_sum_     = 0.0;
++    recent_tokens_.clear();
++}
++
++t3_align_action t3_alignment_analyzer::step(const std::vector<float> & row,
++                                            int32_t sampled_token) {
++    // Track tokens regardless so the repetition check has history even on the
++    // frames where the alignment row is unavailable.
++    recent_tokens_.push_back(sampled_token);
++    if (recent_tokens_.size() > 8) {
++        recent_tokens_.erase(recent_tokens_.begin(),
++                             recent_tokens_.end() - 8);
++    }
++
++    const int S = p_.text_len;
++    if (!p_.enabled || S < p_.min_text_len || row.empty()) {
++        return t3_align_action::none;
++    }
++
++    const int n = std::min((int) row.size(), S);
++    if (n <= 0) return t3_align_action::none;
++
++    // Monotonic mask: a frame cannot align to text it has not reached yet, so
++    // zero out columns beyond curr_frame_pos + 1 (curr_frame_pos == frame_).
++    // This is also the safeguard against a start-of-speech hallucination
++    // spiking on a late text column and triggering an immediate false
++    // "complete": since cur <= frame_ + 1, `complete_` (text_position >= S -
++    // complete_margin) is impossible before frame (S - complete_margin - 1).
++    std::vector<float> a(row.begin(), row.begin() + n);
++    for (int c = frame_ + 1; c < n; ++c) a[(size_t) c] = 0.0f;
++
++    // Current text position = argmax of the masked row.
++    int cur = 0;
++    float mv = a[0];
++    for (int c = 1; c < n; ++c) {
++        if (a[(size_t) c] > mv) { mv = a[(size_t) c]; cur = c; }
++    }
++
++    // Position update with a discontinuity guard (-disc_back < delta < disc_fwd).
++    const int delta = cur - text_position_;
++    const bool discontinuity = !(delta > -p_.disc_back && delta < p_.disc_fwd);
++    if (!discontinuity) text_position_ = cur;
++
++    // --- completion --------------------------------------------------------
++    if (!complete_ && text_position_ >= S - p_.complete_margin) {
++        complete_ = true;
++        completed_at_ = frame_ + 1;   // post-completion window starts next frame
++    }
++
++    // --- post-completion running reductions --------------------------------
++    if (complete_ && frame_ >= completed_at_) {
++        const int tc = std::max(0, p_.tail_cols);
++        const int tail_from = std::max(0, n - tc);
++        for (int c = tail_from; c < n; ++c) {
++            const int idx = c - tail_from;
++            if (idx >= 0 && idx < (int) tail_sum_.size())
++                tail_sum_[(size_t) idx] += a[(size_t) c];
++        }
++        const int early_to = std::max(0, n - p_.rep_back_cols);
++        float early_max = 0.0f;
++        for (int c = 0; c < early_to; ++c) early_max = std::max(early_max, a[(size_t) c]);
++        early_sum_ += early_max;
++    }
++
++    // --- decision ----------------------------------------------------------
++    double tail_max = 0.0;
++    for (double v : tail_sum_) tail_max = std::max(tail_max, v);
++    const bool long_tail = complete_ && (tail_max >= (double) p_.long_tail_thresh);
++    const bool alignment_repetition = complete_ && (early_sum_ > (double) p_.rep_thresh);
++
++    // Token repetition (2x identical), gated behind completion to avoid the
++    // reference's known mid-text early-cutoff (issues #519/#587).
++    bool token_repetition = false;
++    if (recent_tokens_.size() >= 3) {
++        const size_t m = recent_tokens_.size();
++        token_repetition = (recent_tokens_[m - 1] == recent_tokens_[m - 2]);
++    }
++    token_repetition = token_repetition && complete_;
++
++    ++frame_;
++
++    if (long_tail || alignment_repetition || token_repetition) {
++        return t3_align_action::force_eos;
++    }
++    // Not yet near the end: tell the caller to hold off on an early stop.
++    if (p_.suppress_eos_enabled && cur < S - p_.complete_margin && S > p_.min_text_len) {
++        return t3_align_action::suppress_eos;
++    }
++    return t3_align_action::none;
++}
++
++t3_align_analyzer_params t3_align_params_for_language(const std::string & lang, int text_len) {
++    // Start from the English-validated defaults.
++    t3_align_analyzer_params p;
++    p.text_len = text_len;
++
++    // Per-language calibration table.  The defaults were validated on English
++    // (round-trip ASR WER ~1.4%); other languages can expand differently
++    // (e.g. resemble-ai/chatterbox #519 notes German needs more lenient
++    // long-tail thresholds).  Populate an entry to tune a language; absent
++    // languages fall back to the validated defaults.  Kept explicit + data-
++    // driven rather than guessing numbers without per-language ground truth.
++    struct LangCal { int complete_margin; float long_tail; float rep_thresh; };
++    static const std::unordered_map<std::string, LangCal> kTable = {
++        // {"de", {3, 8.0f, 6.0f}},  // example: looser long-tail for German
++    };
++    auto it = kTable.find(lang);
++    if (it != kTable.end()) {
++        p.complete_margin  = it->second.complete_margin;
++        p.long_tail_thresh = it->second.long_tail;
++        p.rep_thresh       = it->second.rep_thresh;
++    }
++
++    // Environment overrides (on-device tuning without a recompile).
++    p.complete_margin     = env_int  ("CHATTERBOX_ALIGN_COMPLETE_MARGIN", p.complete_margin);
++    p.long_tail_thresh    = env_float("CHATTERBOX_ALIGN_LONG_TAIL",       p.long_tail_thresh);
++    p.rep_thresh          = env_float("CHATTERBOX_ALIGN_REP_THRESH",      p.rep_thresh);
++    p.min_text_len        = env_int  ("CHATTERBOX_ALIGN_MIN_TEXT",        p.min_text_len);
++    if (env_is_false("CHATTERBOX_ALIGN_SUPPRESS")) p.suppress_eos_enabled = false;
++
++    return p;
++}
++
++std::vector<std::pair<int, int>> t3_align_valid_heads(int n_layer, int n_head) {
++    // LLAMA_ALIGNED_HEADS from the reference; the converter preserves head
++    // ordering, so these map directly to our GGUF.
++    static const std::pair<int, int> kRef[] = {{9, 2}, {12, 15}, {13, 11}};
++    std::vector<std::pair<int, int>> out;
++    for (const auto & h : kRef) {
++        if (h.first >= 0 && h.first < n_layer && h.second >= 0 && h.second < n_head) {
++            out.push_back(h);
++        }
++    }
++    return out;
++}
++
++} // namespace tts_cpp::chatterbox::detail
+diff --git a/tts-cpp/src/t3_alignment_analyzer.h b/tts-cpp/src/t3_alignment_analyzer.h
+new file mode 100644
+index 00000000..1464a48e
+--- /dev/null
++++ b/tts-cpp/src/t3_alignment_analyzer.h
+@@ -0,0 +1,128 @@
++#pragma once
++
++// QVAC-20616 Phase 2: text<->speech alignment analyzer.
++//
++// Host-side port of resemble-ai/chatterbox's AlignmentStreamAnalyzer.step
++// (src/chatterbox/models/t3/inference/alignment_stream_analyzer.py).  It
++// consumes, one decode frame at a time, the averaged cross-attention row of
++// the aligned heads over the text-token columns (produced by the in-graph
++// alignment probe; see t3_mtl.h / t3_align_last_row) and decides when the
++// model has finished speaking the input text so the caller can force an EOS.
++//
++// Unlike the attention-free Phase 1 controller (which guesses from token
++// repetition / a length budget), this knows the actual alignment position, so
++// it stops precisely a few frames after the alignment reaches the end of the
++// text — catching both the catastrophic ramble and the mild over-runs while
++// leaving healthy generations intact.
++//
++// Pure STL (no ggml / model dependency) so it is unit-testable in isolation
++// (see test/test_t3_alignment_analyzer.cpp).
++
++#include <cstdint>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace tts_cpp::chatterbox::detail {
++
++struct t3_align_analyzer_params {
++    // S = number of text tokens (the alignment row length).
++    int   text_len        = 0;
++
++    // "complete" once the tracked text position reaches text_len - complete_margin.
++    int   complete_margin = 3;
++
++    // long_tail: after completion, if the attention summed over post-completion
++    // frames on any of the last `tail_cols` columns exceeds long_tail_thresh
++    // (≈ that many frames dwelling on the final token) => force EOS.
++    int   tail_cols        = 3;
++    float long_tail_thresh = 5.0f;
++
++    // alignment_repetition: after completion, if the summed per-frame max
++    // attention on columns before (text_len - rep_back_cols) exceeds
++    // rep_thresh (the model is re-reading earlier text) => force EOS.
++    int   rep_back_cols = 5;
++    float rep_thresh    = 5.0f;
++
++    // Position-update discontinuity guard: only advance text_position when the
++    // jump from the previous position is within (-disc_back, disc_fwd).
++    int   disc_back = 4;
++    int   disc_fwd  = 7;
++
++    // Minimum text length below which the analyzer stays disabled (very short
++    // inputs do not produce a reliable alignment; the Phase 1 controller and
++    // the natural stop token handle them).
++    int   min_text_len = 6;
++
++    bool  enabled = true;
++
++    // When true, `step` may return `suppress_eos` while the text is still being
++    // spoken so the caller can stop the model from terminating early (the
++    // "dropped first/last word / near-empty output" failure mode).  When false
++    // the analyzer only ever forces EOS; it never suppresses.
++    bool  suppress_eos_enabled = true;
++};
++
++enum class t3_align_action {
++    none = 0,
++    force_eos,      // bad ending detected -> caller should emit the stop token
++    suppress_eos,   // mid-text token repetition -> caller should NOT stop yet
++};
++
++class t3_alignment_analyzer {
++public:
++    void reset(const t3_align_analyzer_params & p);
++
++    // Feed one frame: `row` is the averaged softmax alignment over the text
++    // columns (length params.text_len) for the newest query, `sampled_token`
++    // is the speech token just produced for this frame.  Returns the action
++    // the caller should apply before producing the next token.  Mirrors
++    // AlignmentStreamAnalyzer.step.
++    //
++    // An empty `row` (probe unavailable, e.g. on a backend where the probe is
++    // not wired) is a no-op that returns `none`, so callers degrade gracefully
++    // to the Phase 1 controller.
++    t3_align_action step(const std::vector<float> & row, int32_t sampled_token);
++
++    int  text_position() const { return text_position_; }
++    bool complete()      const { return complete_; }
++    int  frames()        const { return frame_; }
++
++private:
++    t3_align_analyzer_params p_;
++    int   frame_         = 0;     // T: frames seen so far
++    int   text_position_ = 0;
++    bool  complete_      = false;
++    int   completed_at_  = -1;    // frame count at which `complete_` first set
++
++    // Running reductions over the post-completion window, matching the
++    // reference's A[completed_at:, -3:].sum(dim=0) and A[completed_at:, :-5].max(dim=1).sum().
++    std::vector<double> tail_sum_;       // per-column sum over the last `tail_cols`
++    double              early_sum_ = 0.0; // sum of per-frame max on early columns
++
++    std::vector<int32_t> recent_tokens_;
++};
++
++// Build calibrated analyzer params for a generation in the given language.
++// Starts from the English-validated defaults, applies any per-language
++// calibration entry (the table is structured so a language can be tuned with
++// a one-line edit; all languages currently use the validated defaults), then
++// applies CHATTERBOX_ALIGN_* environment overrides for on-device tuning
++// without a recompile:
++//   CHATTERBOX_ALIGN_COMPLETE_MARGIN (int)
++//   CHATTERBOX_ALIGN_LONG_TAIL       (float)
++//   CHATTERBOX_ALIGN_REP_THRESH      (float)
++//   CHATTERBOX_ALIGN_MIN_TEXT        (int)
++//   CHATTERBOX_ALIGN_SUPPRESS        (0 disables EOS suppression)
++// `text_len` is the alignment row length (number of text tokens).
++t3_align_analyzer_params t3_align_params_for_language(const std::string & lang, int text_len);
++
++// Reference aligned (layer, head) pairs (LLAMA_ALIGNED_HEADS from
++// resemble-ai/chatterbox), filtered to those valid for a model with `n_layer`
++// layers and `n_head` attention heads.  Returns the in-range subset; an empty
++// result (e.g. a model too small, or a future conversion that changed the
++// layer/head geometry) signals the caller to disable the alignment probe and
++// fall back to the Phase 1 controller rather than reading out-of-range tensors.
++std::vector<std::pair<int, int>> t3_align_valid_heads(int n_layer, int n_head);
++
++} // namespace tts_cpp::chatterbox::detail
+diff --git a/tts-cpp/src/t3_mtl.cpp b/tts-cpp/src/t3_mtl.cpp
+index bdae73be..5ad4ea38 100644
+--- a/tts-cpp/src/t3_mtl.cpp
++++ b/tts-cpp/src/t3_mtl.cpp
+@@ -23,6 +23,7 @@
+ 
+ #include "chatterbox_t3_internal.h"
+ #include "t3_mtl.h"
++#include "t3_alignment_analyzer.h"
+ 
+ #include "backend_util.h"
+ #include "ggml.h"
+@@ -48,6 +49,49 @@ namespace tts_cpp::chatterbox::detail {
+ 
+ namespace {
+ 
++// ---------------------------------------------------------------------------
++// QVAC-20616 Phase 2: alignment-probe state (thread-local, one generation per
++// thread).  Set via t3_align_configure(); read back via t3_align_last_row().
++// See t3_mtl.h for the rationale.
++// ---------------------------------------------------------------------------
++struct t3_align_state {
++    bool enabled = false;
++    int  text_i  = 0;
++    int  text_j  = 0;
++    std::vector<std::pair<int, int>> layer_heads;   // (layer_idx, head_idx)
++    std::vector<float> last_row;                     // averaged softmax row (len text_j-text_i)
++};
++thread_local t3_align_state g_t3_align;
++
++// Average the "align_L<layer>" probe outputs (newest query column) of the
++// cond pass into g_t3_align.last_row.
++void t3_align_capture_from_graph(ggml_cgraph * gf) {
++    const int nt = g_t3_align.text_j - g_t3_align.text_i;
++    if (nt <= 0) { g_t3_align.last_row.clear(); return; }
++    std::vector<double> acc((size_t) nt, 0.0);
++    int cnt = 0;
++    for (const auto & lh : g_t3_align.layer_heads) {
++        char nm[24];
++        std::snprintf(nm, sizeof(nm), "align_L%d", lh.first);
++        ggml_tensor * t = ggml_graph_get_tensor(gf, nm);
++        if (!t) continue;
++        const int rows = (int) t->ne[0];   // n_text
++        const int cols = (int) t->ne[1];   // N queries
++        if (rows != nt || cols < 1) continue;
++        std::vector<float> buf((size_t) rows * (size_t) cols);
++        ggml_backend_tensor_get(t, buf.data(), 0, ggml_nbytes(t));
++        const float * last_col = buf.data() + (size_t)(cols - 1) * (size_t) rows;
++        for (int r = 0; r < nt; ++r) acc[(size_t) r] += last_col[r];
++        ++cnt;
++    }
++    // Leave the row empty (not all-zeros) when no probe output was found so the
++    // analyzer takes its empty-row fast path and falls back to Phase 1.
++    if (cnt == 0) { g_t3_align.last_row.clear(); return; }
++    g_t3_align.last_row.assign((size_t) nt, 0.0f);
++    for (int r = 0; r < nt; ++r)
++        g_t3_align.last_row[(size_t) r] = (float) (acc[(size_t) r] / cnt);
++}
++
+ // Process-wide registry of the Phase-15 stacked-weight buffers, with an
+ // atexit hook that frees them before Metal's static device destructors
+ // run. Without this Metal asserts on `[rsets->data count] == 0` because
+@@ -628,6 +672,46 @@ ggml_tensor * build_llama_block(ggml_context * ctx, ggml_cgraph * gf,
+                       HD, rope_mode, hp.rope_orig_max_pos,
+                       hp.rope_theta, 1.0f, 0.0f, 1.0f, 32.0f, 1.0f);
+ 
++    // QVAC-20616 Phase 2: alignment probe (cond pass, B==1 only).  Recompute
++    // softmax(scale * q . K_text^T) over the text-token key columns for the
++    // configured (layer, head) and export it as "align_L<il>".  Uses the
++    // post-RoPE Q/K (pre-permute) so it matches what flash-attention consumes.
++    // Cheap: one head, (text_j - text_i) keys.  Restricted to the decode step
++    // (N == 1) and the cond pass / cond batch (b_offset_elems == 0; batch 0 for
++    // the B==2 GPU path).  No-op (and graph byte-identical) when disabled.
++    if (N == 1 && b_offset_elems == 0 && g_t3_align.enabled) {
++        const int probe_head = t3_align_head_for_layer(il);
++        const int n_text = g_t3_align.text_j - g_t3_align.text_i;
++        if (probe_head >= 0 && probe_head < NH && n_text > 0) {
++            const int ti = g_t3_align.text_i;
++            // q for this head, all N queries: (HD, N).
++            ggml_tensor * q_h = ggml_cont(ctx,
++                ggml_view_2d(ctx, Q, HD, N, Q->nb[2], (size_t) probe_head * Q->nb[1]));
++            // K_text for this head: (HD, n_text).  Text keys are in the current
++            // pass for the prompt (n_past covers them) and in the KV cache for
++            // a decode step.
++            ggml_tensor * k_text;
++            const bool text_in_pass = (ti >= n_past && g_t3_align.text_j <= n_past + N);
++            if (text_in_pass) {
++                k_text = ggml_view_2d(ctx, K, HD, n_text, K->nb[2],
++                    (size_t) probe_head * K->nb[1] + (size_t) (ti - n_past) * K->nb[2]);
++            } else {
++                k_text = ggml_view_2d(ctx, memory_k, HD, n_text, kv_pos_stride,
++                    layer_off + (size_t) probe_head * kv_head_stride
++                              + (size_t) ti * kv_pos_stride);
++            }
++            k_text = ggml_cont(ctx, k_text);
++            ggml_tensor * scores = ggml_mul_mat(ctx, k_text, q_h);        // (n_text, N)
++            scores = ggml_scale(ctx, scores, 1.0f / std::sqrt((float) HD));
++            ggml_tensor * aprobs = ggml_soft_max(ctx, scores);           // softmax over n_text
++            char nm[24];
++            std::snprintf(nm, sizeof(nm), "align_L%d", il);
++            ggml_set_name(aprobs, nm);
++            ggml_set_output(aprobs);
++            ggml_build_forward_expand(gf, aprobs);
++        }
++    }
++
+     // Flash attention expects (HD, N, NH[, B]).  Permute (0, 2, 1, 3) lifts
+     // N to ne[1] so the KV cache keeps a [HD, n_ctx, n_kv_head] inner-3D
+     // layout that flash_attn can read contiguously per (head, batch).
+@@ -1147,6 +1231,8 @@ bool run_prompt_pass(const chatterbox_model & model,
+     ggml_tensor * logits = ggml_graph_get_tensor(gf, "logits");
+     logits_out.resize(ggml_nelements(logits));
+     ggml_backend_tensor_get(logits, logits_out.data(), 0, ggml_nbytes(logits));
++    // (No alignment capture here: the probe is gated to the decode step
++    //  graph; the prompt's BOS row is intentionally not fed to the analyzer.)
+     return true;
+ }
+ 
+@@ -1268,6 +1354,12 @@ bool run_step_pass_b2(const chatterbox_model & model,
+     logits_uncond_out.resize(hp.n_speech_vocab);
+     ggml_backend_tensor_get(logits, logits_cond_out.data(),   0,                per_batch_bytes);
+     ggml_backend_tensor_get(logits, logits_uncond_out.data(), per_batch_bytes, per_batch_bytes);
++
++    // QVAC-20616 Phase 2: capture the cond-batch (b=0) alignment row from the
++    // batched GPU step graph so the analyzer works on Metal/Vulkan/OpenCL too.
++    if (g_t3_align.enabled) {
++        t3_align_capture_from_graph(gf);
++    }
+     return true;
+ }
+ 
+@@ -1288,8 +1380,11 @@ bool run_step_pass(const chatterbox_model & model,
+     // Default-disabled because in single-utterance workloads every
+     // step call is a unique n_past — the cache fills up but nothing
+     // is re-used.  See the t3_step_cache_enabled() comment above.
++    // The step-graph cache keys on (n_past, is_uncond) only; the alignment
++    // probe adds text-slice-dependent nodes, so bypass the cache while probing
++    // to avoid serving a graph built for a different generation's text slice.
+     t3_step_cache_entry * entry = nullptr;
+-    if (t3_step_cache_enabled()) {
++    if (!g_t3_align.enabled && t3_step_cache_enabled()) {
+         entry = t3_step_cache_lookup(n_past, is_uncond);
+         if (!entry) {
+             entry = t3_step_cache_insert_or_get(model, n_past, is_uncond);
+@@ -1322,11 +1417,70 @@ bool run_step_pass(const chatterbox_model & model,
+     ggml_tensor * logits = ggml_graph_get_tensor(gf, "logits");
+     logits_out.resize(ggml_nelements(logits));
+     ggml_backend_tensor_get(logits, logits_out.data(), 0, ggml_nbytes(logits));
++
++    if (g_t3_align.enabled && !is_uncond) {
++        t3_align_capture_from_graph(gf);
++    }
+     return true;
+ }
+ 
+ } // namespace
+ 
++// -- QVAC-20616 Phase 2 alignment-probe hooks (see t3_mtl.h) ----------------
++
++void t3_align_configure(bool enabled, int text_i, int text_j,
++                        const std::vector<std::pair<int, int>> & layer_heads) {
++    g_t3_align.enabled     = enabled;
++    g_t3_align.text_i      = text_i;
++    g_t3_align.text_j      = text_j;
++    g_t3_align.layer_heads = layer_heads;
++    g_t3_align.last_row.clear();
++}
++
++bool t3_align_enabled() { return g_t3_align.enabled; }
++
++void t3_align_reset() {
++    g_t3_align.enabled = false;
++    g_t3_align.text_i  = 0;
++    g_t3_align.text_j  = 0;
++    g_t3_align.layer_heads.clear();
++    g_t3_align.last_row.clear();
++}
++
++const std::vector<float> & t3_align_last_row() { return g_t3_align.last_row; }
++
++int t3_align_head_for_layer(int il) {
++    for (const auto & lh : g_t3_align.layer_heads) {
++        if (lh.first == il) return lh.second;
++    }
++    return -1;
++}
++
++int t3_align_begin_generation(const chatterbox_model & model, int n_text_tokens) {
++    if (model.hparams.variant != CHBX_VARIANT_MTL) { t3_align_reset(); return 0; }
++    const char * dis = std::getenv("CHATTERBOX_ALIGN_DISABLE");
++    if (dis && dis[0] != '\0' && std::strcmp(dis, "0") != 0) { t3_align_reset(); return 0; }
++    // Very short inputs do not produce a reliable monotonic alignment; leave
++    // them to the natural stop token + the Phase 1 controller.
++    if (n_text_tokens < 6) { t3_align_reset(); return 0; }
++    // Self-check: only probe (layer, head) pairs that exist in this model.  A
++    // future conversion that shrinks or permutes the layer/head geometry would
++    // leave no valid heads -> disable alignment and fall back to Phase 1 rather
++    // than read out-of-range KV/Q tensors.
++    auto heads = t3_align_valid_heads(model.hparams.n_layer, model.hparams.n_head);
++    if (heads.empty()) {
++        fprintf(stderr, "t3_align: no in-range aligned heads for n_layer=%d n_head=%d; "
++                        "alignment disabled (Phase 1 controller still active)\n",
++                model.hparams.n_layer, model.hparams.n_head);
++        t3_align_reset();
++        return 0;
++    }
++    const int len_cond = 1 + model.hparams.perceiver_queries
++                       + (model.hparams.emotion_adv ? 1 : 0);
++    t3_align_configure(/*enabled=*/true, len_cond, len_cond + n_text_tokens, heads);
++    return n_text_tokens;
++}
++
+ // -- Stage builders for parity validation (see t3_mtl.h) --------------------
+ 
+ ggml_cgraph * build_stage_cond_emb_graph(const chatterbox_model & m) {
+@@ -1893,13 +2047,20 @@ int32_t sample_next_token_mtl(const std::vector<float> & logits_cond,
+                               const std::vector<int32_t> & generated,
+                               const chatterbox_sampling_params & p,
+                               std::mt19937 & rng,
+-                              int32_t stop_token) {
++                              int32_t stop_token,
++                              bool suppress_stop_token) {
+     const size_t V = logits_cond.size();
+     std::vector<float> l(V);
+     for (size_t i = 0; i < V; ++i) {
+         l[i] = logits_cond[i] + p.cfg_weight * (logits_cond[i] - logits_uncond[i]);
+     }
+ 
++    // QVAC-20616: hard-suppress the stop token while the text is mid-utterance
++    // so sampling cannot terminate before the alignment reaches the end.
++    if (suppress_stop_token && stop_token >= 0 && (size_t) stop_token < V) {
++        l[(size_t) stop_token] = -INFINITY;
++    }
++
+     if (p.repeat_penalty != 1.0f) {
+         for (int32_t t : generated) {
+             if (t < 0 || (size_t) t >= V) continue;
+diff --git a/tts-cpp/src/t3_mtl.h b/tts-cpp/src/t3_mtl.h
+index 4769c903..32f3bb28 100644
+--- a/tts-cpp/src/t3_mtl.h
++++ b/tts-cpp/src/t3_mtl.h
+@@ -9,8 +9,52 @@
+ #include "ggml.h"
+ #include "ggml-backend.h"
+ 
++#include <utility>
++#include <vector>
++
+ namespace tts_cpp::chatterbox::detail {
+ 
++// ---------------------------------------------------------------------------
++// QVAC-20616 Phase 2: text<->speech alignment probe.
++//
++// Some self-attention heads of the T3 Llama backbone implicitly solve the
++// monotonic text->speech alignment.  The Python reference
++// (AlignmentStreamAnalyzer) averages a small set of (layer, head) cross-
++// attention maps over the text-token columns and uses the resulting
++// alignment to force EOS once the text is fully spoken.
++//
++// The production forward uses fused flash-attention, which does not expose
++// attention weights, so we add a tiny side computation: for each configured
++// (layer, head) we recompute softmax(scale * qK_text^T) over just the
++// text-token key columns [text_i, text_j) of the COND pass and export it as
++// a graph output named "align_L<layer>".  run_prompt_pass / run_step_pass
++// average those rows (newest query) into t3_align_last_row().
++//
++// Configure once per generation (set the text-token column range and the
++// aligned (layer, head) pairs); call t3_align_reset() between generations.
++// When disabled (the default) the forward graph is byte-for-byte unchanged.
++void t3_align_configure(bool enabled, int text_i, int text_j,
++                        const std::vector<std::pair<int, int>> & layer_heads);
++bool t3_align_enabled();
++void t3_align_reset();
++
++// Averaged, softmaxed alignment row (length text_j - text_i) captured by the
++// most recent cond prompt/step pass.  Empty if disabled or not yet captured.
++const std::vector<float> & t3_align_last_row();
++
++// Head index probed for layer `il`, or -1 if `il` is not a configured
++// alignment layer.  Used internally by the layer builder.
++int t3_align_head_for_layer(int il);
++
++// Convenience: configure the probe for one generation using the default
++// reference aligned heads ((9,2),(12,15),(13,11)) and the text-token column
++// slice [len_cond, len_cond + n_text_tokens).  No-op (returns 0) for the Turbo
++// variant, for very short inputs, or when CHATTERBOX_ALIGN_DISABLE is set.
++// Returns the text length S (== n_text_tokens) the analyzer should use, or 0
++// when alignment is disabled.
++int t3_align_begin_generation(const chatterbox_model & model, int n_text_tokens);
++
++
+ // Phase 15: drop a (buffer_stack, ctx_stack) pair from the process-wide
+ // atexit registry. Called from main()'s free_t3() lambda on error-path
+ // early-returns so we don't double-free at process exit.
+diff --git a/tts-cpp/src/t3_stop_controller.cpp b/tts-cpp/src/t3_stop_controller.cpp
+new file mode 100644
+index 00000000..662c37b0
+--- /dev/null
++++ b/tts-cpp/src/t3_stop_controller.cpp
+@@ -0,0 +1,216 @@
++#include "t3_stop_controller.h"
++
++#include <algorithm>
++#include <cmath>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++namespace tts_cpp::chatterbox::detail {
++
++namespace {
++
++// --- small env-override helpers (calibration without a recompile) ----------
++
++bool env_present(const char * name) {
++    const char * v = std::getenv(name);
++    return v && v[0] != '\0';
++}
++
++// Treats unset / "" / "0" / "false" / "off" as "not disabled".
++bool env_truthy(const char * name) {
++    const char * v = std::getenv(name);
++    if (!v || v[0] == '\0') return false;
++    if (std::strcmp(v, "0") == 0) return false;
++    if (std::strcmp(v, "false") == 0 || std::strcmp(v, "FALSE") == 0) return false;
++    if (std::strcmp(v, "off") == 0 || std::strcmp(v, "OFF") == 0) return false;
++    return true;
++}
++
++int env_int(const char * name, int fallback) {
++    const char * v = std::getenv(name);
++    if (!v || v[0] == '\0') return fallback;
++    char * end = nullptr;
++    long parsed = std::strtol(v, &end, 10);
++    if (end == v) return fallback;
++    return (int) parsed;
++}
++
++float env_float(const char * name, float fallback) {
++    const char * v = std::getenv(name);
++    if (!v || v[0] == '\0') return fallback;
++    char * end = nullptr;
++    float parsed = std::strtof(v, &end);
++    if (end == v) return fallback;
++    return parsed;
++}
++
++// argmax of the CFG-combined logits.  combined[i] = cond[i] + w*(cond[i]-uncond[i]).
++// When `uncond` is empty (non-CFG callers), combined == cond.  Returns -1 for
++// an empty / size-mismatched input.
++int combined_argmax(const std::vector<float> & cond,
++                    const std::vector<float> & uncond,
++                    float                      cfg_weight) {
++    const size_t V = cond.size();
++    if (V == 0) return -1;
++    const bool use_cfg = (!uncond.empty() && uncond.size() == V && cfg_weight != 0.0f);
++
++    int   best_i = 0;
++    float best_v = -INFINITY;
++    for (size_t i = 0; i < V; ++i) {
++        float l = use_cfg ? cond[i] + cfg_weight * (cond[i] - uncond[i]) : cond[i];
++        if (l > best_v) { best_v = l; best_i = (int) i; }
++    }
++    return best_i;
++}
++
++// Softmax probability of `idx` over the CFG-combined logits.  Only called when
++// the probability gate is enabled.
++float combined_softmax_prob(const std::vector<float> & cond,
++                            const std::vector<float> & uncond,
++                            float                      cfg_weight,
++                            int                        idx) {
++    const size_t V = cond.size();
++    if (V == 0 || idx < 0 || (size_t) idx >= V) return 0.0f;
++    const bool use_cfg = (!uncond.empty() && uncond.size() == V && cfg_weight != 0.0f);
++
++    auto comb = [&](size_t i) -> float {
++        return use_cfg ? cond[i] + cfg_weight * (cond[i] - uncond[i]) : cond[i];
++    };
++
++    float maxl = -INFINITY;
++    for (size_t i = 0; i < V; ++i) maxl = std::max(maxl, comb(i));
++    if (!std::isfinite(maxl)) return 0.0f;
++
++    double sum = 0.0;
++    for (size_t i = 0; i < V; ++i) sum += std::exp((double) (comb(i) - maxl));
++    if (sum <= 0.0) return 0.0f;
++    return (float) (std::exp((double) (comb((size_t) idx) - maxl)) / sum);
++}
++
++} // namespace
++
++void t3_stop_controller::reset(const t3_stop_params & p) {
++    params_     = p;
++    eos_streak_ = 0;
++}
++
++bool t3_stop_controller::force_eos(int                        n_generated,
++                                   const std::vector<float> & logits_cond,
++                                   const std::vector<float> & logits_uncond) {
++    if (!params_.enabled || params_.eos_argmax_streak <= 0) {
++        eos_streak_ = 0;
++        return false;
++    }
++
++    const int argmax = combined_argmax(logits_cond, logits_uncond, params_.cfg_weight);
++    if (argmax == params_.stop_token) {
++        ++eos_streak_;
++    } else {
++        eos_streak_ = 0;
++        return false;
++    }
++
++    if (n_generated < params_.min_tokens) return false;
++    if (eos_streak_ < params_.eos_argmax_streak) return false;
++
++    if (params_.eos_prob_threshold > 0.0f) {
++        const float p = combined_softmax_prob(logits_cond, logits_uncond,
++                                               params_.cfg_weight, params_.stop_token);
++        if (p < params_.eos_prob_threshold) return false;
++    }
++
++    return true;
++}
++
++t3_post_result t3_stop_controller::post_check(const std::vector<int32_t> & generated) const {
++    t3_post_result result;
++    if (!params_.enabled) return result;
++
++    const int n = (int) generated.size();
++    if (n < params_.min_tokens) return result;
++
++    // 1. Repetition: smallest period first so a period-1 stutter (the common
++    //    near-silent cadence) is caught and reported as period 1.
++    if (params_.rep_repeats > 1 && params_.rep_max_period >= 1) {
++        const int max_p = std::min(params_.rep_max_period, n / params_.rep_repeats);
++        for (int p = 1; p <= max_p; ++p) {
++            // Are the last (rep_repeats * p) tokens `rep_repeats` copies of the
++            // trailing p-token block?
++            bool periodic = true;
++            const int span = params_.rep_repeats * p;
++            for (int k = 0; k < span; ++k) {
++                if (generated[n - 1 - k] != generated[n - 1 - (k % p)]) {
++                    periodic = false;
++                    break;
++                }
++            }
++            if (!periodic) continue;
++
++            // Extend the run backwards to count every trailing period, then
++            // trim all but one copy so the stutter collapses cleanly.
++            int periods = params_.rep_repeats;
++            while ((periods + 1) * p <= n) {
++                bool ok = true;
++                for (int k = periods * p; k < (periods + 1) * p; ++k) {
++                    if (generated[n - 1 - k] != generated[n - 1 - (k % p)]) {
++                        ok = false;
++                        break;
++                    }
++                }
++                if (!ok) break;
++                ++periods;
++            }
++            result.reason    = t3_stop_reason::repetition;
++            result.trim_tail = (periods - 1) * p;
++            return result;
++        }
++    }
++
++    // 2. Budget backstop.
++    if (params_.max_tokens > 0 && n >= params_.max_tokens) {
++        result.reason = t3_stop_reason::budget;
++        return result;
++    }
++
++    return result;
++}
++
++t3_stop_params make_mtl_stop_params(int32_t stop_token,
++                                    float   cfg_weight,
++                                    int     n_text_tokens,
++                                    int     n_predict_cap) {
++    t3_stop_params p;
++    p.enabled    = true;
++    p.stop_token = stop_token;
++    p.cfg_weight = cfg_weight;
++
++    // Skip the speech onset before any heuristic may fire.
++    p.min_tokens = std::max(0, env_int("CHATTERBOX_STOP_MIN_TOKENS", 16));
++
++    // Proportional budget: generous multiple of the text length so genuinely
++    // long inputs are never clipped, with an absolute floor for very short
++    // inputs and an absolute ceiling at the caller's n_predict.  Real MTL
++    // speech runs ~5-8 tokens per text token; 20x leaves a wide safety margin
++    // while still bounding a total EOS failure to a few seconds.
++    constexpr int   kBudgetFloor = 96;
++    const float ratio = std::max(0.0f, env_float("CHATTERBOX_STOP_MAX_RATIO", 20.0f));
++    int budget = (int) std::lround((double) ratio * (double) std::max(0, n_text_tokens))
++                 + 64;
++    budget = std::max(budget, kBudgetFloor);
++    if (n_predict_cap > 0) budget = std::min(budget, n_predict_cap);
++    budget = env_int("CHATTERBOX_STOP_MAX_TOKENS", budget);
++    p.max_tokens = budget;
++
++    p.rep_max_period    = std::max(0, env_int("CHATTERBOX_STOP_REP_PERIOD", 8));
++    p.rep_repeats       = std::max(0, env_int("CHATTERBOX_STOP_REP_REPEATS", 3));
++    p.eos_argmax_streak = env_int("CHATTERBOX_STOP_EOS_STREAK", 2);
++    p.eos_prob_threshold = std::max(0.0f, env_float("CHATTERBOX_STOP_EOS_PROB", 0.0f));
++
++    if (env_present("CHATTERBOX_STOP_DISABLE") && env_truthy("CHATTERBOX_STOP_DISABLE")) {
++        p.enabled = false;
++    }
++    return p;
++}
++
++} // namespace tts_cpp::chatterbox::detail
+diff --git a/tts-cpp/src/t3_stop_controller.h b/tts-cpp/src/t3_stop_controller.h
+new file mode 100644
+index 00000000..0f4c4c81
+--- /dev/null
++++ b/tts-cpp/src/t3_stop_controller.h
+@@ -0,0 +1,150 @@
++#pragma once
++
++// Robust end-of-speech stop controller for the Chatterbox T3 autoregressive
++// decode loop (QVAC-20616).
++//
++// Background
++// ----------
++// The T3 decoder emits speech tokens one at a time until it samples the
++// `stop_speech_token` or hits the `n_predict` cap (default 1000 ≈ 40 s of
++// audio at ~25 tok/s).  On the multilingual (MTL) variant the model
++// frequently fails to emit a stop token after it has finished speaking the
++// input text and instead "rambles" — either repeating a near-silent cadence
++// (audible as gutural/empty sounds) or hallucinating fresh low-energy content
++// for many seconds.  The Python reference (resemble-ai/chatterbox) suppresses
++// this with an attention-based `AlignmentStreamAnalyzer` that force-emits EOS.
++//
++// This controller is the host-side, attention-free half of the fix.  It is
++// intentionally free of any ggml / model dependency so it can be unit-tested
++// in isolation (see test/test_t3_stop_controller.cpp).  It folds three
++// complementary signals into one place so the engine and CLI decode loops
++// behave identically (previously the engine used a 3×-identical-token break
++// with no floor while the CLI used a 2×-identical-token break with a 60-token
++// floor):
++//
++//   1. EOS confidence — if the model's own (CFG-combined) argmax is the stop
++//      token for `eos_argmax_streak` consecutive steps, the model wants to
++//      stop but temperature/top-p sampling keeps missing it.  We force the
++//      stop.  This is a safe signal: it never fires unless the model itself
++//      prefers EOS.
++//   2. Repetition — a token cycle of period p∈[1, rep_max_period] repeated
++//      `rep_repeats`+ times is the stuck near-silent cadence; we stop and trim
++//      the duplicated tail.
++//   3. Budget — a generous, text-length-derived hard cap so a total EOS
++//      failure is bounded to a few seconds instead of ~40 s.
++//
++// All of these only fire after a `min_tokens` floor so the initial speech
++// onset (and the reference's known early-cutoff failure mode) is protected.
++
++#include <cstdint>
++#include <vector>
++
++namespace tts_cpp::chatterbox::detail {
++
++struct t3_stop_params {
++    // Master gate.  Left false by default so the Turbo (English GPT-2) path —
++    // which does not exhibit this bug — keeps its existing behaviour untouched
++    // when a default-constructed param block is used.
++    bool    enabled            = false;
++
++    // Vocabulary id of the end-of-speech token (hparams.stop_speech_token).
++    int32_t stop_token         = 0;
++
++    // CFG mixing weight used to reconstruct the logits the sampler actually
++    // ranks: combined = cond + cfg_weight * (cond - uncond).  Pass an empty
++    // uncond vector to treat it as a plain (non-CFG) logits vector.
++    float   cfg_weight         = 0.0f;
++
++    // No heuristic stop may fire before this many speech tokens have been
++    // generated.  Protects the speech onset and avoids the reference's
++    // early-cutoff regression.
++    int     min_tokens         = 16;
++
++    // Hard upper bound on generated speech tokens (the last-resort backstop).
++    // 0 disables the budget check (the caller's own n_predict still applies).
++    int     max_tokens         = 0;
++
++    // Repetition: a cycle of period in [1, rep_max_period] repeated at least
++    // rep_repeats times triggers a stop.  rep_repeats <= 1 or rep_max_period
++    // < 1 disables the check.
++    int     rep_max_period     = 8;
++    int     rep_repeats        = 3;
++
++    // EOS confidence: force a stop once the CFG-combined argmax has been the
++    // stop token for this many consecutive steps.  <= 0 disables the check.
++    int     eos_argmax_streak  = 2;
++
++    // Optional extra gate on EOS confidence: also require the stop token's
++    // softmax probability to be >= this value.  0 disables the probability
++    // gate (argmax + streak alone decide).
++    float   eos_prob_threshold = 0.0f;
++};
++
++enum class t3_stop_reason {
++    none = 0,
++    eos_confidence, // model's argmax is EOS but sampling kept missing it
++    repetition,     // periodic token cycle (stuck cadence)
++    budget,         // hit the max_tokens safety net
++};
++
++struct t3_post_result {
++    t3_stop_reason reason    = t3_stop_reason::none;
++    // Number of tokens to drop from the tail of `generated` before
++    // finalisation (used to strip a repeated cadence down to a single
++    // period).  Always 0 unless reason == repetition.
++    int            trim_tail = 0;
++};
++
++// Stateless-per-construction controller; `reset` (re)initialises it for one
++// decode (one segment / one synthesize call).
++class t3_stop_controller {
++public:
++    void reset(const t3_stop_params & p);
++
++    const t3_stop_params & params() const { return params_; }
++
++    // Pre-sampling hook.  Call with the per-step logits the sampler is about
++    // to rank (cond + optional uncond) and the number of tokens generated so
++    // far.  Returns true when the model's own preference is to stop and the
++    // caller should emit `stop_token` instead of sampling.
++    //
++    // Updates the internal EOS-argmax streak as a side effect, so it must be
++    // called exactly once per decode step even when the result is ignored.
++    bool force_eos(int                        n_generated,
++                   const std::vector<float> & logits_cond,
++                   const std::vector<float> & logits_uncond);
++
++    // Post-sampling hook.  Call with the full generated token vector (after
++    // pushing the freshly sampled token).  Detects a stuck repetition cadence
++    // or a blown budget and reports how much of the tail to trim.
++    t3_post_result post_check(const std::vector<int32_t> & generated) const;
++
++private:
++    t3_stop_params params_;
++    int            eos_streak_ = 0;
++};
++
++// Build a calibrated parameter block for the multilingual (MTL) variant.
++//
++//   stop_token     : hparams.stop_speech_token
++//   cfg_weight     : sampling cfg_weight (for logit reconstruction)
++//   n_text_tokens  : number of input text tokens for this segment (drives the
++//                    proportional budget so long inputs are never clipped)
++//   n_predict_cap  : the caller's hard n_predict (the budget never exceeds it)
++//
++// Reads optional environment overrides so the thresholds can be tuned on a
++// device without recompiling:
++//   CHATTERBOX_STOP_DISABLE      (any non-empty/non-"0" => disable entirely)
++//   CHATTERBOX_STOP_MIN_TOKENS   (int)
++//   CHATTERBOX_STOP_MAX_TOKENS   (int; overrides the computed budget)
++//   CHATTERBOX_STOP_MAX_RATIO    (float; tokens-per-text-token budget ratio)
++//   CHATTERBOX_STOP_EOS_STREAK   (int)
++//   CHATTERBOX_STOP_EOS_PROB     (float)
++//   CHATTERBOX_STOP_REP_PERIOD   (int; max repetition period)
++//   CHATTERBOX_STOP_REP_REPEATS  (int)
++t3_stop_params make_mtl_stop_params(int32_t stop_token,
++                                    float   cfg_weight,
++                                    int     n_text_tokens,
++                                    int     n_predict_cap);
++
++} // namespace tts_cpp::chatterbox::detail
+diff --git a/tts-cpp/test/test_eos_roundtrip.cpp b/tts-cpp/test/test_eos_roundtrip.cpp
+new file mode 100644
+index 00000000..80fb1dd3
+--- /dev/null
++++ b/tts-cpp/test/test_eos_roundtrip.cpp
+@@ -0,0 +1,198 @@
++// QVAC-20616 round-trip regression test: synthesize -> ASR -> compare.
++//
++// This is the end-to-end guard for the end-of-speech fix.  For a fixed set of
++// English phrases it drives `tts-cli` to synthesize a wav, transcribes it with
++// `whisper-cli`, and checks that the transcription:
++//   * is close to the input text  (CER <= --max-cer)  -> catches CLIPPING
++//     (missing trailing words inflate the edit distance), and
++//   * is not much longer than the input (hyp/ref char ratio <= --max-ramble)
++//     -> catches RAMBLING (the trailing-token bug re-appearing dumps lots of
++//     extra transcribed words).
++//
++// Pure orchestration via subprocess (POSIX), mirroring test_multilingual_asr;
++// no model is linked.  CMake registers it disabled unless the Chatterbox MTL
++// GGUFs + whisper-cli + a Whisper model are all present, so a fixtureless
++// checkout still gets a green ctest.
++//
++// whisper.cpp reads the 24 kHz synthesized wav directly (miniaudio resamples
++// to 16 kHz internally), so no explicit resample step is needed here.
++
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <vector>
++
++namespace {
++
++std::string sh_quote(const std::string & s) {
++    std::string out = "'";
++    for (char c : s) { if (c == '\'') out += "'\\''"; else out += c; }
++    out += "'";
++    return out;
++}
++
++std::string read_file(const std::string & path) {
++    std::ifstream f(path, std::ios::binary);
++    if (!f) return {};
++    std::stringstream ss; ss << f.rdbuf();
++    return ss.str();
++}
++
++// Lowercase, drop ASCII punctuation, collapse whitespace -> char vector.
++std::vector<char> normalize(const std::string & s) {
++    std::vector<char> out;
++    bool prev_space = true;
++    for (unsigned char uc : s) {
++        char c = (char) uc;
++        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
++        const bool is_alnum = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
++        if (is_alnum) { out.push_back(c); prev_space = false; }
++        else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
++            if (!prev_space) { out.push_back(' '); prev_space = true; }
++        }
++        // other punctuation dropped
++    }
++    while (!out.empty() && out.back() == ' ') out.pop_back();
++    return out;
++}
++
++size_t levenshtein(const std::vector<char> & a, const std::vector<char> & b) {
++    if (a.empty()) return b.size();
++    if (b.empty()) return a.size();
++    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
++    for (size_t j = 0; j <= b.size(); ++j) prev[j] = j;
++    for (size_t i = 1; i <= a.size(); ++i) {
++        cur[0] = i;
++        for (size_t j = 1; j <= b.size(); ++j) {
++            const size_t cost = (a[i - 1] == b[j - 1]) ? 0u : 1u;
++            cur[j] = std::min({ prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost });
++        }
++        std::swap(prev, cur);
++    }
++    return prev[b.size()];
++}
++
++struct Args {
++    std::string tts_cli, t3, s3gen, ref_dir, whisper_cli, whisper_model;
++    std::string lang = "en";
++    std::string tmp = "/tmp";
++    int    gpu_layers = 0;
++    int    seed = 0;
++    double max_cer = 0.50;     // generous: this is a clip/ramble gate, not an ASR-quality gate
++    double max_ramble = 2.5;   // hyp chars / ref chars upper bound (no rambling)
++};
++
++bool parse_args(int argc, char ** argv, Args & a) {
++    for (int i = 1; i < argc; ++i) {
++        std::string k = argv[i];
++        auto val = [&](const char * n) -> const char * {
++            if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", n); return nullptr; }
++            return argv[++i];
++        };
++        if      (k == "--tts-cli")       { auto v = val(k.c_str()); if (!v) return false; a.tts_cli = v; }
++        else if (k == "--t3")            { auto v = val(k.c_str()); if (!v) return false; a.t3 = v; }
++        else if (k == "--s3gen")         { auto v = val(k.c_str()); if (!v) return false; a.s3gen = v; }
++        else if (k == "--ref-dir")       { auto v = val(k.c_str()); if (!v) return false; a.ref_dir = v; }
++        else if (k == "--whisper-cli")   { auto v = val(k.c_str()); if (!v) return false; a.whisper_cli = v; }
++        else if (k == "--whisper-model") { auto v = val(k.c_str()); if (!v) return false; a.whisper_model = v; }
++        else if (k == "--lang")          { auto v = val(k.c_str()); if (!v) return false; a.lang = v; }
++        else if (k == "--tmp")           { auto v = val(k.c_str()); if (!v) return false; a.tmp = v; }
++        else if (k == "--gpu-layers")    { auto v = val(k.c_str()); if (!v) return false; a.gpu_layers = std::atoi(v); }
++        else if (k == "--seed")          { auto v = val(k.c_str()); if (!v) return false; a.seed = std::atoi(v); }
++        else if (k == "--max-cer")       { auto v = val(k.c_str()); if (!v) return false; a.max_cer = std::atof(v); }
++        else if (k == "--max-ramble")    { auto v = val(k.c_str()); if (!v) return false; a.max_ramble = std::atof(v); }
++        else { fprintf(stderr, "unknown arg: %s\n", k.c_str()); return false; }
++    }
++    return !a.tts_cli.empty() && !a.t3.empty() && !a.s3gen.empty() &&
++           !a.whisper_cli.empty() && !a.whisper_model.empty();
++}
++
++// English phrases (varied length) that base.en transcribes reliably.  Avoid
++// single-syllable words, which are inherently ASR-ambiguous on synthesized
++// audio (the short-input no-clip invariant is covered deterministically by the
++// model-free unit tests instead).
++const std::array<const char *, 5> kPhrases = {{
++    "hello how are you",
++    "what time is it",
++    "thank you very much for your help",
++    "the quick brown fox jumps over the lazy dog",
++    "welcome to the event we are glad you are here",
++}};
++
++int synth(const Args & a, const std::string & text, const std::string & wav) {
++    std::string cmd = sh_quote(a.tts_cli)
++        + " --model " + sh_quote(a.t3)
++        + " --s3gen-gguf " + sh_quote(a.s3gen)
++        + " --language " + sh_quote(a.lang)
++        + " --text " + sh_quote(text)
++        + " --out " + sh_quote(wav)
++        + " --seed " + std::to_string(a.seed)
++        + " --threads 16";
++    if (!a.ref_dir.empty()) cmd += " --ref-dir " + sh_quote(a.ref_dir);
++    if (a.gpu_layers > 0)   cmd += " --n-gpu-layers " + std::to_string(a.gpu_layers);
++    cmd += " >/dev/null 2>&1";
++    return std::system(cmd.c_str());
++}
++
++int transcribe(const Args & a, const std::string & wav, const std::string & prefix) {
++    std::string cmd = sh_quote(a.whisper_cli)
++        + " -m " + sh_quote(a.whisper_model)
++        + " -l " + sh_quote(a.lang)
++        + " -f " + sh_quote(wav)
++        + " -otxt -of " + sh_quote(prefix)
++        + " -nt -np >/dev/null 2>&1";
++    return std::system(cmd.c_str());
++}
++
++} // namespace
++
++int main(int argc, char ** argv) {
++    Args a;
++    if (!parse_args(argc, argv, a)) { fprintf(stderr, "usage: test-eos-roundtrip --tts-cli ... --t3 ... --s3gen ... --whisper-cli ... --whisper-model ...\n"); return 64; }
++
++    int failures = 0, idx = 0;
++    for (const char * phrase : kPhrases) {
++        const std::string wav    = a.tmp + "/eos_rt_" + std::to_string(idx) + ".wav";
++        const std::string prefix = a.tmp + "/eos_rt_" + std::to_string(idx);
++        ++idx;
++
++        if (synth(a, phrase, wav) != 0) {
++            fprintf(stderr, "FAIL [%s]: synthesis failed\n", phrase);
++            ++failures; continue;
++        }
++        if (transcribe(a, wav, prefix) != 0) {
++            fprintf(stderr, "FAIL [%s]: whisper failed\n", phrase);
++            ++failures; continue;
++        }
++        const std::string hyp = read_file(prefix + ".txt");
++        const auto ref_n = normalize(phrase);
++        const auto hyp_n = normalize(hyp);
++        if (hyp_n.empty()) {
++            fprintf(stderr, "FAIL [%s]: empty transcription\n", phrase);
++            ++failures; continue;
++        }
++        const size_t dist = levenshtein(ref_n, hyp_n);
++        const double cer  = ref_n.empty() ? 1.0 : double(dist) / double(ref_n.size());
++        const double ramble = double(hyp_n.size()) / double(std::max<size_t>(ref_n.size(), 1));
++
++        const bool ok = (cer <= a.max_cer) && (ramble <= a.max_ramble);
++        fprintf(stderr, "%s [%s] CER=%.2f ramble=%.2f  in=\"%s\"  asr=\"%s\"\n",
++                ok ? "PASS" : "FAIL", a.lang.c_str(), cer, ramble, phrase,
++                std::string(hyp_n.begin(), hyp_n.end()).c_str());
++        if (!ok) {
++            ++failures;
++            if (cer > a.max_cer)    fprintf(stderr, "    -> CER %.2f > %.2f (possible clipping/garble)\n", cer, a.max_cer);
++            if (ramble > a.max_ramble) fprintf(stderr, "    -> ramble %.2f > %.2f (extra trailing content)\n", ramble, a.max_ramble);
++        }
++    }
++
++    fprintf(stderr, "\n%s: %d/%zu phrases passed\n",
++            failures == 0 ? "PASS" : "FAIL", int(kPhrases.size()) - failures, kPhrases.size());
++    return failures == 0 ? 0 : 1;
++}
+diff --git a/tts-cpp/test/test_mtl_sampler.cpp b/tts-cpp/test/test_mtl_sampler.cpp
+new file mode 100644
+index 00000000..8ad6375c
+--- /dev/null
++++ b/tts-cpp/test/test_mtl_sampler.cpp
+@@ -0,0 +1,72 @@
++// Unit test for the MTL sampler's EOS-suppression option (QVAC-20616 Phase 2,
++// improvement #1).  Pure logit math — no model load — but it links libtts-cpp
++// because sample_next_token_mtl lives in the t3_mtl translation unit.
++//
++//   ./test-mtl-sampler         (no arguments; self-contained)
++
++#include "chatterbox_t3_internal.h"
++
++#include <cstdio>
++#include <random>
++#include <vector>
++
++using namespace tts_cpp::chatterbox::detail;
++
++namespace {
++int g_failures = 0, g_checks = 0;
++#define CHECK(cond, ...) do {                                            \
++    ++g_checks;                                                          \
++    if (!(cond)) { ++g_failures;                                         \
++        fprintf(stderr, "FAIL %s:%d  ", __FILE__, __LINE__);            \
++        fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); }          \
++} while (0)
++}
++
++int main() {
++    constexpr int V = 16;
++    constexpr int32_t STOP = 9;
++
++    // Logits where the stop token is the dominant choice.  The MTL sampler is
++    // the CFG path and always indexes uncond, so pass a full (zero) uncond;
++    // with cfg_weight = 0 the combined logits equal `cond`.
++    std::vector<float> cond((size_t) V, 0.0f);
++    cond[(size_t) STOP] = 12.0f;               // stop is the clear argmax
++    const std::vector<float> uncond((size_t) V, 0.0f);
++    const std::vector<int32_t> generated;
++
++    chatterbox_sampling_params p;
++    p.top_k = 0; p.top_p = 1.0f; p.temp = 0.8f;
++    p.repeat_penalty = 1.0f; p.min_p = 0.0f; p.cfg_weight = 0.0f;
++
++    // Without suppression: the dominant stop token should be drawn at least once.
++    {
++        std::mt19937 rng(123);
++        bool got_stop = false;
++        for (int i = 0; i < 64 && !got_stop; ++i)
++            if (sample_next_token_mtl(cond, uncond, generated, p, rng, STOP, /*suppress=*/false) == STOP)
++                got_stop = true;
++        CHECK(got_stop, "without suppression the dominant stop token must be reachable");
++    }
++
++    // With suppression: the stop token must NEVER be drawn, even though it has
++    // the highest logit (it is forced to -inf before sampling).
++    {
++        std::mt19937 rng(123);
++        bool got_stop = false;
++        for (int i = 0; i < 500; ++i)
++            if (sample_next_token_mtl(cond, uncond, generated, p, rng, STOP, /*suppress=*/true) == STOP)
++                got_stop = true;
++        CHECK(!got_stop, "with suppression the stop token must never be sampled");
++    }
++
++    // Suppression must still return a valid in-vocab token (not -1 / OOB).
++    {
++        std::mt19937 rng(7);
++        int32_t t = sample_next_token_mtl(cond, uncond, generated, p, rng, STOP, /*suppress=*/true);
++        CHECK(t >= 0 && t < V && t != STOP, "suppressed draw is a valid non-stop token (got %d)", t);
++    }
++
++    fprintf(stderr, "\n%s: %d/%d checks passed\n",
++            g_failures == 0 ? "PASS" : "FAIL", g_checks - g_failures, g_checks);
++    return g_failures == 0 ? 0 : 1;
++}
+diff --git a/tts-cpp/test/test_t3_alignment_analyzer.cpp b/tts-cpp/test/test_t3_alignment_analyzer.cpp
+new file mode 100644
+index 00000000..6a9cff95
+--- /dev/null
++++ b/tts-cpp/test/test_t3_alignment_analyzer.cpp
+@@ -0,0 +1,248 @@
++// Unit tests for the host-side T3 alignment analyzer (QVAC-20616 Phase 2).
++// Pure logic, no model/ggml dependency:
++//
++//   g++ -std=c++17 -I src test/test_t3_alignment_analyzer.cpp src/t3_alignment_analyzer.cpp -o /tmp/t && /tmp/t
++//
++// Coverage:
++//   - mid-text frames never force EOS (climb that never completes)
++//   - a healthy generation that reaches the end then dwells forces EOS a few
++//     frames after completion (long_tail)
++//   - a ramble that backtracks after completion forces EOS (alignment_repetition)
++//   - token repetition only forces EOS once complete (avoids #519/#587 early cut)
++//   - short text / empty row / disabled => no force
++
++#include "t3_alignment_analyzer.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <vector>
++
++using namespace tts_cpp::chatterbox::detail;
++
++namespace {
++
++int g_failures = 0;
++int g_checks   = 0;
++
++#define CHECK(cond, ...) do {                                            \
++    ++g_checks;                                                          \
++    if (!(cond)) {                                                       \
++        ++g_failures;                                                    \
++        fprintf(stderr, "FAIL %s:%d  ", __FILE__, __LINE__);            \
++        fprintf(stderr, __VA_ARGS__);                                    \
++        fprintf(stderr, "\n");                                          \
++    }                                                                    \
++} while (0)
++
++// One-hot-ish alignment row of length S peaked at column `peak`.
++std::vector<float> row_at(int S, int peak) {
++    std::vector<float> r((size_t) S, 0.0f);
++    if (peak >= 0 && peak < S) r[(size_t) peak] = 1.0f;
++    return r;
++}
++
++t3_align_analyzer_params params(int S) {
++    t3_align_analyzer_params p;
++    p.text_len        = S;
++    p.complete_margin = 3;
++    p.tail_cols       = 3;
++    p.long_tail_thresh = 5.0f;
++    p.rep_back_cols   = 5;
++    p.rep_thresh      = 5.0f;
++    p.min_text_len    = 6;
++    p.enabled         = true;
++    return p;
++}
++
++void test_midtext_never_forces() {
++    const int S = 13;
++    t3_alignment_analyzer az;
++    az.reset(params(S));
++    bool forced = false;
++    // Climb only to position 8 (never reaches S-3 == 10), 40 frames.
++    for (int f = 0; f < 40; ++f) {
++        int peak = f < 8 ? f : 8;
++        if (az.step(row_at(S, peak), /*token=*/100 + f) == t3_align_action::force_eos)
++            forced = true;
++    }
++    CHECK(!forced, "mid-text climb must never force EOS");
++    CHECK(!az.complete(), "must not be marked complete");
++}
++
++void test_healthy_long_tail_forces_after_completion() {
++    const int S = 13;
++    t3_alignment_analyzer az;
++    az.reset(params(S));
++    int force_frame = -1;
++    int complete_frame = -1;
++    for (int f = 0; f < 40; ++f) {
++        // climb to 12 by frame 12, then dwell at 12
++        int peak = f < 12 ? f : 12;
++        t3_align_action a = az.step(row_at(S, peak), /*token=*/200 + (f % 7));
++        if (complete_frame < 0 && az.complete()) complete_frame = f;
++        if (force_frame < 0 && a == t3_align_action::force_eos) force_frame = f;
++    }
++    CHECK(complete_frame >= 0, "should reach completion");
++    CHECK(force_frame >= 0, "long-tail dwell should force EOS");
++    CHECK(force_frame > complete_frame, "must not force before completion (got force=%d complete=%d)",
++          force_frame, complete_frame);
++    // ~long_tail_thresh frames of dwelling after completion.
++    CHECK(force_frame - complete_frame <= 8, "force should fire within a few frames of completion (got %d)",
++          force_frame - complete_frame);
++}
++
++void test_ramble_backtrack_forces() {
++    const int S = 13;
++    t3_alignment_analyzer az;
++    az.reset(params(S));
++    // Climb to 12, complete, then backtrack to early positions (repetition).
++    for (int f = 0; f <= 12; ++f) az.step(row_at(S, f), 300 + f);
++    CHECK(az.complete(), "should be complete after reaching the end");
++    bool forced = false;
++    // Backtrack: attend to early columns (0..3) after completion -> repetition.
++    for (int f = 0; f < 12 && !forced; ++f) {
++        if (az.step(row_at(S, f % 4), 400 + f) == t3_align_action::force_eos) forced = true;
++    }
++    CHECK(forced, "post-completion backtracking should force EOS (alignment_repetition)");
++}
++
++void test_token_repetition_gated_by_complete() {
++    const int S = 13;
++    // Mid-text repeated tokens should NOT force EOS.
++    t3_alignment_analyzer az;
++    az.reset(params(S));
++    bool forced = false;
++    for (int f = 0; f < 10; ++f) {
++        // stay mid-text (peak 5) with the same token repeated
++        if (az.step(row_at(S, 5), /*token=*/777) == t3_align_action::force_eos) forced = true;
++    }
++    CHECK(!forced, "repeated token mid-text must NOT force EOS (avoids #587 early cut)");
++}
++
++void test_small_input_not_clipped() {
++    // A very small input (smallest text length the analyzer acts on, e.g. "Hi."
++    // => SOT + graphemes + EOT) must never be cut before its alignment reaches
++    // the end of the text — i.e. force-EOS must not fire before `complete`.
++    // That is the structural no-clipping guarantee (verified end-to-end on the
++    // model: align-on speech-end == natural speech-end for "Hi.", "Yes.", ...).
++    for (int S = 6; S <= 8; ++S) {
++        t3_alignment_analyzer az;
++        az.reset(params(S));
++        int force_frame = -1, complete_frame = -1;
++        for (int f = 0; f < 30; ++f) {
++            const int peak = f < S - 1 ? f : S - 1;   // climb to the last col, then dwell
++            t3_align_action a = az.step(row_at(S, peak), /*token=*/500 + (f % 5));
++            if (complete_frame < 0 && az.complete()) complete_frame = f;
++            if (force_frame < 0 && a == t3_align_action::force_eos) force_frame = f;
++        }
++        CHECK(complete_frame >= 0, "S=%d: short input should reach completion", S);
++        CHECK(force_frame >= 0, "S=%d: short input should eventually stop", S);
++        CHECK(force_frame > complete_frame,
++              "S=%d: must NOT force before completion (no clip): force=%d complete=%d",
++              S, force_frame, complete_frame);
++    }
++}
++
++void test_suppress_eos_midtext() {
++    const int S = 13;
++    // Default (suppress enabled): while still mid-text (alignment far from the
++    // end) the analyzer asks the caller to hold off on stopping -> anti early
++    // truncation.
++    {
++        t3_alignment_analyzer az;
++        az.reset(params(S));
++        t3_align_action a = t3_align_action::none;
++        for (int f = 0; f < 5; ++f) a = az.step(row_at(S, f), 600 + f);  // cur = 0..4 < S-3
++        CHECK(a == t3_align_action::suppress_eos,
++              "mid-text should request EOS suppression (anti-truncation)");
++        CHECK(!az.complete(), "must not be complete mid-text");
++    }
++    // suppress_eos_enabled = false: analyzer never suppresses (only forces).
++    {
++        t3_align_analyzer_params p = params(S);
++        p.suppress_eos_enabled = false;
++        t3_alignment_analyzer az;
++        az.reset(p);
++        t3_align_action a = t3_align_action::none;
++        for (int f = 0; f < 5; ++f) a = az.step(row_at(S, f), 600 + f);
++        CHECK(a == t3_align_action::none, "suppress disabled -> none mid-text");
++    }
++}
++
++void test_short_text_and_empty_row_noop() {
++    // Short text (< min_text_len) -> disabled.
++    t3_alignment_analyzer az;
++    az.reset(params(4));
++    bool forced = false;
++    for (int f = 0; f < 20; ++f)
++        if (az.step(row_at(4, 1), 1) == t3_align_action::force_eos) forced = true;
++    CHECK(!forced, "short text must not force EOS");
++
++    // Empty row -> always none.
++    t3_alignment_analyzer az2;
++    az2.reset(params(13));
++    CHECK(az2.step(std::vector<float>{}, 5) == t3_align_action::none,
++          "empty alignment row must be a no-op");
++}
++
++void test_params_for_language() {
++    // Defaults (English-validated) for a known and an unknown language.
++    for (const char * lang : {"en", "xx"}) {
++        t3_align_analyzer_params p = t3_align_params_for_language(lang, 20);
++        CHECK(p.text_len == 20, "%s: text_len propagated", lang);
++        CHECK(p.complete_margin == 3, "%s: default complete_margin", lang);
++        CHECK(p.long_tail_thresh == 5.0f, "%s: default long_tail", lang);
++        CHECK(p.rep_thresh == 5.0f, "%s: default rep_thresh", lang);
++        CHECK(p.min_text_len == 6, "%s: default min_text_len", lang);
++        CHECK(p.suppress_eos_enabled, "%s: suppress on by default", lang);
++    }
++
++    // Environment overrides (on-device tuning).
++    setenv("CHATTERBOX_ALIGN_COMPLETE_MARGIN", "2", 1);
++    setenv("CHATTERBOX_ALIGN_LONG_TAIL", "9.5", 1);
++    setenv("CHATTERBOX_ALIGN_MIN_TEXT", "10", 1);
++    setenv("CHATTERBOX_ALIGN_SUPPRESS", "0", 1);
++    {
++        t3_align_analyzer_params p = t3_align_params_for_language("en", 20);
++        CHECK(p.complete_margin == 2, "env complete_margin override");
++        CHECK(p.long_tail_thresh == 9.5f, "env long_tail override");
++        CHECK(p.min_text_len == 10, "env min_text override");
++        CHECK(!p.suppress_eos_enabled, "env suppress disable");
++    }
++    unsetenv("CHATTERBOX_ALIGN_COMPLETE_MARGIN");
++    unsetenv("CHATTERBOX_ALIGN_LONG_TAIL");
++    unsetenv("CHATTERBOX_ALIGN_MIN_TEXT");
++    unsetenv("CHATTERBOX_ALIGN_SUPPRESS");
++}
++
++void test_valid_heads() {
++    // Full MTL geometry: all 3 reference heads valid.
++    CHECK(t3_align_valid_heads(30, 16).size() == 3, "full model -> 3 aligned heads");
++    // 13 layers: the layer-13 head (13,11) drops out.
++    CHECK(t3_align_valid_heads(13, 16).size() == 2, "13 layers -> 2 heads");
++    // Too few layers for any reference head -> empty -> alignment disabled.
++    CHECK(t3_align_valid_heads(9, 16).empty(), "9 layers -> no aligned heads");
++    // Fewer heads: only (9,2) survives a head<11 model.
++    CHECK(t3_align_valid_heads(30, 11).size() == 1, "11 heads -> only (9,2)");
++    // Degenerate geometry.
++    CHECK(t3_align_valid_heads(0, 0).empty(), "0x0 -> empty");
++}
++
++} // namespace
++
++int main() {
++    test_midtext_never_forces();
++    test_healthy_long_tail_forces_after_completion();
++    test_ramble_backtrack_forces();
++    test_token_repetition_gated_by_complete();
++    test_small_input_not_clipped();
++    test_suppress_eos_midtext();
++    test_params_for_language();
++    test_valid_heads();
++    test_short_text_and_empty_row_noop();
++
++    fprintf(stderr, "\n%s: %d/%d checks passed\n",
++            g_failures == 0 ? "PASS" : "FAIL",
++            g_checks - g_failures, g_checks);
++    return g_failures == 0 ? 0 : 1;
++}
+diff --git a/tts-cpp/test/test_t3_stop_controller.cpp b/tts-cpp/test/test_t3_stop_controller.cpp
+new file mode 100644
+index 00000000..5179d8a6
+--- /dev/null
++++ b/tts-cpp/test/test_t3_stop_controller.cpp
+@@ -0,0 +1,317 @@
++// Unit tests for the attention-free T3 end-of-speech stop controller
++// (QVAC-20616).  Pure host logic — no model or ggml dependency — so it builds
++// and runs standalone:
++//
++//   g++ -std=c++17 -I src test/test_t3_stop_controller.cpp src/t3_stop_controller.cpp -o /tmp/t && /tmp/t
++//
++// Coverage:
++//   - EOS-confidence: argmax streak forces a stop, respects the min-token
++//     floor, resets on a non-EOS argmax, honours CFG combination and the
++//     optional probability gate.
++//   - Repetition: period-1/2/3 cadences are detected with the correct
++//     trim_tail, the min-token floor is respected, and non-repeating tails are
++//     left alone.
++//   - Budget: fires exactly at max_tokens.
++//   - Disabled params (the Turbo path) preserve the old behaviour: no forced
++//     EOS, no post-check stop.
++//   - make_mtl_stop_params budget scaling + env overrides.
++
++#include "t3_stop_controller.h"
++
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <vector>
++
++using namespace tts_cpp::chatterbox::detail;
++
++namespace {
++
++int g_failures = 0;
++int g_checks   = 0;
++
++#define CHECK(cond, ...) do {                                            \
++    ++g_checks;                                                          \
++    if (!(cond)) {                                                       \
++        ++g_failures;                                                    \
++        fprintf(stderr, "FAIL %s:%d  ", __FILE__, __LINE__);             \
++        fprintf(stderr, __VA_ARGS__);                                    \
++        fprintf(stderr, "\n");                                           \
++    }                                                                    \
++} while (0)
++
++constexpr int     V   = 16;
++constexpr int32_t EOS = 9;
++
++// Logits whose argmax is `argmax_idx` (that entry = 5.0, the rest = 0.0).
++std::vector<float> logits_with_argmax(int argmax_idx) {
++    std::vector<float> l(V, 0.0f);
++    if (argmax_idx >= 0 && argmax_idx < V) l[argmax_idx] = 5.0f;
++    return l;
++}
++
++t3_stop_params base_params() {
++    t3_stop_params p;
++    p.enabled            = true;
++    p.stop_token         = EOS;
++    p.cfg_weight         = 0.0f;
++    p.min_tokens         = 4;
++    p.max_tokens         = 0;      // disable budget unless a test sets it
++    p.rep_max_period     = 8;
++    p.rep_repeats        = 3;
++    p.eos_argmax_streak  = 2;
++    p.eos_prob_threshold = 0.0f;
++    return p;
++}
++
++void test_eos_confidence_streak() {
++    t3_stop_controller c;
++    c.reset(base_params());
++
++    const std::vector<float> empty;
++    const auto eos_logits   = logits_with_argmax(EOS);
++    const auto other_logits = logits_with_argmax(3);
++
++    // Past the floor, a single EOS-argmax step is not enough (streak == 2).
++    CHECK(!c.force_eos(10, eos_logits, empty), "streak 1 should not force");
++    // Second consecutive EOS-argmax step forces the stop.
++    CHECK(c.force_eos(10, eos_logits, empty), "streak 2 should force");
++
++    // A non-EOS argmax resets the streak.
++    CHECK(!c.force_eos(10, other_logits, empty), "non-EOS resets streak");
++    CHECK(!c.force_eos(10, eos_logits, empty), "streak rebuilds from 1");
++    CHECK(c.force_eos(10, eos_logits, empty), "streak 2 forces again");
++}
++
++void test_eos_confidence_min_tokens_floor() {
++    t3_stop_controller c;
++    c.reset(base_params());                 // min_tokens = 4
++
++    const std::vector<float> empty;
++    const auto eos_logits = logits_with_argmax(EOS);
++
++    // Streak builds even below the floor, but must not force before it.
++    CHECK(!c.force_eos(1, eos_logits, empty), "below floor: no force (1)");
++    CHECK(!c.force_eos(2, eos_logits, empty), "below floor: no force (2)");
++    CHECK(!c.force_eos(3, eos_logits, empty), "below floor: no force (3)");
++    // n_generated now >= floor and streak >= 2 -> force.
++    CHECK(c.force_eos(4, eos_logits, empty), "at floor: force");
++}
++
++void test_eos_confidence_cfg() {
++    // With CFG, combined = cond + w*(cond - uncond).  Choose cond/uncond so the
++    // raw cond argmax is NOT EOS but the CFG-combined argmax IS.
++    t3_stop_params p = base_params();
++    p.cfg_weight       = 2.0f;
++    p.eos_argmax_streak = 1;                 // single step for a focused check
++
++    t3_stop_controller c;
++    c.reset(p);
++
++    std::vector<float> cond(V, 0.0f);
++    std::vector<float> uncond(V, 0.0f);
++    // cond: token 3 highest (3.0), EOS at 2.0.
++    cond[3] = 3.0f;
++    cond[EOS] = 2.0f;
++    // uncond: strongly favours token 3 so CFG suppresses it.
++    uncond[3] = 5.0f;
++    uncond[EOS] = 0.0f;
++    // combined[3]  = 3 + 2*(3-5)  = -1
++    // combined[EOS]= 2 + 2*(2-0)  =  6  -> argmax is EOS
++    CHECK(c.force_eos(10, cond, uncond), "CFG-combined argmax should be EOS");
++
++    // Without CFG (cfg_weight ignored via empty uncond path) the raw argmax is
++    // token 3, so no force.
++    t3_stop_controller c2;
++    c2.reset(p);
++    CHECK(!c2.force_eos(10, cond, std::vector<float>{}), "raw cond argmax is not EOS");
++}
++
++void test_eos_prob_gate() {
++    t3_stop_params p = base_params();
++    p.eos_argmax_streak  = 1;
++    p.eos_prob_threshold = 0.99f;            // demanding
++
++    const std::vector<float> empty;
++
++    // Flat-ish logits: EOS is argmax but only marginally, prob well under 0.99.
++    std::vector<float> weak(V, 1.0f);
++    weak[EOS] = 1.2f;
++    t3_stop_controller c;
++    c.reset(p);
++    CHECK(!c.force_eos(10, weak, empty), "weak EOS prob should not pass gate");
++
++    // Dominant EOS: prob ~1.0, passes the gate.
++    std::vector<float> strong(V, 0.0f);
++    strong[EOS] = 50.0f;
++    t3_stop_controller c2;
++    c2.reset(p);
++    CHECK(c2.force_eos(10, strong, empty), "dominant EOS prob passes gate");
++}
++
++void test_repetition_period1() {
++    t3_stop_controller c;
++    c.reset(base_params());                  // rep_repeats = 3, min_tokens = 4
++
++    // 5 distinct tokens then the value 7 four times in a row.
++    std::vector<int32_t> g = {1, 2, 3, 4, 7, 7, 7, 7};
++    t3_post_result r = c.post_check(g);
++    CHECK(r.reason == t3_stop_reason::repetition, "period-1 repetition detected");
++    // 4 copies of a period-1 block -> trim 3, leaving one 7.
++    CHECK(r.trim_tail == 3, "period-1 trim_tail == 3, got %d", r.trim_tail);
++}
++
++void test_repetition_period2() {
++    t3_stop_controller c;
++    c.reset(base_params());
++
++    // "5 6" repeated 3 times at the tail.
++    std::vector<int32_t> g = {1, 2, 3, 4, 5, 6, 5, 6, 5, 6};
++    t3_post_result r = c.post_check(g);
++    CHECK(r.reason == t3_stop_reason::repetition, "period-2 repetition detected");
++    // 3 copies of a 2-token block -> trim (3-1)*2 = 4.
++    CHECK(r.trim_tail == 4, "period-2 trim_tail == 4, got %d", r.trim_tail);
++}
++
++void test_repetition_below_floor() {
++    t3_stop_params p = base_params();
++    p.min_tokens = 100;                      // floor above the input length
++    t3_stop_controller c;
++    c.reset(p);
++
++    std::vector<int32_t> g = {7, 7, 7, 7, 7, 7};
++    t3_post_result r = c.post_check(g);
++    CHECK(r.reason == t3_stop_reason::none, "no repetition stop below min_tokens");
++}
++
++void test_no_false_repetition() {
++    t3_stop_controller c;
++    c.reset(base_params());
++
++    // Strictly increasing tail — no cycle.
++    std::vector<int32_t> g = {1, 2, 3, 4, 5, 6, 7, 8};
++    t3_post_result r = c.post_check(g);
++    CHECK(r.reason == t3_stop_reason::none, "non-repeating tail not flagged");
++
++    // A single duplicated pair is below rep_repeats=3.
++    std::vector<int32_t> g2 = {1, 2, 3, 4, 5, 9, 9};
++    t3_post_result r2 = c.post_check(g2);
++    CHECK(r2.reason == t3_stop_reason::none, "two identical not enough (need 3)");
++}
++
++void test_budget() {
++    t3_stop_params p = base_params();
++    p.rep_repeats = 0;                       // isolate the budget check
++    p.max_tokens  = 6;
++    t3_stop_controller c;
++    c.reset(p);
++
++    std::vector<int32_t> five = {1, 2, 3, 4, 5};
++    CHECK(c.post_check(five).reason == t3_stop_reason::none, "under budget: no stop");
++
++    std::vector<int32_t> six = {1, 2, 3, 4, 5, 6};
++    t3_post_result r = c.post_check(six);
++    CHECK(r.reason == t3_stop_reason::budget, "at budget: stop");
++    CHECK(r.trim_tail == 0, "budget never trims");
++}
++
++void test_small_input_no_premature_stop() {
++    // Very small inputs (e.g. text below the alignment analyzer's min length)
++    // are handled by this controller.  A tiny utterance must never be
++    // force-stopped below the min-token floor, even if the model's argmax is
++    // already the stop token and tokens repeat — otherwise the word is clipped.
++    t3_stop_params p = base_params();
++    p.min_tokens = 16;                          // production floor
++    t3_stop_controller c;
++    c.reset(p);
++    const std::vector<float> empty;
++    const auto eos = logits_with_argmax(EOS);    // model "wants" to stop every step
++    std::vector<int32_t> g;
++    bool forced = false, posted = false;
++    for (int i = 0; i < 12; ++i) {               // 12 tokens, all below the 16 floor
++        if (c.force_eos((int) g.size(), eos, empty)) forced = true;
++        g.push_back(7);                          // identical tokens (would be repetition if not floored)
++        if (c.post_check(g).reason != t3_stop_reason::none) posted = true;
++    }
++    CHECK(!forced, "tiny utterance: EOS-confidence must not fire below min_tokens (no clip)");
++    CHECK(!posted, "tiny utterance: repetition/budget must not fire below min_tokens (no clip)");
++}
++
++void test_disabled_preserves_turbo() {
++    t3_stop_params p;                        // default: enabled == false
++    t3_stop_controller c;
++    c.reset(p);
++
++    const auto eos_logits = logits_with_argmax(0);   // argmax == stop_token (0)
++    CHECK(!c.force_eos(1000, eos_logits, std::vector<float>{}),
++          "disabled controller never forces EOS");
++
++    std::vector<int32_t> g = {0, 0, 0, 0, 0, 0, 0, 0};
++    CHECK(c.post_check(g).reason == t3_stop_reason::none,
++          "disabled controller never stops on repetition/budget");
++}
++
++void test_make_mtl_params_budget_scaling() {
++    // Short input: budget hits the absolute floor (96).
++    {
++        t3_stop_params p = make_mtl_stop_params(EOS, 0.5f, /*n_text=*/1, /*cap=*/1000);
++        CHECK(p.enabled, "mtl params enabled");
++        CHECK(p.stop_token == EOS, "stop token propagated");
++        CHECK(p.max_tokens == 96, "short input -> budget floor 96, got %d", p.max_tokens);
++    }
++    // Medium input: 20*40 + 64 = 864, under the cap.
++    {
++        t3_stop_params p = make_mtl_stop_params(EOS, 0.0f, /*n_text=*/40, /*cap=*/1000);
++        CHECK(p.max_tokens == 864, "20*40+64 == 864, got %d", p.max_tokens);
++    }
++    // Long input: budget clamped to the n_predict cap.
++    {
++        t3_stop_params p = make_mtl_stop_params(EOS, 0.0f, /*n_text=*/200, /*cap=*/1000);
++        CHECK(p.max_tokens == 1000, "long input clamped to cap 1000, got %d", p.max_tokens);
++    }
++}
++
++void test_make_mtl_params_env_overrides() {
++    setenv("CHATTERBOX_STOP_MIN_TOKENS", "32", 1);
++    setenv("CHATTERBOX_STOP_MAX_TOKENS", "123", 1);
++    setenv("CHATTERBOX_STOP_EOS_STREAK", "5", 1);
++    setenv("CHATTERBOX_STOP_REP_REPEATS", "4", 1);
++    t3_stop_params p = make_mtl_stop_params(EOS, 0.0f, 40, 1000);
++    CHECK(p.min_tokens == 32, "env min_tokens override");
++    CHECK(p.max_tokens == 123, "env max_tokens override");
++    CHECK(p.eos_argmax_streak == 5, "env eos_streak override");
++    CHECK(p.rep_repeats == 4, "env rep_repeats override");
++
++    setenv("CHATTERBOX_STOP_DISABLE", "1", 1);
++    t3_stop_params p2 = make_mtl_stop_params(EOS, 0.0f, 40, 1000);
++    CHECK(!p2.enabled, "env disable override");
++
++    unsetenv("CHATTERBOX_STOP_MIN_TOKENS");
++    unsetenv("CHATTERBOX_STOP_MAX_TOKENS");
++    unsetenv("CHATTERBOX_STOP_EOS_STREAK");
++    unsetenv("CHATTERBOX_STOP_REP_REPEATS");
++    unsetenv("CHATTERBOX_STOP_DISABLE");
++}
++
++} // namespace
++
++int main() {
++    test_eos_confidence_streak();
++    test_eos_confidence_min_tokens_floor();
++    test_eos_confidence_cfg();
++    test_eos_prob_gate();
++    test_repetition_period1();
++    test_repetition_period2();
++    test_repetition_below_floor();
++    test_no_false_repetition();
++    test_budget();
++    test_small_input_no_premature_stop();
++    test_disabled_preserves_turbo();
++    test_make_mtl_params_budget_scaling();
++    test_make_mtl_params_env_overrides();
++
++    fprintf(stderr, "\n%s: %d/%d checks passed\n",
++            g_failures == 0 ? "PASS" : "FAIL",
++            g_checks - g_failures, g_checks);
++    return g_failures == 0 ? 0 : 1;
++}
