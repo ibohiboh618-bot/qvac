@@ -151,8 +151,10 @@ void SupertonicModel::reload() {
 void SupertonicModel::loadLocked() {
   if (engine_) return;
 
-  // Force useGPU to false on Android until Vulkan (Mali) and OpenCL (Adreno)
-  // stabilize for the Supertonic graph.
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): the Android GPU force-to-CPU was REMOVED
+  // here so a device-farm round can MEASURE Supertonic GPU-vs-CPU correctness on
+  // Mali/Adreno (the original block set cfg_.useGpu=false; cfg_.nGpuLayers=0).
+  // Measurement scaffolding, NOT a ship change.
 #ifdef __ANDROID__
   {
     const bool wantsGpu =
@@ -160,12 +162,9 @@ void SupertonicModel::loadLocked() {
         (cfg_.nGpuLayers.has_value() && *cfg_.nGpuLayers != 0);
     if (wantsGpu) {
       QLOG(logger::Priority::WARNING,
-           "Supertonic: useGPU=true is currently ignored on Android "
-           "(GPU backends disabled at engine boundary pending Vulkan/Mali "
-           "and OpenCL/Adreno driver fixes); falling back to CPU.");
+           "Supertonic: [QVAC-20557 DO-NOT-MERGE] Android GPU force-to-CPU "
+           "disabled — admitting GPU to measure GPU-vs-CPU correctness.");
     }
-    cfg_.useGpu     = false;
-    cfg_.nGpuLayers = 0;
   }
 #endif
 
