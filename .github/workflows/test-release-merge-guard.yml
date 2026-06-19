@@ -1,0 +1,73 @@
+name: Test Release Merge Guard
+
+# Exercises the release-merge-guard action (including the main-provenance check)
+# against synthetic release scenarios on a real runner. Safe to run any time:
+# it builds throwaway git repos in a temp dir and never publishes anything.
+#
+# Triggers:
+#   - workflow_dispatch: run on demand from the Actions tab
+#   - pull_request / push: auto-run whenever the action itself changes, so a
+#     regression in the guard fails before it can ship
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - ".github/actions/release-merge-guard/**"
+      - ".github/workflows/test-release-merge-guard.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/actions/release-merge-guard/**"
+      - ".github/workflows/test-release-merge-guard.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard-tests:
+    name: guard-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+        with:
+          node-version: 20
+
+      # Primary proof: run the *committed* bundle against synthetic release
+      # scenarios. The bundle is self-contained, so no install is needed and a
+      # dependency/build hiccup below can never mask the guard's behaviour.
+      - name: Run guard scenario tests
+        working-directory: .github/actions/release-merge-guard
+        run: npm test
+
+      # Secondary: prove the committed bundle is in sync with src/ — a stale dist
+      # would otherwise let source changes ship untested.
+      - name: Verify dist is in sync with src
+        working-directory: .github/actions/release-merge-guard
+        env:
+          # Root .npmrc references ${GH_TOKEN} for the @tetherto GPR scope; our
+          # deps are all public, but this keeps `npm ci` from erroring on the
+          # unresolved variable.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm run build
+          if ! git diff --quiet -- dist/index.js; then
+            echo "::error::dist/index.js is out of date — run 'npm run build' in .github/actions/release-merge-guard and commit the result."
+            git --no-pager diff --stat -- dist/index.js
+            exit 1
+          fi

@@ -1,5 +1,8 @@
 name: Release Merge Guard
-description: Enforces release branch naming, version bump and changelog update on merge
+description: >-
+  Enforces release-branch invariants before publish: branch naming, version
+  bump, changelog update, and that the branch descends from main with a
+  release-metadata-only delta (main-provenance check).
 inputs:
   github-token:
     required: false
@@ -18,6 +21,17 @@ inputs:
     required: true
   changelog-path:
     required: true
+  main-ref:
+    required: false
+    default: "main"
+    description: "Branch the release line must descend from (default: main)."
+  enforce:
+    required: false
+    default: ""
+    description: >-
+      Main-provenance posture override. "true" fails the guard on injected
+      non-main content; "false" forces warn-only. Empty uses the action's
+      built-in default (currently warn-first / audit).
 
 runs:
   using: node20
