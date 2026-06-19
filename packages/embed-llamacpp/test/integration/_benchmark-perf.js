@@ -62,10 +62,20 @@ function stddev (values) {
   return Math.sqrt(varianceSum / values.length)
 }
 
-// Prefill throughput from the addon's measured tokens_per_second only. A single
-// short input rounds the addon's prefill timer to ~0, so recomputing
-// tokens/time would divide by sub-microsecond noise and report absurd ppTPS;
-// leave it null instead (matches the desktop case-runner and the LLM suite).
+// The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
+// short input prefills faster than it can measure, so the addon reports a
+// sub-millisecond time and a tokens_per_second inflated to ~1e8. Treat prefill
+// timing below this floor as unmeasured so ppTPS / latency / embeddings-per-sec
+// report null for those configs instead of a fabricated value. Mirrors the
+// desktop case-runner.
+const MIN_RELIABLE_PREFILL_MS = 1
+
+function reliablePrefillMs (totalTimeMs) {
+  return totalTimeMs != null && totalTimeMs >= MIN_RELIABLE_PREFILL_MS ? totalTimeMs : null
+}
+
+// Prefill throughput (ppTPS) as measured by the addon; only meaningful when the
+// prefill time is reliable, which the caller enforces.
 function prefillTokensPerSecond (runtimeStats) {
   return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
 }
@@ -136,7 +146,7 @@ function modelSpec (modelName, quant) {
 // app's writable Documents/files dir); __dirname here is the read-only bundle,
 // so resolve the same writable location the regular tests use instead.
 async function ensureBenchmarkModel (spec) {
-  const modelDir = path.join(global.testDir || process.cwd(), 'test', 'model')
+  const modelDir = path.join(global.testDir || os.tmpdir(), 'test', 'model')
   const modelPath = path.join(modelDir, spec.name)
   if (fs.existsSync(modelPath)) {
     const stat = fs.statSync(modelPath)
@@ -259,8 +269,8 @@ function benchmarkModel (modelName, quant) {
                     const embeddings = normalizeEmbeddings(raw)
                     if (!firstEmbeddings) firstEmbeddings = embeddings
                     if (inputTokens == null && stats.total_tokens != null) inputTokens = stats.total_tokens
-                    const ppTps = prefillTokensPerSecond(stats)
-                    const latencyMs = stats.total_time_ms != null ? stats.total_time_ms : null
+                    const latencyMs = reliablePrefillMs(stats.total_time_ms)
+                    const ppTps = latencyMs != null ? prefillTokensPerSecond(stats) : null
                     if (ppTps != null) ppTpsValues.push(ppTps)
                     if (latencyMs != null) latencyValues.push(latencyMs)
                     if (latencyMs != null && latencyMs > 0) embPerSecValues.push(embeddings.length / (latencyMs / 1000))

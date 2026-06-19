@@ -38,12 +38,21 @@ function normalizeEmbeddings (rawEmbeddings) {
   return rawEmbeddings[0].map((vector) => Array.from(vector))
 }
 
-// Prefill throughput (ppTPS), taken solely from the addon's measured
-// tokens_per_second (BertModel.cpp emits it only when t_p_eval_ms > 0). For a
-// single short input the addon's prefill timer rounds to a sub-microsecond
-// value, so recomputing tokens/time would divide by ~0 and report absurd ppTPS
-// (e.g. 5e8); leave it null instead, matching the LLM suite which never
-// recomputes ppTPS.
+// The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
+// short input prefills faster than it can measure, so the addon reports a
+// sub-millisecond prefill time and a tokens_per_second inflated to ~1e8. Treat
+// prefill timing below this floor as unmeasured so the timing-derived metrics
+// (ppTPS, latency, embeddings/sec) report null for those configs instead of a
+// fabricated value. Array inputs spend real milliseconds in prefill and are
+// unaffected.
+const MIN_RELIABLE_PREFILL_MS = 1
+
+function reliablePrefillMs (totalTimeMs) {
+  return totalTimeMs != null && totalTimeMs >= MIN_RELIABLE_PREFILL_MS ? totalTimeMs : null
+}
+
+// Prefill throughput (ppTPS) as measured by the addon; only meaningful when the
+// prefill time is reliable, which the caller enforces.
 function prefillTokensPerSecond (runtimeStats) {
   return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
 }
@@ -221,11 +230,12 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
         // run latency; embeddingCount = sequences embedded in this run (used to
         // derive embeddings/sec). Embedding is a single forward pass, so there is
         // no decode phase and no generated-token metric.
+        const prefillMs = reliablePrefillMs(runtimeStats.total_time_ms)
         runMetrics.push({
           loadMs,
-          prefillMs: runtimeStats.total_time_ms,
+          prefillMs,
           wallMs,
-          ppTps: prefillTokensPerSecond(runtimeStats),
+          ppTps: prefillMs != null ? prefillTokensPerSecond(runtimeStats) : null,
           totalTokens: runtimeStats.total_tokens,
           embeddingCount: embeddings.length,
           unloadMs: null
