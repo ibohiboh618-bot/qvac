@@ -18,14 +18,18 @@
 // directly; these cells mirror it. scripts/generate-benchmark-shards.js --check
 // asserts they stay in sync with the manifest (read under Node), so they cannot
 // silently drift.
+// `file` is the exact GGUF filename in the HF repo. Repos are inconsistent about
+// case per quant (embeddinggemma-300M-Q8_0 vs -300m-Q4_0; Qwen ...-f16 lowercase),
+// so the filename is pinned here rather than reconstructed: a guessed name 404s,
+// and a 404 is not retried. Verified against each repo's HF file listing.
 const CELLS = [
-  { model: 'embeddingGemma', quant: 'Q8_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main' },
-  { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main' },
-  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main' },
-  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q4_K_M', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main' },
-  { model: 'Qwen3-embedding-4B-gguf', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main' }
+  { model: 'embeddingGemma', quant: 'Q8_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300M-Q8_0.gguf' },
+  { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300m-Q4_0.gguf' },
+  { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-Q8_0.gguf' },
+  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-f16.gguf' },
+  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main', file: 'Qwen3-Embedding-4B-Q8_0.gguf' },
+  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q4_K_M', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main', file: 'Qwen3-Embedding-4B-Q4_K_M.gguf' },
+  { model: 'Qwen3-embedding-4B-gguf', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main', file: 'Qwen3-Embedding-4B-f16.gguf' }
 ]
 
 // Sweep axes + input modes for the mobile sweep. The desktop copy of these
@@ -42,7 +46,7 @@ const INPUT_MODES = ['single', 'array']
 // One cell per (modelId, quant), preserving order so the shard list and
 // workflow groups are stable.
 function matrix () {
-  return CELLS.map((cell) => ({ model: cell.model, quant: cell.quant, repo: cell.repo, revision: cell.revision }))
+  return CELLS.map((cell) => ({ model: cell.model, quant: cell.quant, repo: cell.repo, revision: cell.revision, file: cell.file }))
 }
 
 // Filename slug: lowercase, drop dots, underscores -> dashes.

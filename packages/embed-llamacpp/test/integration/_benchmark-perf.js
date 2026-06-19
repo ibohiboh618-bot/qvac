@@ -116,28 +116,13 @@ function inputsFor (inputMode) {
   return inputMode === 'single' ? SENTENCES[0] : SENTENCES
 }
 
-// Candidate GGUF filenames for a (repo, quant). HF repos are inconsistent about
-// case (e.g. 300M vs 300m in the stem, F16 vs f16 in the quant), so we try each
-// variant; downloadFile cycles through the array across retries.
-function downloadUrls (repo, revision, quant) {
-  const name = repo.split('/').pop()
-  const stem = name.toUpperCase().endsWith('-GGUF') ? name.slice(0, -5) : name
-  const stems = [...new Set([stem, stem.replace(/300m/i, '300M'), stem.replace(/300m/i, '300m')])]
-  const u = quant.toUpperCase()
-  const quants = [...new Set([u, u.toLowerCase(), ...(u === 'F16' ? ['f16', 'fp16'] : [])])]
-  const urls = []
-  for (const s of stems) for (const q of quants) urls.push(`https://huggingface.co/${repo}/resolve/${revision}/${s}-${q}.gguf`)
-  return [...new Set(urls)]
-}
-
 function modelSpec (modelName, quant) {
   const cell = matrix().find((c) => c.model === modelName && c.quant === quant)
   if (!cell) throw new Error(`No benchmark matrix cell for model "${modelName}" quant "${quant}"`)
-  const urls = downloadUrls(cell.repo, cell.revision, quant)
-  // Local file name: stem-quant.gguf, slug-free of slashes; the actual file
-  // downloaded may use a different case, so name it canonically for the cache.
-  const stem = cell.repo.split('/').pop().replace(/-GGUF$/i, '')
-  return { id: cell.model, quant, name: `${stem}-${quant}.gguf`, urls }
+  // One exact URL per cell (cell.file is the pinned HF filename). A wrong guess
+  // would 404, and downloadFile does not retry a 404, so do not guess.
+  const url = `https://huggingface.co/${cell.repo}/resolve/${cell.revision}/${cell.file}`
+  return { id: cell.model, quant, name: cell.file, urls: [url] }
 }
 
 // Mirrors test/integration/utils.js ensureModel, but takes an ordered URL list
