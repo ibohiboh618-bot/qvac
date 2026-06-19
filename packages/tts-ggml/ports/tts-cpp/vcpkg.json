@@ -1,8 +1,8 @@
 {
   "name": "tts-cpp",
-  "version-date": "2026-06-05",
+  "version-date": "2026-06-19",
   "port-version": 0,
-  "description": "LOCAL OVERLAY of tts-cpp pinned at qvac-ext-lib-whisper.cpp@f7d4d6c (= the published 2026-06-05 pin 128dae42 + one fix commit). Reroutes Supertonic's direct ggml_get_type_traits_cpu()->from_float and ggml_backend_is_cpu() calls (unlinkable under GGML_BACKEND_DL on Android) to ggml_quantize_chunk() and the tts_cpp::detail::backend_is_cpu() registry shim, so the tts-ggml addon dlopen's cleanly on Android. Temporary QVAC-19254 follow-up; remove once published to the registry.",
+  "description": "LOCAL OVERLAY (DO NOT MERGE) of tts-cpp pinned at qvac-ext-lib-whisper.cpp@b9f9268c (branch QVAC-20557-chatterbox-mali-gpu, off PR #54 master b95ad447). QVAC-20557 GPU-correctness MEASUREMENT build: shared bit-pattern diag_stats + per-stage [gpu-diag] dumps for Supertonic + Chatterbox (gated on $TTS_CPP_GPU_TRACE, emitted on both GPU and CPU, tagged by backend), and allow_arm_mali flipped true to ADMIT Chatterbox onto ARM Mali Vulkan for measurement. Paired with the gpu-smoke GPU-vs-CPU correlation gate. Throwaway; never publish to the registry.",
   "homepage": "https://github.com/tetherto/qvac-ext-lib-whisper.cpp/tree/master/tts-cpp",
   "license": "MIT",
   "dependencies": [

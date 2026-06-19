@@ -31,11 +31,25 @@ const test = require('brittle')
 const { loadChatterboxTTS, runChatterboxTTS, resolveRefWavPath } = require('../utils/runChatterboxTTS')
 const { loadSupertonicTTS, runSupertonicTTS } = require('../utils/runSupertonicTTS')
 const { ensureChatterboxModels, ensureSupertonicModel } = require('../utils/downloadModel')
+const { assertSampleCorrelation } = require('../utils/correlation-helper')
 
 const platform = os.platform()
 const isMobile = platform === 'ios' || platform === 'android'
 const RELAX = proc.env && proc.env.QVAC_TTS_GPU_SMOKE_RELAX === '1'
 const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
+
+// DEBUG (QVAC-20557, DO-NOT-MERGE): enable the native per-stage [gpu-diag] trace
+// so a device-farm round carries per-stage GPU-vs-CPU stats (rms/nan/inf/min/max)
+// in logcat_full.txt, letting us localize the first stage a GPU backend
+// miscomputes. Set before any Engine construction (native getenv runs at load()).
+// Whether this proc.env write reaches native getenv on bare/Android is validated
+// on the local Adreno canary before any farm round (R2).
+if (proc.env) proc.env.TTS_CPP_GPU_TRACE = '1'
+
+// GPU-vs-CPU correlation threshold (same-precision: GPU and CPU load the SAME
+// gguf, only the compute backend differs, so a correct backend correlates
+// ~0.999+). Calibrate against the local Adreno run before trusting on the farm.
+const CORR_THRESHOLD = 0.99
 
 function getBaseDir () {
   return isMobile && global.testDir ? global.testDir : '.'
@@ -315,4 +329,89 @@ test('Supertonic CPU smoke - useGPU=false must run on the CPU backend', { timeou
   } finally {
     try { await model.unload() } catch (_e) {}
   }
+})
+
+// ---------------------------------------------------------------------------
+// GPU-vs-CPU correctness gate (QVAC-20557, DO-NOT-MERGE measurement).
+//
+// The smoke tests above only prove the GPU is *engaged* (backendDevice/Id).
+// These prove its OUTPUT matches CPU — the signal that was missing when
+// #2610 / #2706 went green on a GPU that could have miscomputed. Supertonic is
+// deterministic for a fixed seed → HARD corr gate. Chatterbox's T3 is
+// autoregressive + stochastic → identical seeds do NOT give identical tokens
+// across backends, so its end-to-end corr is informational (still HARD-fails on
+// a silent/NaN GPU); its real per-stage correctness signal is the native
+// [gpu-diag] trace in logcat_full.txt.
+// ---------------------------------------------------------------------------
+
+async function runSupertonicOn (useGPU, supertonicPath) {
+  const model = await loadSupertonicTTS({
+    supertonicModelPath: supertonicPath, language: 'en', voice: 'F1', useGPU, seed: 42
+  })
+  try {
+    const r = await runSupertonicTTS(model, { text: 'GPU versus CPU correctness check.' }, { minSamples: 5000 })
+    return { samples: r.data.samples, stats: r.data.stats }
+  } finally {
+    try { await model.unload() } catch (_e) {}
+  }
+}
+
+test('Supertonic GPU-vs-CPU correctness - output must correlate with CPU', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Supertonic corr: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureSupertonicModel({ targetDir: modelsDir })
+  if (!download || !download.success) {
+    t.fail('Supertonic GGUF not available - registry fetch failed.')
+    return
+  }
+  const supertonicPath = download.path || path.join(modelsDir, 'supertonic.gguf')
+
+  const gpu = await runSupertonicOn(true, supertonicPath)
+  if (!gpu.stats || gpu.stats.backendDevice !== 1) {
+    const msg = `Supertonic corr: GPU did not engage (backendDevice=${gpu.stats && gpu.stats.backendDevice}); engagement is asserted by the smoke test above`
+    if (RELAX) { t.pass(msg + ' (relaxed)') } else { t.comment(msg) }
+    return
+  }
+  const cpu = await runSupertonicOn(false, supertonicPath)
+  assertSampleCorrelation(t, `Supertonic/${backendIdToName(gpu.stats.backendId)}`, gpu.samples, cpu.samples, {
+    threshold: CORR_THRESHOLD, minSamples: 1000, minLenRatio: 0.90
+  })
+})
+
+async function runChatterboxOn (useGPU, modelDir, refWavPath) {
+  const model = await loadChatterboxTTS({ modelDir, refWavPath, language: 'en', useGPU, seed: 42 })
+  try {
+    const r = await runChatterboxTTS(model, { text: 'GPU versus CPU correctness check.' }, { minSamples: 5000 })
+    return { samples: r.data.samples, stats: r.data.stats }
+  } finally {
+    try { await model.unload() } catch (_e) {}
+  }
+}
+
+test('Chatterbox GPU-vs-CPU correctness - GPU output must be finite (corr informational)', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Chatterbox corr: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureChatterboxModels({ targetDir: modelsDir })
+  if (!download.success) {
+    t.fail('Chatterbox GGUFs not available - registry fetch failed.')
+    return
+  }
+  const refWavPath = resolveRefWavPath({})
+  if (!fs.existsSync(refWavPath)) { t.pass('Skipped: reference audio missing'); return }
+
+  const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
+  if (!gpu.stats || gpu.stats.backendDevice !== 1) {
+    // Post-flip Chatterbox should engage Mali Vulkan; if it fell back to CPU the
+    // smoke test records it. No GPU result to compare → skip the corr magnitude.
+    t.comment(`Chatterbox corr: GPU did not engage (backendDevice=${gpu.stats && gpu.stats.backendDevice}, gpuUnsupported=${gpu.stats && gpu.stats.gpuUnsupported}); per-stage [gpu-diag] trace still emitted`)
+    return
+  }
+  const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
+  // soft: T3 stochasticity makes the magnitude informational; the hard signal
+  // here is finite-ness (silent/NaN GPU fails) + the per-stage [gpu-diag] trace.
+  assertSampleCorrelation(t, `Chatterbox/${backendIdToName(gpu.stats.backendId)}`, gpu.samples, cpu.samples, {
+    threshold: CORR_THRESHOLD, soft: true, minSamples: 1000, minLenRatio: 0.0
+  })
 })

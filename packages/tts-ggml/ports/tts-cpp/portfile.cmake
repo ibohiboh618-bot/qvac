@@ -1,25 +1,25 @@
-# tts-cpp — LOCAL OVERLAY PORT (Android GPU validation; DO NOT MERGE).
+# tts-cpp — LOCAL OVERLAY PORT (Android GPU CORRECTNESS MEASUREMENT; DO NOT MERGE).
 #
 # Replaces the registry tts-cpp port so the tts-ggml prebuild builds the
-# Android-GPU work not yet published to qvac-registry-vcpkg. Pins
-# tetherto/qvac-ext-lib-whisper.cpp @ 45602048 (PR #54 — the consolidated
-# QVAC-20557 Android-GPU stack on master):
-#   - dlopen reroute: route Supertonic's direct CPU-backend calls
-#     (from_float / backend_is_cpu) through ggml-base under GGML_BACKEND_DL=ON
-#     (else the addon SIGABRTs at dlopen on Android).
-#   - keep Supertonic K/V attention/weights F32 on OpenCL (no F32xF16 mat-vec).
-#   - explicit GPU attention when the backend can't run flash-attn (Adreno /
-#     Xclipse route FLASH_ATTN_EXT to CPU) so CFM attention stays GPU-resident.
-#   - allowlist Samsung Xclipse (Vulkan) + a gpu_unsupported() policy-decline.
-#   - ARM Mali / Valhall: model-side st_mul_mat output-pad works around the
-#     driver's small-output-dim mul_mat miscompute; Mali keeps weights F32 (the
-#     pad only covers F32 operands); Mali-Vulkan is allowlisted for Supertonic
-#     only (Chatterbox stays CPU on Mali via gpu_unsupported).
-# ggml-speech overlay stays stock at 44fd4817 — no ggml change.
+# QVAC-20557 GPU-correctness measurement instrumentation not (and never to be)
+# published to qvac-registry-vcpkg. Pins
+# tetherto/qvac-ext-lib-whisper.cpp @ b9f9268c (branch
+# QVAC-20557-chatterbox-mali-gpu, off PR #54 master b95ad447):
+#   - shared detail::diag_stats(): bit-pattern NaN/Inf (fast-math safe) +
+#     rms/min/max, emitting one `[gpu-diag] <name> ...` line per stage.
+#   - Supertonic + Chatterbox: per-stage [gpu-diag] dumps tagged by backend reg
+#     name, emitted on BOTH GPU and CPU runs (gated on $TTS_CPP_GPU_TRACE) so the
+#     device-farm logcat can be diffed GPU-vs-CPU to localize the first stage a
+#     GPU backend miscomputes.
+#   - allow_arm_mali flipped false->true for Chatterbox T3 + S3Gen to ADMIT
+#     Chatterbox onto ARM Mali Vulkan FOR MEASUREMENT (not a ship decision):
+#     this round MEASURES whether Chatterbox is GPU-correct on Mali rather than
+#     assuming it miscomputes. Supertonic already shipped allow_arm_mali=true.
+# Paired with test/utils/correlation-helper.js + gpu-smoke.test.js GPU-vs-CPU
+# correlation gate. ggml-speech overlay unchanged.
 #
-# TEMPORARY: remove this overlay (and the overlay-ports entry in
-# vcpkg-configuration.json) once the fix is published to the registry and
-# consumed via vcpkg.json.
+# TEMPORARY: this entire overlay (and the overlay-ports entry in
+# vcpkg-configuration.json) is throwaway measurement scaffolding — never merge.
 
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 set(VCPKG_BUILD_TYPE release)
@@ -27,8 +27,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 4560204843e5d901ca27a6ef0881f6469f917cb1
-    SHA512 90326458cb9bd2ab282e8c690a817e60318c04328727904be4d0787ba6159b039566f5954d99a273ee069932941389bef1189fee2f0b7eff627e6de8b9c11cf0
+    REF b9f9268cf82467b1b5e98516f114278f64c39023
+    SHA512 8503421fab81b3213e6da2528da4f2761343b879b5d9ebd80c8e6466e64ab2d0345de369d26dc5e81662d1444dbe52f808fb927e2f2e4a45c47f0b6d920f3023
     HEAD_REF master
 )
 
