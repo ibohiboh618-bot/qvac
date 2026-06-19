@@ -509,6 +509,9 @@ jobs:
           # Per-task sample caps from the preset (e.g. full caps ocr-page to 1) so the
           # CLI legs run the SAME items as the addon leg.
           TASK_SAMPLES=$(node -e "console.log(JSON.stringify((require('./config.cjs').presets['$PRESET']||{}).taskSamples||{}))")
+          # Distinct-task cap from the preset (e.g. smoke=1) so the CLI legs cover the
+          # SAME tasks as the addon leg — otherwise smoke mismatches (addon 1 task, CLI all).
+          MAX_TASKS=$(node -e "console.log((require('./config.cjs').presets['$PRESET']||{}).maxTasks||0)")
           node build-cli-sources.js --sources=fabric,upstream \
             --fabric-ref=${{ needs.context.outputs.fabric_ref }} --upstream-ref=${{ needs.context.outputs.upstream_ref }} \
             --backend=${{ matrix.backend }}
@@ -523,7 +526,7 @@ jobs:
               --binary "$3" --source "$1" --llm "$LLM" --mmproj "$MMPROJ" \
               --backend "${{ matrix.backend }}" --samples "$SAMPLES" --repeats "$REPEATS" \
               --tasks textvqa,vizwiz,gqa,docvqa,ai2d,ocr-small,ocr-page \
-              --task-samples "$TASK_SAMPLES" \
+              --task-samples "$TASK_SAMPLES" --max-tasks "$MAX_TASKS" \
               --main-origin "Qwen3.5-0.8B-Q8_0 (Registry)" \
               --mmproj-origin "Qwen3.5-0.8B mmproj-Q8_0 (Registry)" >> "$LOG" 2>&1 || echo "::warning::$1 run had errors"
           }

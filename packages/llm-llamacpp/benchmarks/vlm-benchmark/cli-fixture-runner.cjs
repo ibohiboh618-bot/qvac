@@ -34,6 +34,10 @@ const TASK_SAMPLES = JSON.parse(arg('task-samples', '{}') || '{}')
 // matching harness.cjs so CLI OCR output isn't truncated (which would wreck CER/WER).
 const TASK_NPREDICT = { 'ocr-page': 768, 'ocr-small': 96 }
 const DEFAULT_NPREDICT = 128
+// Cap on the number of DISTINCT tasks (mirror the addon preset's maxTasks, e.g. smoke=1);
+// 0 = no cap. Without this the CLI ran every --tasks entry while the addon honoured
+// maxTasks, so smoke produced mismatched rows ('—' for tasks the addon skipped).
+const MAX_TASKS = parseInt(arg('max-tasks', '0'), 10) || 0
 const MAIN_ORIGIN = arg('main-origin', 'Qwen3.5-0.8B-Q8_0')
 const MMPROJ_ORIGIN = arg('mmproj-origin', 'Qwen3.5-0.8B mmproj-Q8_0')
 
@@ -44,6 +48,7 @@ function selectedItems () {
   const seen = {}
   return fixture.items.filter(it => {
     if (TASKS.length && !TASKS.includes(it.task)) return false
+    if (!(it.task in seen) && MAX_TASKS && Object.keys(seen).length >= MAX_TASKS) return false
     seen[it.task] = (seen[it.task] || 0) + 1
     const cap = (TASK_SAMPLES[it.task] != null) ? TASK_SAMPLES[it.task] : SAMPLES
     return seen[it.task] <= cap
