@@ -38,17 +38,14 @@ function normalizeEmbeddings (rawEmbeddings) {
   return rawEmbeddings[0].map((vector) => Array.from(vector))
 }
 
-// Prefill throughput (ppTPS). The addon only emits tokens_per_second when
-// t_p_eval_ms > 0 (BertModel.cpp), so a sub-millisecond prefill would leave it
-// absent; recompute it from total_tokens/total_time_ms (the same n_p_eval *
-// 1000 / t_p_eval_ms formula) whenever there is measurable prefill time, so a
-// healthy fast run still reports throughput instead of a null.
+// Prefill throughput (ppTPS), taken solely from the addon's measured
+// tokens_per_second (BertModel.cpp emits it only when t_p_eval_ms > 0). For a
+// single short input the addon's prefill timer rounds to a sub-microsecond
+// value, so recomputing tokens/time would divide by ~0 and report absurd ppTPS
+// (e.g. 5e8); leave it null instead, matching the LLM suite which never
+// recomputes ppTPS.
 function prefillTokensPerSecond (runtimeStats) {
-  if (runtimeStats.tokens_per_second != null) return runtimeStats.tokens_per_second
-  const ms = runtimeStats.total_time_ms
-  const tokens = runtimeStats.total_tokens
-  if (ms != null && ms > 0 && tokens != null) return tokens * 1000 / ms
-  return null
+  return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
 }
 
 function buildAddonConfig (runtimeConfig, options = {}) {

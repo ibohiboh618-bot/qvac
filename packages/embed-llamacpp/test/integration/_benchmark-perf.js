@@ -62,12 +62,12 @@ function stddev (values) {
   return Math.sqrt(varianceSum / values.length)
 }
 
+// Prefill throughput from the addon's measured tokens_per_second only. A single
+// short input rounds the addon's prefill timer to ~0, so recomputing
+// tokens/time would divide by sub-microsecond noise and report absurd ppTPS;
+// leave it null instead (matches the desktop case-runner and the LLM suite).
 function prefillTokensPerSecond (runtimeStats) {
-  if (runtimeStats.tokens_per_second != null) return runtimeStats.tokens_per_second
-  const ms = runtimeStats.total_time_ms
-  const tokens = runtimeStats.total_tokens
-  if (ms != null && ms > 0 && tokens != null) return tokens * 1000 / ms
-  return null
+  return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
 }
 
 // Measured repetitions per config, reported as mean +/- stddev (matching the
@@ -132,8 +132,11 @@ function modelSpec (modelName, quant) {
 
 // Mirrors test/integration/utils.js ensureModel, but takes an ordered URL list
 // (HF filename case varies per repo) and downloads into the shared model cache.
+// The mobile framework patches utils.js's model dir to global.testDir (the
+// app's writable Documents/files dir); __dirname here is the read-only bundle,
+// so resolve the same writable location the regular tests use instead.
 async function ensureBenchmarkModel (spec) {
-  const modelDir = path.resolve(__dirname, '../model')
+  const modelDir = path.join(global.testDir || process.cwd(), 'test', 'model')
   const modelPath = path.join(modelDir, spec.name)
   if (fs.existsSync(modelPath)) {
     const stat = fs.statSync(modelPath)
