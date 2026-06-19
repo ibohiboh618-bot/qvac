@@ -329,6 +329,7 @@ jobs:
       job_timeout_minutes: 180
       test_groups: ${{ matrix.groups }}
       artifact_suffix: ${{ matrix.model }}-
+      qvac_perf_only: true
 
   # Renders the desktop sweep + mobile perf-report artifacts into one markdown
   # report + an HTML chart artifact. Runs after the benchmarks, or standalone

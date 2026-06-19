@@ -1,0 +1,9 @@
+[
+  "runBenchmarkPerfEmbeddinggemmaQ80Test",
+  "runBenchmarkPerfEmbeddinggemmaQ40Test",
+  "runBenchmarkPerfQwen3Embedding06bQ80Test",
+  "runBenchmarkPerfQwen3Embedding06bF16Test",
+  "runBenchmarkPerfQwen3Embedding4bGgufQ80Test",
+  "runBenchmarkPerfQwen3Embedding4bGgufQ4KMTest",
+  "runBenchmarkPerfQwen3Embedding4bGgufF16Test"
+]
