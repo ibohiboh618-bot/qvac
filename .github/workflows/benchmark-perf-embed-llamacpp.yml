@@ -118,6 +118,7 @@ jobs:
             packages/embed-llamacpp/test/integration/_benchmark-matrix.js
             packages/embed-llamacpp/benchmarks/performance/models.manifest.json
             packages/embed-llamacpp/test/mobile/integration.auto.cjs
+            packages/embed-llamacpp/test/mobile/perf-tests.json
             .github/workflows/benchmark-perf-embed-llamacpp.yml
           sparse-checkout-cone-mode: false
       - name: Verify benchmark matrix is in sync
