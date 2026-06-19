@@ -1,4 +1,4 @@
-import * as core from '@actions/core'
+import * as core from './core'
 import { execSync } from 'child_process'
 import { checkMainProvenance } from './main-provenance'
 

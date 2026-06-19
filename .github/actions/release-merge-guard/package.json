@@ -7,10 +7,6 @@
     "typecheck": "tsc --noEmit",
     "test": "node test/provenance.test.cjs"
   },
-  "dependencies": {
-    "@actions/core": "^3.0.0",
-    "@actions/github": "^9.0.0"
-  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "esbuild": "^0.25.0",
