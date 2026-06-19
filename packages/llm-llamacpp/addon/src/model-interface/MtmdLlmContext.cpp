@@ -414,8 +414,8 @@ bool MtmdLlmContext::evalMessageWithTools(
   // recoverable conversation this does not fire. It still guards the cases the
   // slide cannot help with — n_discarded == 0 (sliding disabled) or a single
   // image larger than the window — which leave no room to generate even after a
-  // full wipe. Fail here with an actionable error instead of after the expensive
-  // encode + decode or a mid-generation overflow.
+  // full wipe. Fail here with an actionable error instead of after the
+  // expensive encode + decode or a mid-generation overflow.
   {
     const size_t nPastPostSlide = static_cast<size_t>(current_.pos);
     const size_t nPromptPositions = static_cast<size_t>(nPositions);
@@ -482,11 +482,14 @@ bool MtmdLlmContext::evalMessageWithTools(
       // Decode from cache ONLY when the cached buffer exactly matches the
       // shape mtmd_helper_decode_image_chunk will read for THIS chunk: it
       // consumes mtmd_input_chunk_get_n_tokens(chunk) * n_embd floats from
-      // the buffer. A mismatch (hash collision, or a change in image
+      // the buffer, and nPos must agree (M-RoPE models can differ from
+      // nTokens). A mismatch (hash collision, or a change in image
       // preprocessing for the same bytes) would otherwise read out of
-      // bounds. On mismatch we fall through and re-encode from scratch.
+      // bounds or advance positions incorrectly. On mismatch we fall
+      // through and re-encode from scratch.
       if (cached && nEmbd != 0 && cached->nTokens == nTokensChunk &&
-          cached->embeddings.size() == nTokensChunk * nEmbd) {
+          cached->embeddings.size() == nTokensChunk * nEmbd &&
+          cached->nPos == mtmd_input_chunk_get_n_pos(chunk)) {
         // Cache hit: get() returns a shared_ptr (zero-copy, thread-safe).
         // The API takes non-const float* but only reads from the buffer.
         int32_t res = mtmd_helper_decode_image_chunk(
@@ -535,10 +538,15 @@ bool MtmdLlmContext::evalMessageWithTools(
         throw qvac_errors::StatusError(
             ADDON_ID, toString(EncoderFailed), errorMsg);
       }
-      if (nTokensChunk > SIZE_MAX / nEmbd) {
+      // Guard both the element count (nTokensChunk * nEmbd) and the byte
+      // product (* sizeof(float)) that VisionCacheEntry::sizeBytes() later
+      // computes. The || short-circuits, so the second multiply is only
+      // evaluated once the first check proves nTokensChunk * nEmbd is safe.
+      if (nTokensChunk > SIZE_MAX / nEmbd ||
+          nTokensChunk * nEmbd > SIZE_MAX / sizeof(float)) {
         std::string errorMsg = string_format(
             "[MtmdLlm] embedding size overflow: nTokens=%zu * nEmbd=%zu "
-            "exceeds SIZE_MAX\n",
+            "(* sizeof(float)) exceeds SIZE_MAX\n",
             nTokensChunk,
             nEmbd);
         throw qvac_errors::StatusError(

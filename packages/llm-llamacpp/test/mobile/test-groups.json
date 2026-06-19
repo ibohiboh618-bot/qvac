@@ -79,6 +79,12 @@
       "runQwen35ImageElephantPerfTest",
       "runQwen35ImageFruitPlatePerfTest",
       "runQwen35ImageHighResAuroraPerfTest"
+    ],
+    "visionCacheGemma": [
+      "runVisionCacheGemma4Test"
+    ],
+    "visionCacheQwen35": [
+      "runVisionCacheQwen35Test"
     ]
   },
   "iosWeekly": {

@@ -42,6 +42,9 @@ struct VisionCacheEntry {
   std::size_t nx = 0;
   std::size_t ny = 0;
 
+  // Cannot overflow: the byte product is bounded where entries are built
+  // (MtmdLlmContext guards nTokensChunk * nEmbd > SIZE_MAX / sizeof(float)
+  // before assigning embeddings), so size() * sizeof(float) always fits.
   std::size_t sizeBytes() const { return embeddings.size() * sizeof(float); }
 };
 

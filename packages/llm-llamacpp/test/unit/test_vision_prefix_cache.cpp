@@ -67,6 +67,26 @@ TEST_F(VisionPrefixCacheTest, PutOversizedEntryRejected) {
   EXPECT_FALSE(cache.put("img1", std::move(entry)));
 }
 
+TEST_F(VisionPrefixCacheTest, UpdateOversizedEntryRejectedKeepsExisting) {
+  const std::size_t budget = bytesOf(512);
+  VisionPrefixCache cache(budget);
+  ASSERT_TRUE(cache.put("a", makeEntry(256)));
+  const auto before = cache.stats();
+
+  // Update existing key "a" with an entry whose size alone exceeds budget:
+  // the early guard must reject it before mutating any state (the guard runs
+  // before the find, so it covers the update path as well as the insert path).
+  EXPECT_FALSE(cache.put("a", makeEntry(1024)));
+
+  // Existing entry intact; byte accounting and eviction counter unchanged.
+  auto got = cache.get("a");
+  ASSERT_TRUE(got != nullptr);
+  EXPECT_EQ(got->embeddings.size(), 256u);
+  const auto after = cache.stats();
+  EXPECT_EQ(after.currentBytes, bytesOf(256));
+  EXPECT_EQ(after.evictions, before.evictions);
+}
+
 TEST_F(VisionPrefixCacheTest, LruEvictionOnInsert) {
   const std::size_t budget = bytesOf(512);
   VisionPrefixCache cache(budget);
