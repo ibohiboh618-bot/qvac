@@ -32,7 +32,8 @@ const { loadChatterboxTTS, runChatterboxTTS, resolveRefWavPath } = require('../u
 const { loadSupertonicTTS, runSupertonicTTS } = require('../utils/runSupertonicTTS')
 const { ensureChatterboxModels, ensureSupertonicModel } = require('../utils/downloadModel')
 const { recordTtsStats } = require('../utils/perf-helper')
-const { assertSampleCorrelation } = require('../utils/correlation-helper')
+const { assertSampleCorrelation, pearson } = require('../utils/correlation-helper')
+const { createWavBuffer } = require('../utils/wav-helper')
 
 const platform = os.platform()
 const isMobile = platform === 'ios' || platform === 'android'
@@ -329,6 +330,82 @@ test('Supertonic CPU smoke - useGPU=false must run on the CPU backend', { timeou
 // is the native [gpu-diag] trace in logcat_full.txt.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// DEBUG (QVAC-20557, DO-NOT-MERGE): per-stage GPU-vs-CPU correlation + artifacts.
+// The native engine dumps each stage's raw f32 to $TTS_CPP_GPU_DUMP_DIR as
+// <model>_<backend>_<stage>.f32 (set by ensureDumpDir before any model loads);
+// we read GPU vs CPU back here and Pearson-correlate per stage to localize the
+// FIRST diverging stage, and write the generated GPU/CPU WAVs so the device farm
+// can pull them for offline inspection. Stage lists mirror the native dg() order.
+// ---------------------------------------------------------------------------
+const SUPERTONIC_STAGES = ['latent_in', 'text_emb', 'cfm_latent', 'wav_full']
+const CHATTERBOX_STAGES = ['input_embed', 'encoder_mu', 'cfm_mel', 'f0', 'stft', 'hift_wav']
+
+function ensureDumpDir () {
+  const dir = path.join(getBaseDir(), 'gpu-diag')
+  try { fs.mkdirSync(dir, { recursive: true }) } catch (_e) {
+    try { fs.mkdirSync(dir) } catch (_e2) {}
+  }
+  if (proc.env) proc.env.TTS_CPP_GPU_DUMP_DIR = dir
+  // The pinned-tokens file gates the Chatterbox T3 bypass; clear any stale one so
+  // the GPU/first run decodes real (stochastic) tokens.
+  try { fs.unlinkSync(path.join(dir, 'chatterbox_pinned_tokens.i32')) } catch (_e) {}
+  return dir
+}
+
+function readF32 (filePath) {
+  const buf = fs.readFileSync(filePath)
+  const n = buf.length >>> 2
+  const out = new Float32Array(n)
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.length)
+  for (let i = 0; i < n; i++) out[i] = dv.getFloat32(i * 4, true)
+  return out
+}
+
+// Read GPU+CPU stage dumps and Pearson-correlate each stage. Logs every number
+// (so it lands in the device-farm console log) and, when hard, gates each stage.
+function assertPerStageCorrelation (t, model, gpuBtag, stages, dir, opts = {}) {
+  const hard = opts.hard === true
+  const threshold = opts.threshold !== undefined ? opts.threshold : CORR_THRESHOLD
+  for (const stage of stages) {
+    const gpuPath = path.join(dir, `${model}_${gpuBtag}_${stage}.f32`)
+    const cpuPath = path.join(dir, `${model}_CPU_${stage}.f32`)
+    const haveG = fs.existsSync(gpuPath)
+    const haveC = fs.existsSync(cpuPath)
+    if (!haveG || !haveC) {
+      const msg = `[${model}/${stage}/corr] MISSING dump (gpu=${haveG} cpu=${haveC})`
+      console.log(msg)
+      if (hard) t.fail(msg + ' — native per-stage f32 dump did not land; observability broken')
+      continue
+    }
+    const g = readF32(gpuPath)
+    const c = readF32(cpuPath)
+    const { corr, n, reason } = pearson(g, c)
+    const corrStr = Number.isFinite(corr) ? corr.toFixed(6) : String(corr)
+    console.log(`[${model}/${stage}/corr] ${gpuBtag}-vs-CPU gpu_n=${g.length} cpu_n=${c.length} aligned_n=${n} corr=${corrStr}${reason ? ' reason=' + reason : ''}`)
+    if (hard) {
+      t.ok(Number.isFinite(corr) && corr >= threshold,
+        `${model}/${stage}: per-stage GPU-vs-CPU corr ${corrStr} must be >= ${threshold}${reason ? ' (' + reason + ')' : ''}`)
+    }
+  }
+}
+
+function writeDumpWav (dir, name, samples, sampleRate) {
+  try {
+    const buf = createWavBuffer(samples, sampleRate)
+    fs.writeFileSync(path.join(dir, name), buf)
+    console.log(`[wav] wrote ${name} (${samples.length} samples @ ${sampleRate} Hz)`)
+  } catch (e) {
+    console.log(`[wav] failed to write ${name}: ${e && e.message}`)
+  }
+}
+
+function rms16 (samples) {
+  let s = 0
+  for (let i = 0; i < samples.length; i++) { const v = samples[i] / 32768; s += v * v }
+  return samples.length ? Math.sqrt(s / samples.length) : 0
+}
+
 async function runSupertonicOn (useGPU, supertonicPath) {
   const model = await loadSupertonicTTS({
     supertonicModelPath: supertonicPath, language: 'en', voice: 'F1', useGPU, seed: 42
@@ -343,6 +420,7 @@ async function runSupertonicOn (useGPU, supertonicPath) {
 
 test('Supertonic GPU-vs-CPU correctness - output must correlate with CPU', { timeout: 600000, skip: NO_GPU }, async (t) => {
   if (!expectsGpu()) { t.pass('Supertonic corr: no GPU wired on this platform'); return }
+  const dumpDir = ensureDumpDir()
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
   const download = await ensureSupertonicModel({ targetDir: modelsDir })
@@ -359,9 +437,20 @@ test('Supertonic GPU-vs-CPU correctness - output must correlate with CPU', { tim
     return
   }
   const cpu = await runSupertonicOn(false, supertonicPath)
-  assertSampleCorrelation(t, `Supertonic/${backendIdToName(gpu.stats.backendId)}`, gpu.samples, cpu.samples, {
+  const gpuBtag = backendIdToName(gpu.stats.backendId)
+  // Supertonic is deterministic (fixed seed) → both end-to-end and per-stage
+  // GPU-vs-CPU correlation are HARD gates.
+  assertSampleCorrelation(t, `Supertonic/${gpuBtag}`, gpu.samples, cpu.samples, {
     threshold: CORR_THRESHOLD, minSamples: 1000, minLenRatio: 0.90
   })
+  assertPerStageCorrelation(t, 'supertonic', gpuBtag, SUPERTONIC_STAGES, dumpDir, { hard: true })
+  // Audio artifacts (pulled by the device farm) + an audible-RMS floor that
+  // catches a silent/NaN GPU independently of the correlation maths.
+  writeDumpWav(dumpDir, `supertonic_${gpuBtag}.wav`, gpu.samples, 44100)
+  writeDumpWav(dumpDir, 'supertonic_CPU.wav', cpu.samples, 44100)
+  const r = rms16(gpu.samples)
+  console.log(`[Supertonic/${gpuBtag}/rms] ${r.toFixed(5)}`)
+  t.ok(r > 0.001, `Supertonic/${gpuBtag}: GPU audio must be audible (rms ${r.toFixed(5)} > 0.001)`)
 })
 
 async function runChatterboxOn (useGPU, modelDir, refWavPath) {
@@ -374,8 +463,9 @@ async function runChatterboxOn (useGPU, modelDir, refWavPath) {
   }
 }
 
-test('Chatterbox GPU-vs-CPU correctness - GPU output must be finite (corr informational)', { timeout: 600000, skip: NO_GPU }, async (t) => {
+test('Chatterbox GPU-vs-CPU correctness - token-pinned per-stage + end-to-end', { timeout: 600000, skip: NO_GPU }, async (t) => {
   if (!expectsGpu()) { t.pass('Chatterbox corr: no GPU wired on this platform'); return }
+  const dumpDir = ensureDumpDir()
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
   const download = await ensureChatterboxModels({ targetDir: modelsDir })
@@ -386,15 +476,41 @@ test('Chatterbox GPU-vs-CPU correctness - GPU output must be finite (corr inform
   const refWavPath = resolveRefWavPath({})
   if (!fs.existsSync(refWavPath)) { t.pass('Skipped: reference audio missing'); return }
 
+  // GPU run: real (stochastic) T3 → S3Gen. The native side writes the tokens it
+  // used to chatterbox_speech_tokens.i32 and dumps chatterbox_<gpu>_*.f32 stages.
   const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
   if (!gpu.stats || gpu.stats.backendDevice !== 1) {
     t.comment(`Chatterbox corr: GPU did not engage (backendDevice=${gpu.stats && gpu.stats.backendDevice}); per-stage [gpu-diag] trace still emitted`)
     return
   }
+  const gpuBtag = backendIdToName(gpu.stats.backendId)
+
+  // Pin the GPU run's tokens for the CPU run so both S3Gen runs decode IDENTICAL
+  // tokens — removes T3 stochasticity from the comparison and makes it a HARD
+  // gate. If the capture file is missing (observability gap), fall back to soft.
+  const tokSrc = path.join(dumpDir, 'chatterbox_speech_tokens.i32')
+  const tokPin = path.join(dumpDir, 'chatterbox_pinned_tokens.i32')
+  let pinned = false
+  if (fs.existsSync(tokSrc)) {
+    try { fs.writeFileSync(tokPin, fs.readFileSync(tokSrc)); pinned = true } catch (_e) {}
+  }
+  if (!pinned) {
+    t.comment('Chatterbox corr: token capture file missing — comparison is informational (T3 not pinned)')
+  }
+
   const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
-  // soft: T3 stochasticity makes the magnitude informational; the hard signal
-  // here is finite-ness (silent/NaN GPU fails) + the per-stage [gpu-diag] trace.
-  assertSampleCorrelation(t, `Chatterbox/${backendIdToName(gpu.stats.backendId)}`, gpu.samples, cpu.samples, {
-    threshold: CORR_THRESHOLD, soft: true, minSamples: 1000, minLenRatio: 0.0
+  // Remove the pin so it can't leak into a later test run on the same device.
+  try { fs.unlinkSync(tokPin) } catch (_e) {}
+
+  // With pinned tokens + fixed seed the S3Gen comparison is deterministic → HARD
+  // (end-to-end AND per-stage). Without pinning, end-to-end stays informational.
+  assertSampleCorrelation(t, `Chatterbox/${gpuBtag}`, gpu.samples, cpu.samples, {
+    threshold: CORR_THRESHOLD, soft: !pinned, minSamples: 1000, minLenRatio: pinned ? 0.90 : 0.0
   })
+  assertPerStageCorrelation(t, 'chatterbox', gpuBtag, CHATTERBOX_STAGES, dumpDir, { hard: pinned })
+  writeDumpWav(dumpDir, `chatterbox_${gpuBtag}.wav`, gpu.samples, 24000)
+  writeDumpWav(dumpDir, 'chatterbox_CPU.wav', cpu.samples, 24000)
+  const r = rms16(gpu.samples)
+  console.log(`[Chatterbox/${gpuBtag}/rms] ${r.toFixed(5)}`)
+  t.ok(r > 0.001, `Chatterbox/${gpuBtag}: GPU audio must be audible (rms ${r.toFixed(5)} > 0.001)`)
 })

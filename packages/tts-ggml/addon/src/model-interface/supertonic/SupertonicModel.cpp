@@ -5,12 +5,23 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <tts-cpp/supertonic/engine.h>
+// DEBUG (QVAC-20557 GPU correctness bring-up, DO-NOT-MERGE): tts_cpp_log_set +
+// ggml_log_callback/ggml_log_level (pulls in ggml.h) — see ggmlLogTrampoline.
+#include <tts-cpp/log.h>
+
+#if defined(__ANDROID__)
+// DEBUG (Mali/Adreno bring-up): __android_log_print — see emitDeviceDiag.
+#include <android/log.h>
+#endif
 
 #include "addon/TTSErrors.hpp"
 #include "model-interface/BackendUtils.hpp"
@@ -26,6 +37,55 @@ using qvac_errors::StatusError;
 using qvac_errors::tts_error::TTSErrorCode;
 namespace general_error = qvac_errors::general_error;
 namespace logger = qvac_lib_inference_addon_cpp::logger;
+
+// DEBUG (QVAC-20557 GPU correctness bring-up, DO-NOT-MERGE) — native log bridge,
+// ported from QVAC PR #2610/#2601. On-device, QLOG/JsLogger rides a uv_async
+// callback that never reaches a captured sink in the embedded Bare-in-app
+// (React-Native host) runtime, and native stderr is swallowed — so native
+// diagnostics vanish. Emit STRAIGHT to the platform log: __android_log_print
+// lands synchronously in the full device logcat artifact (logcat_full.txt).
+// Off-device, stderr keeps local pre-flight working.
+void emitDeviceDiag(const std::string& line) {
+#if defined(__ANDROID__)
+  __android_log_print(ANDROID_LOG_INFO, "qvac-supertonic", "%s", line.c_str());
+#else
+  std::fputs(line.c_str(), stderr);
+  std::fputc('\n', stderr);
+  std::fflush(stderr);
+#endif
+}
+
+// ggml emits log text in fragments that are not necessarily newline-terminated;
+// buffer and flush complete lines so backend-init banners ("ggml_vulkan: …
+// Mali-G715 … fp16…"), op-support warnings, and unsupported-op fallbacks each
+// reach the device log as one clean line. Installed via tts_cpp_log_set, which
+// forwards to ggml_log_set.
+void ggmlLogTrampoline(ggml_log_level /*level*/, const char* text,
+                       void* /*user_data*/) {
+  if (!text) return;
+  static std::mutex mu;
+  static std::string buf;
+  std::lock_guard<std::mutex> lk(mu);
+  buf += text;
+  std::size_t nl;
+  while ((nl = buf.find('\n')) != std::string::npos) {
+    emitDeviceDiag(buf.substr(0, nl));
+    buf.erase(0, nl + 1);
+  }
+}
+
+void installGgmlLogTrampolineOnce() {
+  static std::once_flag once;
+  std::call_once(once, [] { tts_cpp_log_set(&ggmlLogTrampoline, nullptr); });
+}
+
+// DEBUG (QVAC-20557, DO-NOT-MERGE): per-stage f32 dumps key off one dir,
+// $TTS_CPP_GPU_DUMP_DIR (set by the gpu-smoke test to a device path the
+// device-farm pulls). Empty/unset = no dump.
+std::string gpuDumpDir() {
+  const char* d = std::getenv("TTS_CPP_GPU_DUMP_DIR");
+  return (d && *d) ? std::string(d) : std::string();
+}
 
 tts_cpp::supertonic::EngineOptions toEngineOptions(const SupertonicConfig& cfg) {
   tts_cpp::supertonic::EngineOptions opts;
@@ -59,6 +119,14 @@ tts_cpp::supertonic::EngineOptions toEngineOptions(const SupertonicConfig& cfg) 
     opts.backends_dir = backendsDirPath.string();
   }
   opts.opencl_cache_dir = cfg.openclCacheDir;
+
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): route the engine's per-stage [gpu-diag]
+  // lines (latent_in/text_emb/cfm_latent/wav_full) to the device log bridge so
+  // they reach logcat_full.txt; when $TTS_CPP_GPU_DUMP_DIR is set, also dump
+  // each stage's raw f32 there for GPU-vs-CPU correlation. Supertonic is
+  // deterministic so the CPU run loads as a separate model (no token pinning).
+  opts.diag_sink     = &emitDeviceDiag;
+  opts.diag_dump_dir = gpuDumpDir();
   return opts;
 }
 
@@ -167,6 +235,13 @@ void SupertonicModel::loadLocked() {
     }
   }
 #endif
+
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): install the ggml log trampoline BEFORE the
+  // Engine ctor so the backend-init banner (which backend Mali/Adreno selected +
+  // its fp16/coopmat caps) is captured; emit a canary so the device-farm logcat
+  // confirms the native log pipe reaches host before trusting the rest.
+  installGgmlLogTrampolineOnce();
+  emitDeviceDiag("[gpu-diag] canary: native log reaches host (supertonic)");
 
   try {
     engine_ = std::make_shared<tts_cpp::supertonic::Engine>(toEngineOptions(cfg_));

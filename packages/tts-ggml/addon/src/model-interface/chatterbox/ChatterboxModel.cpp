@@ -5,12 +5,23 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <tts-cpp/chatterbox/engine.h>
+// DEBUG (QVAC-20557 GPU correctness bring-up, DO-NOT-MERGE): tts_cpp_log_set +
+// ggml_log_callback/ggml_log_level (pulls in ggml.h) — see ggmlLogTrampoline.
+#include <tts-cpp/log.h>
+
+#if defined(__ANDROID__)
+// DEBUG (Mali/Adreno bring-up): __android_log_print — see emitDeviceDiag.
+#include <android/log.h>
+#endif
 
 #include "addon/TTSErrors.hpp"
 #include "model-interface/BackendUtils.hpp"
@@ -26,6 +37,88 @@ using qvac_errors::StatusError;
 using qvac_errors::tts_error::TTSErrorCode;
 namespace general_error = qvac_errors::general_error;
 namespace logger = qvac_lib_inference_addon_cpp::logger;
+
+// DEBUG (QVAC-20557 GPU correctness bring-up, DO-NOT-MERGE) — native log bridge,
+// ported from QVAC PR #2610/#2601. On-device, QLOG/JsLogger rides a uv_async
+// callback that never reaches a captured sink in the embedded Bare-in-app
+// (React-Native host) runtime, and native stderr is swallowed — so native
+// diagnostics vanish (why earlier rounds were blind). Emit STRAIGHT to the
+// platform log: __android_log_print lands synchronously in the full device
+// logcat artifact (logcat_full.txt). Off-device, stderr keeps local pre-flight
+// working.
+void emitDeviceDiag(const std::string& line) {
+#if defined(__ANDROID__)
+  __android_log_print(ANDROID_LOG_INFO, "qvac-chatterbox", "%s", line.c_str());
+#else
+  std::fputs(line.c_str(), stderr);
+  std::fputc('\n', stderr);
+  std::fflush(stderr);
+#endif
+}
+
+// ggml emits log text in fragments that are not necessarily newline-terminated;
+// buffer and flush complete lines so backend-init banners, op-support warnings,
+// and unsupported-op fallbacks each reach the device log as one clean line.
+// Installed via tts_cpp_log_set, which forwards to ggml_log_set.
+void ggmlLogTrampoline(ggml_log_level /*level*/, const char* text,
+                       void* /*user_data*/) {
+  if (!text) return;
+  static std::mutex mu;
+  static std::string buf;
+  std::lock_guard<std::mutex> lk(mu);
+  buf += text;
+  std::size_t nl;
+  while ((nl = buf.find('\n')) != std::string::npos) {
+    emitDeviceDiag(buf.substr(0, nl));
+    buf.erase(0, nl + 1);
+  }
+}
+
+void installGgmlLogTrampolineOnce() {
+  static std::once_flag once;
+  std::call_once(once, [] { tts_cpp_log_set(&ggmlLogTrampoline, nullptr); });
+}
+
+// DEBUG (QVAC-20557, DO-NOT-MERGE): per-stage f32 dumps + token-pinning are
+// keyed off one dir, $TTS_CPP_GPU_DUMP_DIR (set by the gpu-smoke test to a
+// device path the device-farm pulls). Empty/unset = no dump, no pin.
+std::string gpuDumpDir() {
+  const char* d = std::getenv("TTS_CPP_GPU_DUMP_DIR");
+  return (d && *d) ? std::string(d) : std::string();
+}
+
+// DEBUG (QVAC-20557, DO-NOT-MERGE): read pre-captured T3 tokens for pinning. The
+// gpu-smoke test runs the GPU model first (which writes chatterbox_speech_tokens.i32
+// — see synthesize()), copies it to chatterbox_pinned_tokens.i32, then loads the
+// CPU model; this reads that file so CPU S3Gen decodes the SAME tokens the GPU run
+// used. Absent file = normal stochastic T3 (the GPU/first run). int32 little-endian.
+std::vector<int32_t> readPinnedTokens(const std::string& dir) {
+  std::vector<int32_t> toks;
+  if (dir.empty()) return toks;
+  const std::string path = dir + "/chatterbox_pinned_tokens.i32";
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) return toks;
+  std::fseek(f, 0, SEEK_END);
+  long bytes = std::ftell(f);
+  std::fseek(f, 0, SEEK_SET);
+  if (bytes > 0) {
+    toks.resize(static_cast<size_t>(bytes) / sizeof(int32_t));
+    if (std::fread(toks.data(), sizeof(int32_t), toks.size(), f) != toks.size()) toks.clear();
+  }
+  std::fclose(f);
+  return toks;
+}
+
+// DEBUG (QVAC-20557, DO-NOT-MERGE): persist the tokens this synth used so the
+// follow-up CPU run can pin them (see readPinnedTokens).
+void writeSpeechTokens(const std::string& dir, const std::vector<int32_t>& toks) {
+  if (dir.empty() || toks.empty()) return;
+  const std::string path = dir + "/chatterbox_speech_tokens.i32";
+  FILE* f = std::fopen(path.c_str(), "wb");
+  if (!f) return;
+  std::fwrite(toks.data(), sizeof(int32_t), toks.size(), f);
+  std::fclose(f);
+}
 
 tts_cpp::chatterbox::EngineOptions toEngineOptions(const ChatterboxConfig& cfg) {
   tts_cpp::chatterbox::EngineOptions opts;
@@ -81,6 +174,16 @@ tts_cpp::chatterbox::EngineOptions toEngineOptions(const ChatterboxConfig& cfg) 
   // so tts-cpp keeps its character-level fallback.
   if (!cfg.mecabDictPath.empty())  opts.mecab_dict_path  = cfg.mecabDictPath;
   if (!cfg.cangjieTsvPath.empty()) opts.cangjie_tsv_path = cfg.cangjieTsvPath;
+
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): route the engine's per-stage [gpu-diag]
+  // lines (input_embed/encoder_mu/cfm_mel/f0/stft/hift_wav) to the device log
+  // bridge so they reach logcat_full.txt; when $TTS_CPP_GPU_DUMP_DIR is set,
+  // also dump each S3Gen stage's raw f32 there for GPU-vs-CPU correlation; and
+  // if a pinned-tokens file is present, decode those tokens instead of running
+  // stochastic T3 (so a CPU run matches the GPU run's tokens).
+  opts.diag_sink     = &emitDeviceDiag;
+  opts.diag_dump_dir = gpuDumpDir();
+  opts.test_pinned_tokens = readPinnedTokens(opts.diag_dump_dir);
   return opts;
 }
 
@@ -207,6 +310,13 @@ void ChatterboxModel::loadLocked() {
   }
 #endif
 
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): install the ggml log trampoline BEFORE the
+  // Engine ctor so the backend-init banner (which backend Mali/Adreno selected +
+  // its fp16/coopmat caps) is captured; emit a canary so the device-farm logcat
+  // confirms the native log pipe reaches host before trusting the rest.
+  installGgmlLogTrampolineOnce();
+  emitDeviceDiag("[gpu-diag] canary: native log reaches host (chatterbox)");
+
   try {
     engine_ = std::make_shared<tts_cpp::chatterbox::Engine>(toEngineOptions(cfg_));
   } catch (const std::exception& e) {
@@ -287,6 +397,11 @@ ChatterboxModel::SynthesizeResult ChatterboxModel::synthesize(
     throw createTTSError(TTSErrorCode::SynthesisFailed,
                          std::string("engine.synthesize: ") + e.what());
   }
+
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): persist the T3 tokens this synth used so a
+  // follow-up CPU run can pin them (readPinnedTokens) for a token-matched
+  // GPU-vs-CPU per-stage comparison. No-op when $TTS_CPP_GPU_DUMP_DIR is unset.
+  writeSpeechTokens(gpuDumpDir(), result.speech_tokens);
 
   std::vector<int16_t> pcm = pcmFloatToInt16(result.pcm);
 
