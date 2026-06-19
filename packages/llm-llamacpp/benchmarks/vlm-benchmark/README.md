@@ -31,8 +31,9 @@ Pipeline:
 Everything ships from **this one directory**
 (`packages/llm-llamacpp/benchmarks/vlm-benchmark/`). Desktop runs the files in place;
 the mobile build first runs `stage.cjs`, which copies the entry + harness + config +
-fixture into `test/integration/` and the images into `test/mobile/testAssets/` (both
-git-ignored) so the mobile test generator and app bundler pick them up. The
+fixture data into `test/integration/` and the `fixture/` images into
+`test/mobile/testAssets/` (both git-ignored) so the mobile test generator and app
+bundler pick them up. The
 `../../`-relative requires resolve identically from either location.
 
 ---
@@ -61,6 +62,7 @@ suffix pins one backend:
 
 | device token | Device Farm filter |
 |---|---|
+| `s26` | Samsung · "S26 Ultra" (Android) |
 | `s25` | Samsung · "S25 Ultra" (Android) |
 | `pixel9` | Google · "Pixel 9" (Android) |
 | `iphone16` | Apple · "iPhone 16" (iOS) |
@@ -90,8 +92,8 @@ and varies another.
 | Holds fixed | the engine (default `addon`) | the model |
 | Compares | `MODEL_1` vs `MODEL_2` | `addon` vs `fabric-cli` vs `upstream-cli` |
 | Default example | Qwen3.5 mmproj-F16 vs mmproj-Q8 | Qwen3.5 + q8 mmproj across all three engines |
-| Targets | desktop + mobile, CPU + GPU | **Linux only** (the CLIs are native binaries built there) |
-| Headline metric | per-model quality + vision-encode time | per-engine quality + encode/TTFT |
+| Targets | desktop + mobile, CPU + GPU | **desktop only** (Linux / macOS / Windows) — the CLIs are native binaries built per-OS; mobile runs an addon app, not arbitrary CLIs |
+| Headline metric | per-model quality + vision-encode time | per-engine quality (VQA + OCR) + encode/TTFT |
 
 **two-models** compares the two complete VLMs configured as `MODEL_1` and `MODEL_2`.
 Each is a main LLM blob + an mmproj blob. They can be **two blobs/variants of the same
@@ -120,13 +122,15 @@ Each is a full spec — `label`, `name`, `ctx_size`, an `llm` blob and an `mmpro
 (each blob has a `source` descriptor + optional `registry` annotation). Edit those
 constants to change what runs; nothing else needs to change.
 
-**Presets** are pure run-size bundles (independent of mode):
+**Presets** are run-size + task-group bundles (independent of mode):
 
-| preset | tasks × samples × repeats | use |
+| preset | what runs | use |
 |---|---|---|
-| `smoke` | 1 task × 1 × 1 | a single inference per config — wiring check |
-| `base` | 5 tasks × 3 × 1 | **default** evaluation |
-| `full` | 5 tasks × 5 × 1 | the complete fixture |
+| `smoke` | 1 task × 1 sample | a single inference per config — wiring check |
+| `cognitive` | 5 VQA tasks × 5 | reasoning/quality evaluation |
+| `ocr1page` | 1 light `ocr-page` doc | quick document-OCR check (fits the mobile session) |
+| `ocr5pages` | all 5 high-MP `ocr-page` docs | heavy document OCR — desktop-oriented |
+| `full` | cognitive + `ocr-small` ×5 + 1 light `ocr-page` | **default** — the complete fixture (`ocr-page` capped to 1) |
 
 **Run knobs** (preset fields). Each is overridable by env on every target — desktop
 gets env directly from the workflow; mobile gets it via the `qvacPerfConfig.txt`
@@ -188,7 +192,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
      `source.sha`) — or just dispatch the new URL via `matrix_models`.
    - **Fixture images:** stored in a fixture object store (URI configured in the
      benchmark workflow), not git; you may download them separately for local tests.
-     Regenerate with `build-fixture.cjs`, then upload `./images/` to that store; CI pulls
+     Regenerate with `build-fixture.cjs`, then upload `./fixture/` to that store; CI pulls
      them per run (needs the `release` environment for the OIDC role).
 
 **3. Mode** — what's compared.
@@ -201,7 +205,9 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    `full` (cognitive + `ocr-small` + the 1 light `ocr-page`).
    - Config: `defaultPreset: '…'` (and the `presets` definitions: tasks/samples/repeats).
    - Dispatch: `-f matrix_preset=…` (every leg; forwarded to phones as device env).
-     Keep mobile light (`base` or below); `full` risks the Device Farm session window.
+     Keep mobile light (`smoke` / `cognitive` / `ocr1page`); `full` and `ocr5pages` are
+     desktop-oriented (the heavy `ocr-page` docs can overrun the Device Farm session — raise
+     `mobile_timeout_min` if you must run them on a phone).
 
 **5. Desktop platforms × backends.**
    - Dispatch: `-f matrix_desktop=…` — any subset of `{linux,macos,macmini,windows}-{cpu,gpu}`
@@ -209,9 +215,9 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
    - Config: backends per preset via `devices` (`null` = both); env `NO_GPU=true`.
 
 **6. Mobile devices × backends (AWS Device Farm).**
-   - Dispatch: `-f matrix_mobile=s25,pixel9,iphone16,iphone17,iphone17pro` tokens, each
+   - Dispatch: `-f matrix_mobile=s26,s25,pixel9,iphone16,iphone17,iphone17pro` tokens, each
      optionally suffixed `-cpu`/`-gpu` (bare = both in one session). Empty = no mobile;
-     two-models only — ignored for several-sources.
+     two-models only — ignored for several-sources (desktop-only).
 
 **7. Task set** — `scenarios.cjs` defines one `default` set: the 5 VQA tasks
    (textvqa/vizwiz/gqa/docvqa/ai2d) + the OCR tasks (ocr-small/ocr-page). Quality is
@@ -240,7 +246,7 @@ Walk it top-to-bottom. Steps 1–2 (model + source versions) decide *what* is me
 | `matrix_samples` | preset `samplesPerTask` | override samples/task, every leg (empty = default) |
 | `mobile_timeout_min` | `config.mobileTimeoutMin` | mobile per-leg timeout (min) — raises the Device-Farm Mocha/Android per-test ceiling (≤120; empty = config, null config = 35/30 default) |
 
-**Example** — two-models, mixed leg selection, base preset, one ad-hoc model:
+**Example** — two-models, mixed leg selection, full preset, one ad-hoc model:
 
 ```bash
 gh workflow run benchmark-vlm-model-comparison.yml --ref <branch> \
@@ -269,16 +275,19 @@ of speed timings. The report rolls them up per (platform × backend × config).
 
 | metric | tasks | how |
 |---|---|---|
-| `vqa` | textvqa, vizwiz, gqa | normalized exact match vs the answer set (min(1, hits/3)) |
-| `anls` | docvqa | Average Normalized Levenshtein Similarity (≥0.5) |
-| `relaxed` | (chartqa) | numeric within ±5% or string match |
+| `vqa` | textvqa, vizwiz, gqa | exact normalized match = 1, else graded partial credit (word-overlap F1 / char similarity); unrelated answers ~0 |
+| `anls` | docvqa | same graded text similarity (Average Normalized Levenshtein family) |
 | `mc` | ai2d | the stated letter (explicit "answer: X" or a short letter-led reply) |
+| `relaxed` | (numeric charts) | numeric within ±5% or string match — defined, not used by the current task set |
+| `cer` / `wer` / `bleu` | ocr-small, ocr-page | OCR error/overlap rates — reported in a **separate** table (↓ CER/WER, ↑ BLEU), never folded into "Overall %" |
 
 **Speed** — `mmproj` vision-encode ms (the headline for an mmproj quant; parsed from
 llama.cpp native stderr), TTFT, decode TPS, wall ms.
 
-**Report layout** — (1) **Highlights** (quality + speed at a glance), (2) **Details**
-(models & origins with Source, HW/SW provenance, full matrices), (3) **Test Results**
+**Report layout** — (1) **Highlights** — a one-line verdict (in two-models mode: a
+leading 🚀/⚖️/🐢 emoji + candidate-vs-baseline avg speed (vis-encode+TTFT) and quality
+across all legs), then quality / speed / OCR tables; (2) **Details**
+(models & origins with Source, HW/SW provenance, full matrices); (3) **Test Results**
 (per-target pass counts), (4) **Image samples** (task → image → W×H).
 
 ---
@@ -290,11 +299,11 @@ The benchmark is meant to grow. The three common changes:
 - **Add tasks / refresh images.** `node build-fixture.cjs --per-task 3 --max-side 1024`
   iterates the HuggingFace datasets-server, **filters on resolution without
   downloading**, keeps only open-licensed datasets (allowlist), writes images to
-  `./images/`, regenerates `fixture.data.cjs`, and updates `fixture.NOTICE.md`
+  `./fixture/`, regenerates `fixture.data.cjs`, and updates `fixture.NOTICE.md`
   (per-image attribution). Adding a task = one manifest entry. **The images are not
   committed — they live in a fixture object store** (URI configured in the benchmark
-  workflow); after regenerating, upload `./images/` to that store. CI syncs it →
-  `images/` before each run (desktop and, before `stage.cjs`, mobile).
+  workflow); after regenerating, upload `./fixture/` to that store. CI syncs it →
+  `fixture/` before each run (desktop and, before `stage.cjs`, mobile).
 - **Change the models.** Edit `MODEL_1` / `MODEL_2` (two-models) or `SOURCES_MODEL`
   (several-sources) in `config.cjs` — give each blob a `source` descriptor. To compare
   two variants of one model, point both at the same `llm` and vary only the `mmproj`.
@@ -307,8 +316,11 @@ The benchmark is meant to grow. The three common changes:
 
 ## Known limitations
 
-- **several-sources is Linux-only.** `fabric-cli`/`upstream-cli` are native binaries
-  built by the Linux legs; the mobile path runs an addon app, not arbitrary CLIs.
+- **several-sources is desktop-only.** `fabric-cli`/`upstream-cli` are native binaries
+  built per-OS (Vulkan on Linux/Windows, Metal on macOS); the mobile path runs an addon
+  app, not arbitrary CLIs, so phones are excluded from this mode. On Windows the build
+  uses the pre-installed clang + Ninja (the runner has no Visual Studio, and the
+  GH-Actions user can't run choco), set up by the workflow's Windows-only step.
 - **mmproj vision-encode time is unavailable on mobile.** It comes from llama.cpp's native
   stderr, which neither Android logcat nor the iOS console capture carries — the report
   shows `—` there and uses **TTFT** (which includes vision-encode) as the mobile proxy.
@@ -332,7 +344,7 @@ The benchmark is meant to grow. The three common changes:
 Active development (QVAC-19371 umbrella) is split into two independent workstreams —
 **runner** (sources, methodology, metrics: `harness.cjs`, `models.cjs`, `sources.cjs`,
 `methodology.cjs`, `run-desktop.cjs`, `config.cjs`, the workflow run jobs) and
-**report** (scenarios, scoring, gate, views: `scenarios.cjs`, `aggregate.js`,
+**report** (scenarios, scoring, views: `scenarios.cjs`, `aggregate.js`,
 `combine.cjs`, `fixture*`, `score-check.cjs`, the workflow inputs + combine job).
 They meet only at the frozen interface in **`CONTRACT.md`** (marker schema v2, env
 vars, launch grammar); `markers-v2.sample.txt` is its executable sample — the report
@@ -352,13 +364,13 @@ All in `packages/llm-llamacpp/benchmarks/vlm-benchmark/` unless noted:
 | `models.cjs` | `matrix_models` grammar → canonical model specs (any model via two URLs) |
 | `sources.cjs`, `methodology.cjs` | source tokens + measurement methodology helpers (A2/A3 build on these) |
 | `run-desktop.cjs` | desktop run driver scaffold + `--selfcheck` contract guard |
-| `combine.cjs` | combine driver: log discovery, host tagging, provenance, report, gate (B4) |
+| `combine.cjs` | combine driver: log discovery, host tagging, provenance, report render (descriptive — no accuracy gate) |
 | `vlm-matrix.test.js`, `harness.cjs` | harness (loads models, emits markers) |
 | `aggregate.js` | parses markers → report |
 | `cli-fixture-runner.cjs` | runs the fixture through a native CLI (several-sources) |
 | `cli-case-runner.js`, `stdout-parser.js`, `accuracy.js`, `utils.js`, `cli-source-config.js`, `build-cli-sources.js` | **vendored** native-CLI helpers — build + run fabric/upstream `llama-mtmd-cli` (several-sources). Self-contained; not imported from `vlm-performance` |
 | `build-fixture.cjs` | open-licensed fixture generator |
-| `fixture.data.cjs`, `fixture.NOTICE.md` | the frozen fixture manifest + attribution (images are in S3, synced into `images/` by CI) |
+| `fixture.data.cjs`, `fixture.NOTICE.md` | the frozen fixture manifest + attribution (images are in S3, synced into `fixture/` by CI) |
 | `score-check.cjs` | offline metric-tuning harness — re-scores real predictions without re-running inference |
 | `stage.cjs` | copies the above into `test/integration/` + `testAssets/` for the mobile build |
 | `.github/workflows/benchmark-vlm-model-comparison.yml` | `run_matrix` jobs (desktop legs, mobile, combine) |

@@ -64,7 +64,7 @@ const SOURCE = env('QVAC_VLM_ENGINE') || config.engine || 'addon'
 // Active scenario (CONTRACT.md §2): the workload definition — its task list is
 // the task universe for this run. The runner executes the FIRST CSV token;
 // multi-scenario runs are reserved. Unknown/fixtureless scenarios fail fast.
-const SCENARIO_ID = (env('QVAC_VLM_SCENARIOS') || config.defaultScenario || 'vqa-suite')
+const SCENARIO_ID = (env('QVAC_VLM_SCENARIOS') || config.defaultScenario || 'default')
   .split(',')[0].trim()
 const SCENARIO = (config.scenarios || {})[SCENARIO_ID]
 if (!SCENARIO) throw new Error(`unknown scenario '${SCENARIO_ID}' (known: ${Object.keys(config.scenarios || {}).join(', ')})`)

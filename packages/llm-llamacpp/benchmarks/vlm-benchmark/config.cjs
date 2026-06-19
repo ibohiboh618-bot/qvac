@@ -138,7 +138,7 @@ module.exports = {
   // ════════════════════════ SOURCES — builds under comparison ════════════════════════
   // Tokens for the matrix_sources launch param (parsed by sources.cjs).
   // addon@candidate/addon@baseline are wired by A2; fabric/upstream run via the
-  // several-sources CLI path (Linux-only).
+  // several-sources CLI path (desktop only — built per-OS on Linux/macOS/Windows).
   sources: {
     'addon@candidate': { type: 'addon', ref: 'branch' },
     'addon@baseline': { type: 'addon', ref: 'npm' },
