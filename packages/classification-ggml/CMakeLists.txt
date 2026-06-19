@@ -9,7 +9,7 @@ endif()
 find_package(cmake-bare REQUIRED PATHS node_modules/cmake-bare)
 find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
-set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
+set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/../../vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
 # Android STL configuration must be set before project()
 if(DEFINED ENV{ANDROID_NDK} OR DEFINED ENV{ANDROID_NDK_HOME})
@@ -113,15 +113,6 @@ target_compile_definitions(
     JS_LOGGER
     BACKENDS_SUBDIR="${BACKENDS_SUBDIR_VALUE}"
 )
-
-if(WIN32)
-  target_link_libraries(
-    ${classification-ggml}
-    PRIVATE
-      msvcrt.lib
-  )
-endif()
-
 if(BUILD_TESTING)
   find_package(GTest CONFIG REQUIRED)
   include(GoogleTest)
