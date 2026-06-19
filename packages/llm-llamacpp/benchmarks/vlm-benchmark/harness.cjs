@@ -25,8 +25,8 @@ const config = require('./config.cjs')
 const { parseModels } = require('./models.cjs')
 
 // Resolve a fixture image. Images live in a fixture object store (not git): CI syncs
-// them into this dir's images/ before the run. Desktop reads images/ directly; mobile
-// uses the bundled asset manifest (stage.cjs copies images/ -> test/mobile/testAssets
+// them into this dir's fixture/ before the run. Desktop reads fixture/ directly; mobile
+// uses the bundled asset manifest (stage.cjs copies fixture/ -> test/mobile/testAssets
 // after that sync).
 function getMediaPath (filename) {
   if ((os.platform() === 'ios' || os.platform() === 'android') && global.assetPaths) {
@@ -34,7 +34,7 @@ function getMediaPath (filename) {
     if (global.assetPaths[key]) return global.assetPaths[key].replace('file://', '')
     throw new Error(`Asset not found in testAssets: ${filename} (rebuild the app)`)
   }
-  return path.join(__dirname, 'images', filename)
+  return path.join(__dirname, 'fixture', filename)
 }
 
 function env (key) {
@@ -105,13 +105,24 @@ const TASKS = (() => {
   return PRESET.tasks || SCENARIO.tasks || null
 })()
 
+// Output token cap per task. ocr-page transcribes a whole document, so it needs far more
+// than a VQA answer; the run's cap is the max over its selected tasks. It's a CAP, not a
+// forced length — short answers still stop at EOS, so VQA pays nothing for the headroom.
+const TASK_NPREDICT = { 'ocr-page': 768, 'ocr-small': 96 }
+const DEFAULT_NPREDICT = 128
+
 function selectedItems () {
+  // Explicit item allowlist (preset.ids) wins — used to pick specific images
+  // (e.g. ocr1page = just ocr-page_0; ocr5pages = all 5 ocr-page docs).
+  if (PRESET.ids) { const want = new Set(PRESET.ids); return fixture.items.filter(it => want.has(it.id)) }
   const seen = {}
   return fixture.items.filter(it => {
     if (TASKS && !TASKS.includes(it.task)) return false
     if (!(it.task in seen) && PRESET.maxTasks && Object.keys(seen).length >= PRESET.maxTasks) return false
     seen[it.task] = (seen[it.task] || 0) + 1
-    return seen[it.task] <= SAMPLES_PER_TASK
+    // per-task sample cap (preset.taskSamples) overrides the global samplesPerTask
+    const cap = (PRESET.taskSamples && PRESET.taskSamples[it.task] != null) ? PRESET.taskSamples[it.task] : SAMPLES_PER_TASK
+    return seen[it.task] <= cap
   })
 }
 
@@ -287,6 +298,9 @@ function runModel (spec) {
         mmproj_url: displayUrl(spec.mmproj),
         mmproj_source: sourceType(spec.mmproj)
       })) + '[/VLMMETA]')
+      // Size the output cap to the heaviest task in this run (ocr-page needs ~768).
+      const items = selectedItems()
+      const nPredict = Math.max(DEFAULT_NPREDICT, ...items.map(it => TASK_NPREDICT[it.task] || 0))
       const inference = new LlmLlamacpp({
         files: { model: [path.join(dir, mainName)], projectionModel: path.join(dir, projName) },
         config: {
@@ -295,7 +309,7 @@ function runModel (spec) {
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
-          n_predict: '128',
+          n_predict: String(nPredict),
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
           'reasoning-budget': '0', // disable Qwen3.5 thinking -> clean direct answers
           ...(BACKENDS_DIR ? { backendsDir: BACKENDS_DIR } : {}) // A2: candidate/baseline prebuild
@@ -306,7 +320,6 @@ function runModel (spec) {
       t.teardown(async () => { try { await inference.unload() } catch (_) {} })
       await inference.load()
 
-      const items = selectedItems()
       let ok = 0
       for (const item of items) {
         for (let rep = 0; rep < REPEATS; rep++) {
