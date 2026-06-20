@@ -1,18 +1,21 @@
 'use strict'
 
 // Shared runner for the mobile embed perf benchmark. Sharded into one test file
-// per (model x quant) (benchmark-perf-<model>-<quant>.test.js); this module
-// holds the logic they all share. Underscore prefix keeps it out of the mobile
-// test generator (it is not a *.test.js file).
+// per (model x quant x batchSize x flashAttn)
+// (benchmark-perf-<model>-<quant>-bs<N>-fa<on|off>.test.js); this module holds
+// the logic they all share. Underscore prefix keeps it out of the mobile test
+// generator (it is not a *.test.js file).
 //
-// Each shard loads its (model, quant) once and sweeps the rest of the axes
-// INTERNALLY on the device: device(cpu,gpu) x batchSize(256,512,1024,2048) x
-// flashAttn(off,on) x inputMode(single,array). Embedding is a single
-// prefill-only forward pass, so each config records prefill throughput (ppTPS),
-// prefill latency (ms), embeddings/sec, and cosine similarity vs an in-run
-// baseline (the first successful config for the same input mode). The axes and
-// input modes come from the benchmark sweep grid, so the mobile sweep never
-// drifts from the desktop one.
+// batchSize and flashAttn are the reload-heavy axes (each needs a fresh
+// GGMLBert()+load()), so they are the shard key: one (batchSize, flashAttn) per
+// shard. Each shard sweeps only device(cpu,gpu) x inputMode(single,array)
+// INTERNALLY — device requires a fresh load (2 loads/session), inputMode is a
+// runtime-only re-run of the same loaded model (no reload). Embedding is a
+// single prefill-only forward pass, so each config records prefill throughput
+// (ppTPS), prefill latency (ms), embeddings/sec, and cosine similarity vs an
+// in-run baseline (the first successful config for the same input mode). The
+// axes and input modes come from the benchmark sweep grid, so the mobile sweep
+// never drifts from the desktop one.
 
 const fs = require('bare-fs')
 const path = require('bare-path')
@@ -187,13 +190,17 @@ function recordCrashedPlaceholder (label, device, model) {
   recordPerformance(label, { deviceId: device, status: 'crashed', model })
 }
 
-// Registers the benchmark test for one (model x quant), sweeping
-// device x batchSize x flashAttn x inputMode internally. One Device Farm
-// session per call. A config that fails to load or run is caught and reported
-// as Crashed rather than aborting the sweep.
-function benchmarkModel (modelName, quant) {
+// Registers the benchmark test for one (model x quant x batchSize x flashAttn),
+// sweeping device x inputMode internally. One Device Farm session per call.
+// batchSize and flashAttn are fixed per shard (the reload-heavy axes live in the
+// shard key), so this session does at most 2 model loads (one per device) — not
+// one per batchSize/flashAttn — which is what keeps it inside the phone's memory
+// budget. inputMode re-runs the already-loaded model with a different input, no
+// reload. A config that fails to load or run is caught and reported as Crashed
+// rather than aborting the sweep.
+function benchmarkModel (modelName, quant, batchSize, flashAttn) {
   const spec = modelSpec(modelName, quant)
-  safeTest(`Mobile perf benchmark: ${spec.id} q=${quant} (ppTPS / latency / embeddings-per-sec / cosine)`, {
+  safeTest(`Mobile perf benchmark: ${spec.id} q=${quant} bs=${batchSize} fa=${flashAttn} (ppTPS / latency / embeddings-per-sec / cosine)`, {
     timeout: 1_800_000,
     skip: !isMobile
   }, async (t) => {
@@ -207,12 +214,8 @@ function benchmarkModel (modelName, quant) {
       // leaves rows for the rest. Real metrics supersede these. A download
       // failure throws above this loop and leaves no rows for this shard.
       for (const device of DEVICES) {
-        for (const batchSize of PARAMETER_SWEEP.batchSize) {
-          for (const flashAttn of PARAMETER_SWEEP.flashAttn) {
-            for (const inputMode of INPUT_MODES) {
-              recordCrashedPlaceholder(labelFor(spec, device, batchSize, flashAttn, inputMode), device, `${spec.id}-${quant}`)
-            }
-          }
+        for (const inputMode of INPUT_MODES) {
+          recordCrashedPlaceholder(labelFor(spec, device, batchSize, flashAttn, inputMode), device, `${spec.id}-${quant}`)
         }
       }
 
@@ -221,83 +224,79 @@ function benchmarkModel (modelName, quant) {
       const baselineByInputMode = new Map()
 
       for (const device of DEVICES) {
-        for (const batchSize of PARAMETER_SWEEP.batchSize) {
-          for (const flashAttn of PARAMETER_SWEEP.flashAttn) {
-            let addon = null
+        let addon = null
+        try {
+          addon = new GGMLBert({
+            files: { model: [modelPath] },
+            config: buildConfig(device, batchSize, flashAttn, modelDir),
+            logger: { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} },
+            opts: { stats: true }
+          })
+          await addon.load()
+        } catch (loadErr) {
+          t.comment(`[${spec.id} q=${quant}] [${device}] [bs=${batchSize}] [fa=${flashAttn}] load failed (reported as Crashed): ${loadErr && loadErr.message ? loadErr.message : loadErr}`)
+          await (addon && addon.unload && addon.unload().catch(() => {}))
+          continue
+        }
+
+        try {
+          for (const inputMode of INPUT_MODES) {
+            const label = labelFor(spec, device, batchSize, flashAttn, inputMode)
             try {
-              addon = new GGMLBert({
-                files: { model: [modelPath] },
-                config: buildConfig(device, batchSize, flashAttn, modelDir),
-                logger: { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} },
-                opts: { stats: true }
-              })
-              await addon.load()
-            } catch (loadErr) {
-              t.comment(`[${spec.id} q=${quant}] [${device}] [bs=${batchSize}] [fa=${flashAttn}] load failed (reported as Crashed): ${loadErr && loadErr.message ? loadErr.message : loadErr}`)
-              await (addon && addon.unload && addon.unload().catch(() => {}))
-              continue
-            }
-
-            try {
-              for (const inputMode of INPUT_MODES) {
-                const label = labelFor(spec, device, batchSize, flashAttn, inputMode)
-                try {
-                  const ppTpsValues = []
-                  const latencyValues = []
-                  const embPerSecValues = []
-                  let firstEmbeddings = null
-                  let inputTokens = null
-                  for (let rep = 1; rep <= MOBILE_REPEATS; rep++) {
-                    const response = await addon.run(inputsFor(inputMode))
-                    const raw = await response.await()
-                    const stats = response.stats || {}
-                    const embeddings = normalizeEmbeddings(raw)
-                    if (!firstEmbeddings) firstEmbeddings = embeddings
-                    if (inputTokens == null && stats.total_tokens != null) inputTokens = stats.total_tokens
-                    const latencyMs = reliablePrefillMs(stats.total_time_ms)
-                    const ppTps = latencyMs != null ? prefillTokensPerSecond(stats) : null
-                    if (ppTps != null) ppTpsValues.push(ppTps)
-                    if (latencyMs != null) latencyValues.push(latencyMs)
-                    if (latencyMs != null && latencyMs > 0) embPerSecValues.push(embeddings.length / (latencyMs / 1000))
-                  }
-
-                  // Cosine baseline per input mode is the first successful config's
-                  // first-rep embeddings; reps of the same config are numerically
-                  // identical, so one rep's embeddings suffice for the comparison.
-                  let cosine = null
-                  if (!baselineByInputMode.has(inputMode)) {
-                    baselineByInputMode.set(inputMode, firstEmbeddings)
-                    cosine = 1
-                  } else {
-                    cosine = avgCosine(baselineByInputMode.get(inputMode), firstEmbeddings)
-                  }
-
-                  t.comment(recordPerformance(label, {
-                    deviceId: device,
-                    ppTps: meanOf(ppTpsValues),
-                    ppTpsStd: stdOf(ppTpsValues),
-                    latencyMs: meanOf(latencyValues),
-                    latencyMsStd: stdOf(latencyValues),
-                    embPerSec: meanOf(embPerSecValues),
-                    embPerSecStd: stdOf(embPerSecValues),
-                    cosine,
-                    inputTokens,
-                    // Richest series: ppTPS can be null on a zero-prefill-time
-                    // edge while latency is still valid, so don't let it under-
-                    // report the sample count.
-                    sampleCount: Math.max(ppTpsValues.length, latencyValues.length, embPerSecValues.length),
-                    status: 'ok',
-                    model: `${spec.id}-${quant}`
-                  }))
-                  t.ok(firstEmbeddings.length > 0, `${label} produced embeddings`)
-                } catch (runErr) {
-                  t.comment(`${label} run failed (reported as Crashed): ${runErr && runErr.message ? runErr.message : runErr}`)
-                }
+              const ppTpsValues = []
+              const latencyValues = []
+              const embPerSecValues = []
+              let firstEmbeddings = null
+              let inputTokens = null
+              for (let rep = 1; rep <= MOBILE_REPEATS; rep++) {
+                const response = await addon.run(inputsFor(inputMode))
+                const raw = await response.await()
+                const stats = response.stats || {}
+                const embeddings = normalizeEmbeddings(raw)
+                if (!firstEmbeddings) firstEmbeddings = embeddings
+                if (inputTokens == null && stats.total_tokens != null) inputTokens = stats.total_tokens
+                const latencyMs = reliablePrefillMs(stats.total_time_ms)
+                const ppTps = latencyMs != null ? prefillTokensPerSecond(stats) : null
+                if (ppTps != null) ppTpsValues.push(ppTps)
+                if (latencyMs != null) latencyValues.push(latencyMs)
+                if (latencyMs != null && latencyMs > 0) embPerSecValues.push(embeddings.length / (latencyMs / 1000))
               }
-            } finally {
-              await addon.unload().catch(() => {})
+
+              // Cosine baseline per input mode is the first successful config's
+              // first-rep embeddings; reps of the same config are numerically
+              // identical, so one rep's embeddings suffice for the comparison.
+              let cosine = null
+              if (!baselineByInputMode.has(inputMode)) {
+                baselineByInputMode.set(inputMode, firstEmbeddings)
+                cosine = 1
+              } else {
+                cosine = avgCosine(baselineByInputMode.get(inputMode), firstEmbeddings)
+              }
+
+              t.comment(recordPerformance(label, {
+                deviceId: device,
+                ppTps: meanOf(ppTpsValues),
+                ppTpsStd: stdOf(ppTpsValues),
+                latencyMs: meanOf(latencyValues),
+                latencyMsStd: stdOf(latencyValues),
+                embPerSec: meanOf(embPerSecValues),
+                embPerSecStd: stdOf(embPerSecValues),
+                cosine,
+                inputTokens,
+                // Richest series: ppTPS can be null on a zero-prefill-time
+                // edge while latency is still valid, so don't let it under-
+                // report the sample count.
+                sampleCount: Math.max(ppTpsValues.length, latencyValues.length, embPerSecValues.length),
+                status: 'ok',
+                model: `${spec.id}-${quant}`
+              }))
+              t.ok(firstEmbeddings.length > 0, `${label} produced embeddings`)
+            } catch (runErr) {
+              t.comment(`${label} run failed (reported as Crashed): ${runErr && runErr.message ? runErr.message : runErr}`)
             }
           }
+        } finally {
+          await addon.unload().catch(() => {})
         }
       }
     } finally {

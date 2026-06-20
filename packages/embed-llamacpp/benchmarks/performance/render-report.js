@@ -31,7 +31,8 @@ const path = require('path')
 // so it loads here under Node too — keeping the renderer's coverage grid from
 // drifting out of step with what the sweep actually runs.
 const { PARAMETER_SWEEP, INPUT_MODES } = require('./_sweep-grid')
-// Mobile shard matrix (model x quant cells) for the mobile coverage check, so
+// Mobile shard matrix (model x quant x batchSize x flashAttn cells) for the
+// mobile coverage check, so
 // the renderer scores a mobile run against the same source of truth the shard
 // generator and the workflow test_groups derive from.
 const { matrix, mobileShardKey } = require('../../test/integration/_benchmark-matrix')
@@ -442,19 +443,27 @@ function uniformInputTokens (rows) {
   return vals.length === 1 ? vals[0] : null
 }
 
-// Shard key for a mobile row, parsed from its "[<model> q=<quant>] ..." label,
-// to match _benchmark-matrix.js mobileShardKey (<model>|<quant>).
+// Shard key for a mobile row, parsed from its
+// "[<model> q=<quant>] [<device>] [bs=<N>] [fa=<on|off>] [input=...]" label, to
+// match _benchmark-matrix.js mobileShardKey (<model>|<quant>|bs<N>|fa<on|off>).
+// batchSize and flashAttn are the shard key; device and inputMode are swept
+// within a shard, so they are excluded from the key.
 function shardKeyOf (config) {
   const m = /^\[([^\]]+?)\s+q=([^\]]+)\]/.exec(config)
-  return m ? `${m[1]}|${m[2]}` : null
+  if (!m) return null
+  const bs = /\[bs=([^\]]+)\]/.exec(config)
+  const fa = /\[fa=([^\]]+)\]/.exec(config)
+  if (!bs || !fa) return null
+  return `${m[1]}|${m[2]}|bs${bs[1]}|fa${fa[1]}`
 }
 
 function shardKeyLabel (key) {
-  const [model, quant] = key.split('|')
-  return `${model} q=${quant}`
+  const [model, quant, bs, fa] = key.split('|')
+  return `${model} q=${quant} ${bs} ${fa}`
 }
 
-// Per-device coverage of the mobile shard matrix (model x quant cells). Every
+// Per-device coverage of the mobile shard matrix (model x quant x batchSize x
+// flashAttn cells). Every
 // shard that runs emits at least a Crashed placeholder for each config, so a
 // shard with no row at all never ran or its data was lost (e.g. a dropped batch
 // artifact). Surfacing this keeps a partial run from rendering as complete.
@@ -475,7 +484,7 @@ function mobileCoverageLines (rows, devices, expectedShards) {
     return lines
   }
   lines.push(
-    `Mobile matrix: ${expected.length} shards (model x quant) expected per device. ` +
+    `Mobile matrix: ${expected.length} shards (model x quant x batch size x flash-attn) expected per device. ` +
     `${devices.length} device(s) reported.`
   )
   lines.push('')
@@ -510,7 +519,8 @@ function mobileCoverageLines (rows, devices, expectedShards) {
 
 // Mobile report: one table per device with the same columns as the desktop
 // per-model tables (ppTPS | latency (ms) | embeddings/sec | cosine-similarity),
-// plus mobile coverage scored against the (model x quant) shard matrix.
+// plus mobile coverage scored against the (model x quant x batchSize x
+// flashAttn) shard matrix.
 function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark Results') {
   const addonVersion = meta.addonVersion || addonVersionArg || null
   const byDevice = new Map()
@@ -540,7 +550,7 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   lines.push('')
   lines.push(
     'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array>]`. ' +
-    'Each mobile shard sweeps device x batch size x flash-attn x input mode for one (model, quant) cell.'
+    'Each mobile shard is one (model, quant, batch size, flash-attn) cell and sweeps device x input mode.'
   )
   lines.push('')
 

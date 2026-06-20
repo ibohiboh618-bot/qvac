@@ -86,7 +86,10 @@ function checkManifest () {
       fromManifest.push(`${model.id}|${quant}|${model.gguf.repo}|${model.gguf.revision}`)
     }
   }
-  const fromMatrix = matrix().map((c) => `${c.model}|${c.quant}|${c.repo}|${c.revision}`)
+  // matrix() repeats each (model, quant) download cell once per (batchSize,
+  // flashAttn) shard, so dedupe to the unique download cells before comparing
+  // against the manifest (which has one entry per model x quant).
+  const fromMatrix = [...new Set(matrix().map((c) => `${c.model}|${c.quant}|${c.repo}|${c.revision}`))]
   const expected = JSON.stringify(fromManifest)
   const actual = JSON.stringify(fromMatrix)
   if (expected !== actual) {
@@ -200,7 +203,7 @@ function writeShards () {
 
 if (mode === 'groups') {
   for (const batch of workflowBatches()) {
-    console.log(`# model: ${batch.model}`)
+    console.log(`# config: ${batch.config}`)
     console.log(JSON.stringify(batch.groups))
   }
 } else if (mode === 'check') {

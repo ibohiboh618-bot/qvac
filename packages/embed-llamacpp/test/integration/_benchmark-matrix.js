@@ -1,15 +1,20 @@
 'use strict'
 
 // Single source of truth for the mobile perf benchmark matrix. The per-shard
-// test files (benchmark-perf-<model>-<quant>.test.js) and the Benchmark
-// Performance workflow's test_groups override are both generated from this list
-// by scripts/generate-benchmark-shards.js, so the (model x quant) matrix is
-// defined in exactly one place. Underscore prefix keeps it out of the test
-// globs (it is not a *.test.js file).
+// test files (benchmark-perf-<model>-<quant>-bs<N>-fa<on|off>.test.js) and the
+// Benchmark Performance workflow's test_groups override are both generated from
+// this list by scripts/generate-benchmark-shards.js, so the
+// (model x quant x batchSize x flashAttn) matrix is defined in exactly one
+// place. Underscore prefix keeps it out of the test globs (it is not a
+// *.test.js file).
 //
-// Embeddings are a single prefill-only forward pass, so one shard per
-// (model x quant) cell sweeps the rest of the axes (device x batchSize x
-// flashAttn x inputMode) INTERNALLY on the device.
+// batchSize and flashAttn each need a fresh GGMLBert()+load(), so making them
+// the shard key keeps every shard to ONE (batchSize, flashAttn) pair — its
+// internal sweep is only device (2 loads) x inputMode (a runtime-only re-run of
+// the same loaded model, no reload). A coarser (model x quant) shard would load
+// the model once per batchSize x flashAttn combo (16 loads/session); the addon
+// does not fully free native model memory between cycles, so that OOMs the
+// phones. inputMode is the runtime-only axis swept inside each shard.
 //
 // The cells are hardcoded here rather than read from the manifest because the
 // mobile Device Farm bundler only bundles test/integration, so this module
@@ -43,10 +48,21 @@ const PARAMETER_SWEEP = {
 }
 const INPUT_MODES = ['single', 'array']
 
-// One cell per (modelId, quant), preserving order so the shard list and
-// workflow groups are stable.
+// Cross-product of the 7 base (model x quant) download cells with the
+// reload-heavy axes batchSize (4) x flashAttn (2) = 56 cells, preserving order
+// (model/quant outer, batchSize middle, flashAttn inner) so the shard list and
+// workflow groups are stable. inputMode is NOT in the cell: it is swept inside
+// each shard at runtime against the already-loaded model.
 function matrix () {
-  return CELLS.map((cell) => ({ model: cell.model, quant: cell.quant, repo: cell.repo, revision: cell.revision, file: cell.file }))
+  const out = []
+  for (const cell of CELLS) {
+    for (const batchSize of PARAMETER_SWEEP.batchSize) {
+      for (const flashAttn of PARAMETER_SWEEP.flashAttn) {
+        out.push({ model: cell.model, quant: cell.quant, repo: cell.repo, revision: cell.revision, file: cell.file, batchSize, flashAttn })
+      }
+    }
+  }
+  return out
 }
 
 // Filename slug: lowercase, drop dots, underscores -> dashes.
@@ -56,8 +72,15 @@ function slug (value) {
   return String(value).toLowerCase().replace(/\./g, '').replace(/_/g, '-')
 }
 
+// Slash-free token for the (batchSize, flashAttn) pair, used in shard
+// filenames, run-function names, the workflow batch key, and the artifact
+// suffix: 'bs<N>-fa<on|off>'.
+function configId (cell) {
+  return `bs${cell.batchSize}-fa${cell.flashAttn}`
+}
+
 function shardFileName (cell) {
-  return `benchmark-perf-${slug(cell.model)}-${slug(cell.quant)}.test.js`
+  return `benchmark-perf-${slug(cell.model)}-${slug(cell.quant)}-${configId(cell)}.test.js`
 }
 
 // Manifest model id for a cell. Single source for the id used by the on-device
@@ -67,10 +90,12 @@ function modelId (cell) {
   return cell.model
 }
 
-// Stable per-shard key matching the renderer's "[<modelId> q=<quant>] ..." row
-// label, so coverage can be reconciled against the matrix.
+// Stable per-shard key matching the renderer's
+// "[<modelId> q=<quant>] ... [bs=<N>] [fa=<on|off>] ..." row label, so coverage
+// can be reconciled against the matrix. inputMode and device are NOT in the key:
+// each shard emits the device x inputMode configs for its one (bs, fa) pair.
 function mobileShardKey (cell) {
-  return `${modelId(cell)}|${cell.quant}`
+  return `${modelId(cell)}|${cell.quant}|bs${cell.batchSize}|fa${cell.flashAttn}`
 }
 
 // Mirrors toFunctionName in scripts/generate-mobile-integration-tests.js:
@@ -89,28 +114,31 @@ function shardContents (cell) {
   return [
     "'use strict'",
     "const { benchmarkModel } = require('./_benchmark-perf.js')",
-    `benchmarkModel('${cell.model}', '${cell.quant}')`,
+    `benchmarkModel('${cell.model}', '${cell.quant}', ${cell.batchSize}, '${cell.flashAttn}')`,
     ''
   ].join('\n')
 }
 
-// One workflow matrix entry per model, each carrying that model's quant groups
-// in matrix order, matching the mobile-benchmark job's test_groups. Grouping
-// by model keeps each Device Farm batch to a single set of weights so its
-// quants download once.
+// One workflow matrix entry per (batchSize, flashAttn) pair, each carrying its
+// 7 model x quant groups in matrix order, matching the mobile-benchmark job's
+// test_groups. Batching by the reload-heavy (bs, fa) pair keeps every Device
+// Farm session to one (batchSize, flashAttn) so it does at most 2 model loads
+// (one per device), mirroring the LLM benchmark's per-KV-cache batching.
 function workflowBatches () {
-  const byModel = new Map()
+  const byConfig = new Map()
   for (const cell of matrix()) {
-    if (!byModel.has(cell.model)) byModel.set(cell.model, [])
+    const key = configId(cell)
+    if (!byConfig.has(key)) byConfig.set(key, [])
     const grep = runFunctionName(cell)
-    byModel.get(cell.model).push({ name: grep.slice(3).replace(/Test$/, ''), grep })
+    byConfig.get(key).push({ name: grep.slice(3).replace(/Test$/, ''), grep })
   }
-  return [...byModel.entries()].map(([model, groups]) => ({ model: slug(model), groups }))
+  return [...byConfig.entries()].map(([config, groups]) => ({ config, groups }))
 }
 
 module.exports = {
   matrix,
   slug,
+  configId,
   shardFileName,
   modelId,
   mobileShardKey,
