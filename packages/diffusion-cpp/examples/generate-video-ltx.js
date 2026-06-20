@@ -5,6 +5,19 @@ const process = require('bare-process')
 const fs = require('bare-fs')
 const VideoStableDiffusion = require('../video')
 
+// Native C++/ggml/sd.cpp logs are process-global and only reach JS once a
+// logger is registered here. The instance `logger:` only carries JS-wrapper
+// logs, so without this the `verbosity` config has no sink to print to.
+// Env-gated so default runs are unchanged.
+if (process.env.VERBOSITY) {
+  const LOG_PRIORITIES = ['ERROR', 'WARNING', 'INFO', 'DEBUG']
+  require('../addonLogging').setLogger((priority, message) => {
+    const label = LOG_PRIORITIES[priority] || `UNKNOWN(${priority})`
+    process.stdout.write(`[C++ ${label}] ${message}`)
+    if (!message.endsWith('\n')) process.stdout.write('\n')
+  })
+}
+
 // ---------------------------------------------------------------------------
 // LTX-2.3 text-to-video (+ audio) — downloaded via:
 //   ./scripts/download-model-ltx.sh            # distilled-1.1 Q8_0 (default)
@@ -92,6 +105,7 @@ async function main () {
     config: {
       threads: 4,
       device: 'gpu',
+      ...(process.env.VERBOSITY ? { verbosity: parseInt(process.env.VERBOSITY, 10) } : {}),
       diffusion_fa: (process.env.DIFFUSION_FA || 'true') === 'true',
       offload_to_cpu: (process.env.OFFLOAD_TO_CPU || 'true') === 'true',
       clip_on_cpu: (process.env.CLIP_ON_CPU || 'false') === 'true',
