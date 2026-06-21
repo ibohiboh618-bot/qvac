@@ -76,6 +76,16 @@ on:
         type: string
         required: false
         default: ""
+      mocha_timeout_ms:
+        description: "Override the WDIO/Mocha per-test timeout in ms (mochaOpts.timeout). Default '' keeps the established 2100000 (35 min) — unchanged for existing callers."
+        type: string
+        required: false
+        default: ""
+      per_test_timeout_minutes:
+        description: "Override the generated-spec per-test timeout in minutes on ALL platforms (Android + iOS). Default '' keeps the established per-platform defaults (Android 30 / iOS 20) — unchanged for existing callers."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -181,7 +191,7 @@ jobs:
           FIXTURE_IMAGES_URI: ${{ inputs.fixture_images_uri }}
         run: |
           if [ -n "$FIXTURE_IMAGES_URI" ]; then
-            aws s3 sync "$FIXTURE_IMAGES_URI" benchmarks/vlm-benchmark/images/
+            aws s3 sync "$FIXTURE_IMAGES_URI" benchmarks/vlm-benchmark/fixture/
           fi
           node "${{ inputs.pre_build_script }}"
           # the test-list generator runs under `bare` and imports bare-fs/bare-path,
@@ -206,8 +216,13 @@ jobs:
           # QVAC-17830: VLM image tests on Android exceed the 20-minute
           # default per-test ceiling. Paired with mocha-timeout-ms on
           # upload-to-devicefarm below (35 min) so the WDIO/Mocha
-          # session outlives any single test.
+          # session outlives any single test. This Android-only 30-min
+          # default is preserved for every caller (iOS keeps its 20 min).
           android-per-test-timeout-minutes: '30'
+          # Platform-neutral override (Android + iOS) — set only by callers
+          # that need iOS too (the VLM benchmark forwards per_test_timeout_minutes).
+          # Empty keeps the per-platform defaults above; when set it wins.
+          per-test-timeout-minutes: ${{ inputs.per_test_timeout_minutes }}
 
       # LLM ships with its own dedicated Device Farm project + iOS pool
       # (the LLM_* secrets), historically because LLM runs more often
@@ -227,7 +242,8 @@ jobs:
           enables-perf: 'true'
           # QVAC-17830: 35-minute WDIO/Mocha ceiling so the runner
           # outlives the per-test 30-minute ceiling enforced above.
-          mocha-timeout-ms: '2100000'
+          # Caller-overridable (mocha_timeout_ms); '' keeps 2100000.
+          mocha-timeout-ms: ${{ inputs.mocha_timeout_ms != '' && inputs.mocha_timeout_ms || '2100000' }}
           qvac-perf-runs: ${{ inputs.qvac_perf_runs }}
           qvac-perf-warmup-runs: ${{ inputs.qvac_perf_warmup_runs }}
           qvac-perf-only: ${{ inputs.qvac_perf_only }}

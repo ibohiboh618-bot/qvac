@@ -4,15 +4,16 @@
 // Iterates the HuggingFace datasets-server (which returns each image's width/height
 // in the /rows response, so we filter on resolution WITHOUT downloading), keeps only
 // samples whose longest side is <= --max-side, picks --per-task per task skewed small
-// (with spread), then downloads just the chosen images into ./images/ and rewrites
+// (with spread), then downloads just the chosen images into ./fixture/ and rewrites
 // ./fixture.data.cjs + ./fixture.NOTICE.md.
 //
 // No manual resizing — only natural samples that already match the resolution policy.
 // Only datasets on the open-licence allowlist are accepted (public repo).
 //
-// Images are NOT committed to git. After regenerating, upload images/ to the fixture
-// object store (the fixture's source of truth; URI configured in the benchmark
-// workflow) so CI can fetch them, e.g. `aws s3 sync ./images/ <fixture-store-uri>`.
+// Images are NOT committed to git (fixture/ is git-ignored except its README). After
+// regenerating, upload fixture/ to the fixture object store (the fixture's source of
+// truth; URI configured in the benchmark workflow) so CI can fetch them, e.g.
+// `aws s3 sync ./fixture/ <fixture-store-uri>`.
 //
 // Usage: node benchmarks/vlm-benchmark/build-fixture.cjs [--per-task 3] [--max-side 1024] [--scan 2000]
 
@@ -20,9 +21,10 @@ const fs = require('fs')
 const path = require('path')
 const https = require('https')
 
-// images/ is git-ignored and S3-backed; this writes the chosen images here locally for
-// upload to S3. CI syncs S3 -> images/, then stage.cjs copies them into testAssets.
-const IMAGES_DIR = path.join(__dirname, 'images')
+// fixture/ is git-ignored (except README) and S3-backed; this writes the chosen images
+// here locally for upload to S3. CI syncs S3 -> fixture/, then stage.cjs copies them
+// into testAssets.
+const IMAGES_DIR = path.join(__dirname, 'fixture')
 const FIXTURE = path.join(__dirname, 'fixture.data.cjs')
 const NOTICE = path.join(__dirname, 'fixture.NOTICE.md')
 const TOKEN = process.env.HF_TOKEN || ''
@@ -222,7 +224,7 @@ async function main () {
   fs.writeFileSync(FIXTURE, header + JSON.stringify(data, null, 2) + '\n')
   fs.writeFileSync(NOTICE, notice.join('\n') + '\n')
 
-  // Prune images/ entries no longer referenced (e.g. dropped tasks).
+  // Prune fixture/ entries no longer referenced (e.g. dropped tasks).
   const keep = new Set(items.map(it => it.image))
   for (const f of fs.readdirSync(IMAGES_DIR)) {
     if (/^vlmx-.*\.(png|jpe?g|webp|gif)$/i.test(f) && !keep.has(f)) { fs.rmSync(path.join(IMAGES_DIR, f)); console.log(`pruned images/${f}`) }

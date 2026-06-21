@@ -15,7 +15,7 @@ const path = require('path')
 const HERE = __dirname
 const INTEG = path.resolve(HERE, '..', '..', 'test', 'integration')
 const ASSETS = path.resolve(HERE, '..', '..', 'test', 'mobile', 'testAssets')
-const IMAGES = path.join(HERE, 'images')
+const IMAGES = path.join(HERE, 'fixture')
 
 // The entry + the modules it requires must sit together in test/integration so the
 // entry's `./harness.cjs` / harness's `./config.cjs` etc. resolve. Stage EVERY
@@ -32,7 +32,7 @@ for (const f of CODE) {
   console.log(`staged -> test/integration/${f}`)
 }
 // Images aren't in git — CI syncs them from the fixture object store (URI configured
-// in the benchmark workflow) into images/ before this runs. Fail loudly if skipped.
+// in the benchmark workflow) into fixture/ before this runs. Fail loudly if skipped.
 const imgs = fs.existsSync(IMAGES) ? fs.readdirSync(IMAGES).filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)) : []
 if (!imgs.length) throw new Error(`No images in ${IMAGES} — sync the fixture image store into it first`)
 for (const f of imgs) fs.copyFileSync(path.join(IMAGES, f), path.join(ASSETS, f))

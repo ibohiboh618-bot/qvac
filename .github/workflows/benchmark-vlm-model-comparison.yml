@@ -19,7 +19,7 @@ on:
         required: false
         type: string
       matrix_sources:
-        description: "  builds under comparison, comma-sep: addon (published, default) | fabric@<ref> | upstream@<ref>; addon@candidate/addon@baseline reserved (A2). See benchmarks/vlm-benchmark/CONTRACT.md"
+        description: "  builds under comparison, comma-sep: addon (published, default) | fabric@<ref> | upstream@<ref>; addon@candidate/addon@baseline compare two addon builds. See benchmarks/vlm-benchmark/CONTRACT.md"
         required: false
         type: string
         default: "addon"
@@ -38,20 +38,15 @@ on:
         type: boolean
         default: true
       matrix_mode:
-        description: "  matrix mode: two-models (f16 vs q8, addon) or several-sources (addon+fabric-cli+upstream-cli, Linux-only)"
+        description: "  matrix mode: two-models (f16 vs q8, addon) or several-sources (addon+fabric-cli+upstream-cli; desktop only — builds native CLIs, so Linux/macOS/Windows, no mobile)"
         required: false
         type: string
         default: "two-models"
       matrix_preset:
-        description: "  run size (independent of mode): smoke (1 task×1×1), base (5 tasks×3×1), full (5 tasks×5×1). Overrides config.defaultPreset on desktop."
+        description: "  task group: smoke (1 task), cognitive (5 VQA×5), ocr1page (1 light ocr-page doc), ocr5pages (all 5 ocr-page docs, desktop), full (cognitive + ocr-small + 1 light ocr-page). Forwarded to every leg."
         required: false
         type: string
-        default: "base"
-      matrix_scenarios:
-        description: "  workload scenario (benchmarks/vlm-benchmark/scenarios.cjs): vqa-suite (default) | image-description | ocr-highmp"
-        required: false
-        type: string
-        default: ""
+        default: "full"
       matrix_desktop:
         description: "  desktop legs, comma-sep <os>-<backend>: linux-cpu,linux-gpu,macos-cpu,macos-gpu,macmini-cpu,macmini-gpu,windows-cpu,windows-gpu (macos = GitHub-hosted VM, macmini = bare-metal M4)"
         required: false
@@ -63,7 +58,12 @@ on:
         type: string
         default: ""
       matrix_mobile:
-        description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's25-cpu,s25-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
+        description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s26,s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's26-cpu,s26-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
+        required: false
+        type: string
+        default: ""
+      mobile_timeout_min:
+        description: "  mobile per-leg timeout in MINUTES — raises the Device-Farm WDIO/Mocha per-test + Android generated-spec ceiling for this run (capped by the 120-min DF/GH job ceilings). Empty = config.cjs `mobileTimeoutMin`; if that is null, the pipeline default (35-min Mocha / 30-min Android per-test)."
         required: false
         type: string
         default: ""
@@ -90,6 +90,8 @@ jobs:
       desktop_count: ${{ steps.dmatrix.outputs.count }}
       mobile_matrix: ${{ steps.mmatrix.outputs.value }}
       mobile_count: ${{ steps.mmatrix.outputs.count }}
+      mobile_mocha_ms: ${{ steps.tmo.outputs.mocha_ms }}
+      mobile_pertest_min: ${{ steps.tmo.outputs.pertest_min }}
       engine: ${{ steps.sources.outputs.engine }}
       fabric_ref: ${{ steps.sources.outputs.fabric_ref }}
       upstream_ref: ${{ steps.sources.outputs.upstream_ref }}
@@ -112,6 +114,35 @@ jobs:
           ref="${INPUT_REF:-$REF_NAME}"
           echo "repository=$repo" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      # Resolve the mobile timeout (minutes) so matrix-mobile can forward it to the
+      # reusable workflow's mocha_timeout_ms / per_test_timeout_minutes inputs.
+      # Precedence: workflow input > config.cjs `mobileTimeoutMin` > '' (pipeline default).
+      - name: Checkout benchmark config (mobile-timeout default)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          repository: ${{ steps.ctx.outputs.repository }}
+          ref: ${{ steps.ctx.outputs.ref }}
+          sparse-checkout: |
+            packages/llm-llamacpp/benchmarks/vlm-benchmark
+          sparse-checkout-cone-mode: false
+      - id: tmo
+        shell: bash
+        env:
+          INPUT_MIN: ${{ inputs.mobile_timeout_min }}
+        run: |
+          min="$INPUT_MIN"
+          if [ -z "$min" ]; then
+            min=$(node -e 'try{const c=require("./packages/llm-llamacpp/benchmarks/vlm-benchmark/config.cjs");process.stdout.write(c.mobileTimeoutMin==null?"":String(c.mobileTimeoutMin))}catch(e){}' || true)
+          fi
+          if [ -n "$min" ]; then
+            echo "mocha_ms=$((min*60000))" >> "$GITHUB_OUTPUT"
+            echo "pertest_min=$min" >> "$GITHUB_OUTPUT"
+            echo "Mobile timeout: ${min} min (Mocha $((min*60000)) ms, Android per-test ${min} min)"
+          else
+            echo "mocha_ms=" >> "$GITHUB_OUTPUT"
+            echo "pertest_min=" >> "$GITHUB_OUTPUT"
+            echo "Mobile timeout: pipeline default (35-min Mocha / 30-min Android per-test)"
+          fi
       - id: dmatrix
         shell: bash
         env:
@@ -167,7 +198,7 @@ jobs:
           MATRIX_MODE: ${{ inputs.matrix_mode }}
         run: |
           cells='[]'
-          # Mobile runs the addon only; several-sources (native CLIs) is Linux-only.
+          # Mobile runs the addon only; several-sources (native CLIs) is desktop-only.
           if [[ "$RUN_MATRIX" == "true" && "$MATRIX_MODE" != "several-sources" && -n "$MATRIX_MOBILE" ]]; then
             IFS=',' read -ra tokens <<< "$MATRIX_MOBILE"
             for raw in "${tokens[@]}"; do
@@ -179,12 +210,13 @@ jobs:
                 *)     vlm_devices="cpu,gpu"; dev=$sel ;;
               esac
               case "$dev" in
+                s26)         platform=Android; manufacturer=Samsung; model="S26 Ultra" ;;
                 s25)         platform=Android; manufacturer=Samsung; model="S25 Ultra" ;;
                 pixel9)      platform=Android; manufacturer=Google;  model="Pixel 9" ;;
                 iphone16)    platform=iOS;     manufacturer=Apple;   model="iPhone 16" ;;
                 iphone17)    platform=iOS;     manufacturer=Apple;   model="iPhone 17" ;;
                 iphone17pro) platform=iOS;     manufacturer=Apple;   model="iPhone 17 Pro" ;;
-                *) echo "::warning::Unknown matrix_mobile device '$dev' (known: s25, pixel9, iphone16, iphone17, iphone17pro)"; continue ;;
+                *) echo "::warning::Unknown matrix_mobile device '$dev' (known: s26, s25, pixel9, iphone16, iphone17, iphone17pro)"; continue ;;
               esac
               cells=$(echo "$cells" | jq -c \
                 --arg t "$sel" --arg p "$platform" --arg man "$manufacturer" \
@@ -211,7 +243,7 @@ jobs:
             t=$(echo "$raw" | xargs)
             case "$t" in
               ""|addon|fabric|upstream) ;;
-              addon@candidate|addon@baseline) echo "::warning::'$t' is reserved (wired by A2) — running the published addon" ;;
+              addon@candidate|addon@baseline) echo "::warning::'$t' build comparison not yet wired on this leg — running the published addon" ;;
               fabric@*) fabric_ref="${t#fabric@}" ;;
               upstream@*) upstream_ref="${t#upstream@}" ;;
               *) echo "::warning::Unknown matrix_sources token '$t' (known: addon[@candidate|@baseline], fabric@<ref>, upstream@<ref>)" ;;
@@ -425,7 +457,7 @@ jobs:
           echo "$HOME/.local/aws-cli" >> "$GITHUB_PATH"
 
       # Fixture images live in S3 (not committed to git). Pull them into the benchmark's
-      # images/ dir so the harness and the several-sources CLI runner read them locally.
+      # fixture/ dir so the harness and the several-sources CLI runner read them locally.
       - name: Configure AWS credentials (fixture images)
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
         with:
@@ -435,8 +467,14 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         shell: bash
         run: |
-          aws s3 sync s3://tether-ai-dev/vlm-benchmark/ benchmarks/vlm-benchmark/images/
-          echo "fixture images:"; ls benchmarks/vlm-benchmark/images/
+          # Use the OIDC env-var creds set by the configure step. On the self-hosted
+          # Windows runner a persistent AWS profile / shared-credentials file shadows
+          # them and signs with a stale key (SignatureDoesNotMatch); clearing those
+          # sources makes every platform sign with the same temporary creds. No-op on
+          # Linux/macOS where these are already unset.
+          unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE
+          aws s3 sync s3://tether-ai-dev/vlm-benchmark/ benchmarks/vlm-benchmark/fixture/
+          echo "fixture images:"; ls benchmarks/vlm-benchmark/fixture/
 
       - name: Run VLM matrix
         working-directory: ${{ env.WORKDIR }}
@@ -450,31 +488,62 @@ jobs:
           QVAC_VLM_DEVICES: ${{ matrix.backend }}
           QVAC_VLM_MODELS: ${{ inputs.matrix_models }} # '' → config defaults (CONTRACT.md §3)
           QVAC_VLM_SCENARIOS: ${{ inputs.matrix_scenarios }} # '' → config.defaultScenario
-          QVAC_VLM_SOURCES: ${{ inputs.matrix_sources }} # addon-type sources scheduled here; CLI sources run below (A5)
+          QVAC_VLM_SOURCES: ${{ inputs.matrix_sources }} # addon-type sources scheduled here; CLI sources run in the native-CLI step below
           QVAC_VLM_SOURCE_ID: addon
           NO_GPU: ${{ matrix.no_gpu }}
         run: |
-          # The A3 scheduler (run-desktop.cjs) owns the run: it spawns one bare
+          # The round scheduler (run-desktop.cjs) owns the run: it spawns one bare
           # process per { source × model × block }, interleaving warmup+measured
           # blocks with a stability guard between them, and emits [VLMBLOCK] markers.
-          # Keeping the orchestration here means no YAML churn for A2/A3/A4.
+          # Keeping the orchestration here means no YAML churn for run-logic changes.
           export QVAC_VLM_SOURCE_REF="npm:${ADDON_VERSION:-published}"
           node benchmarks/vlm-benchmark/run-desktop.cjs 2>&1 | tee "vlm-matrix-${{ matrix.host }}-${{ matrix.backend }}.log"
           exit ${PIPESTATUS[0]}
 
       # several-sources only: build native fabric/upstream llama-mtmd-cli and run
       # them over the SAME fixture, appending [VLMROW]/[VLMSEG] markers to the addon
-      # log so aggregate.js renders a 3-source comparison. Linux-only — the vendored
-      # CLI build is only proven there; a macOS leg in this mode still runs the addon.
+      # log so aggregate.js renders a 3-source comparison. Desktop-only (no mobile):
+      # build-cli-sources.js compiles per-OS (Vulkan on linux/win, Metal on darwin),
+      # so every desktop leg builds its own CLIs and reports a per-platform comparison.
       - name: Cache CLI builds (several-sources)
-        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'linux'
+        if: inputs.matrix_mode == 'several-sources'
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
-          key: vlm-cli-v3-linux-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
+          key: vlm-cli-v3-${{ matrix.host }}-${{ matrix.backend }}-${{ needs.context.outputs.fabric_ref }}-${{ needs.context.outputs.upstream_ref }}
+
+      # Windows several-sources: the runner has no Visual Studio (VS generator fails) and
+      # the GH-Actions user can't run choco (permission denied). But clang/LLVM is already
+      # installed at C:\Program Files\LLVM. So skip choco entirely — put the pre-installed
+      # clang on PATH, download cmake + Ninja (zip, no install), and build via Ninja+clang.
+      - name: Setup clang + Ninja + cmake (Windows several-sources)
+        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
+        shell: powershell
+        run: |
+          $tmp = $env:RUNNER_TEMP
+          # cmake (Kitware zip)
+          $cm = "$tmp\cmake-3.31.6-windows-x86_64"
+          if (-not (Test-Path "$cm\bin\cmake.exe")) {
+            Invoke-WebRequest "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip" -OutFile "$tmp\cmake.zip"
+            Expand-Archive "$tmp\cmake.zip" -DestinationPath $tmp -Force
+          }
+          "$cm\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          # Ninja (release zip — avoids choco, which is permission-blocked on this runner)
+          if (-not (Test-Path "$tmp\ninja\ninja.exe")) {
+            Invoke-WebRequest "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile "$tmp\ninja.zip"
+            Expand-Archive "$tmp\ninja.zip" -DestinationPath "$tmp\ninja" -Force
+          }
+          "$tmp\ninja" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          # Pre-installed clang (setup-llvm provisions it at this path on the runners)
+          if (Test-Path "C:\Program Files\LLVM\bin\clang.exe") {
+            "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
+          }
+          "CMAKE_GENERATOR=Ninja" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CXX=clang++" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Build + run fabric/upstream CLIs over the fixture (several-sources)
-        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'linux'
+        if: inputs.matrix_mode == 'several-sources'
         working-directory: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark
         shell: bash
         env:
@@ -489,6 +558,9 @@ jobs:
           PRESET_SAMPLES=$(node -e "console.log((require('./config.cjs').presets['$PRESET']||{}).samplesPerTask||3)")
           REPEATS=$(node -e "console.log((require('./config.cjs').presets['$PRESET']||{}).repeats||1)")
           SAMPLES="${SAMPLES:-$PRESET_SAMPLES}"
+          # Per-task sample caps from the preset (e.g. full caps ocr-page to 1) so the
+          # CLI legs run the SAME items as the addon leg.
+          TASK_SAMPLES=$(node -e "console.log(JSON.stringify((require('./config.cjs').presets['$PRESET']||{}).taskSamples||{}))")
           node build-cli-sources.js --sources=fabric,upstream \
             --fabric-ref=${{ needs.context.outputs.fabric_ref }} --upstream-ref=${{ needs.context.outputs.upstream_ref }} \
             --backend=${{ matrix.backend }}
@@ -502,7 +574,8 @@ jobs:
             node cli-fixture-runner.cjs \
               --binary "$3" --source "$1" --llm "$LLM" --mmproj "$MMPROJ" \
               --backend "${{ matrix.backend }}" --samples "$SAMPLES" --repeats "$REPEATS" \
-              --tasks textvqa,vizwiz,gqa,docvqa,ai2d \
+              --tasks textvqa,vizwiz,gqa,docvqa,ai2d,ocr-small,ocr-page \
+              --task-samples "$TASK_SAMPLES" \
               --main-origin "Qwen3.5-0.8B-Q8_0 (Registry)" \
               --mmproj-origin "Qwen3.5-0.8B mmproj-Q8_0 (Registry)" >> "$LOG" 2>&1 || echo "::warning::$1 run had errors"
           }
@@ -595,13 +668,19 @@ jobs:
       platforms: ${{ matrix.platform }}
       device_manufacturer: ${{ matrix.manufacturer }}
       device_model: ${{ matrix.model }}
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_scenarios != '' && format(';QVAC_VLM_SCENARIOS={0}', inputs.matrix_scenarios) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
       artifact_suffix: ${{ matrix.token }}
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
       qvac_perf_only: false
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
+      # Mobile timeout (Option 2): empty = the reusable workflow's defaults
+      # (35-min Mocha / Android 30-min / iOS 20-min per-test) are kept untouched.
+      # per_test_timeout_minutes is the platform-neutral knob (raises the
+      # generated-spec ceiling on Android AND iOS) — needed for the iPhone leg.
+      mocha_timeout_ms: ${{ needs.context.outputs.mobile_mocha_ms }}
+      per_test_timeout_minutes: ${{ needs.context.outputs.mobile_pertest_min }}
 
   # ── Matrix mode: combine ───────────────────────────────────────────
   # Aggregates [VLMROW]/[VLMSEG]/[VLMMETA] markers from every matrix log
