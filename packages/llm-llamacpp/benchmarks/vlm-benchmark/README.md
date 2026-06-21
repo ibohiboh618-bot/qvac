@@ -307,8 +307,17 @@ The benchmark is meant to grow. The three common changes:
 
 ## Known limitations
 
-- **several-sources is Linux-only.** `fabric-cli`/`upstream-cli` are native binaries
-  built by the Linux legs; the mobile path runs an addon app, not arbitrary CLIs.
+- **Native CLI sources (fabric/upstream) are desktop-only.** `fabric-cli`/`upstream-cli`
+  are native binaries built per desktop OS; the mobile path runs an addon app, not
+  arbitrary CLIs. The other several-sources use — `addon@candidate` vs `addon@baseline`
+  (two builds of the same model) — runs on every desktop platform.
+- **Peak RSS is desktop-only.** Recorded on Linux / macOS / Windows (process high-water,
+  max across measured blocks). The mobile runtime doesn't expose peak memory to the
+  on-device harness, so the report's **Peak memory (RSS)** table shows `—` for phones.
+- **Thermal stability guard uses conservative defaults.** Between the warmup and measured
+  passes the harness waits for a sensor-free timing probe to stabilise (bounded tight on
+  mobile to fit the Device Farm window). The real-device thermal thresholds are not yet
+  tuned from high-workload phone runs — see the methodology notes.
 - **mmproj vision-encode time is unavailable on mobile.** It comes from llama.cpp's native
   stderr, which neither Android logcat nor the iOS console capture carries — the report
   shows `—` there and uses **TTFT** (which includes vision-encode) as the mobile proxy.
