@@ -137,8 +137,8 @@ module.exports = {
 
   // ════════════════════════ SOURCES — builds under comparison ════════════════════════
   // Tokens for the matrix_sources launch param (parsed by sources.cjs).
-  // addon@candidate/addon@baseline are wired by A2; fabric/upstream run via the
-  // several-sources CLI path (Linux-only).
+  // addon@candidate/addon@baseline compare two addon builds; fabric/upstream run
+  // via the several-sources native-CLI path (Linux-only).
   sources: {
     'addon@candidate': { type: 'addon', ref: 'branch' },
     'addon@baseline': { type: 'addon', ref: 'npm' },
@@ -154,7 +154,7 @@ module.exports = {
   scenarios: SCENARIOS,
   defaultScenario: 'default',
 
-  // ════════════════════════ METHODOLOGY — how rounds run (A3) ════════════════════════
+  // ════════════════════════ METHODOLOGY — how rounds run ════════════════════════
   // warmup + measured blocks per source, median reported, blocks interleaved
   // across sources, stability guard between blocks ('auto': temperature sensor
   // on macmini, timing-probe elsewhere). Consumed by methodology.cjs.

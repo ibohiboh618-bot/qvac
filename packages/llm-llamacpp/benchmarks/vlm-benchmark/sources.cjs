@@ -1,20 +1,18 @@
 'use strict'
-// QVAC-19371 (A1 contract): SOURCES — the builds-under-comparison axis.
+// SOURCES — the builds-under-comparison axis.
 // A "source" is one thing being measured: our addon at some version, or one of
 // the native CLIs (fabric = the company llama.cpp fork, upstream = original
 // llama.cpp). Selected per run via the `matrix_sources` workflow input
 // (tokens: addon | addon@candidate | addon@baseline | fabric@<ref> | upstream@<ref>).
 //
-// OWNERSHIP: runner workstream (Dev A). The report side never imports this —
-// it sees sources only as the `source_id`/`source_ref` marker fields.
+// The report side never imports this — it sees sources only as the
+// `source_id`/`source_ref` marker fields.
 //
-// A1 ships the contract + the resolver for what runs TODAY (the published
-// addon). The remaining types are wired by their subtasks:
-//   addon@candidate  — prebuild built from the PR ref            TODO(A2)
-//   addon@baseline   — pinned npm version (per-model/baseline)   TODO(A2)
-//   fabric/upstream  — already runnable via the several-sources
-//                      CLI path; arbitrary-commit refs + SHA-keyed
-//                      build cache                                TODO(A5)
+// Source types:
+//   addon            — published npm prebuild (the default)
+//   addon@candidate  — prebuild built from the PR ref
+//   addon@baseline   — pinned npm version (per-model/baseline)
+//   fabric/upstream  — native CLIs, built from any tag/branch/commit, SHA-keyed cache
 
 // Parse one matrix_sources token into { id, type, ref }.
 function parseSourceToken (token) {
@@ -43,8 +41,8 @@ function parseSources (raw) {
 }
 
 // Resolve an addon source to the prebuilds directory the harness should load.
-// TODO(A2): candidate → the PR-ref prebuild artifact dir; baseline → the
-// pinned-npm prebuild dir. Today both fall through to the workspace default.
+// Candidate/baseline builds are staged by CI into per-source dirs; the published
+// addon falls through to the workspace default.
 function addonPrebuildDir (source, workdir) {
   return `${workdir}/prebuilds`
 }

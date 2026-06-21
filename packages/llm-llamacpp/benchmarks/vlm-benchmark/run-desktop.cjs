@@ -1,9 +1,8 @@
 'use strict'
-// QVAC-19371 (A3, scaffolded for A2): desktop run driver — the process-level
-// orchestration the in-process harness cannot do. The harness loads ONE build in
-// ONE process, so warmup/measured round scheduling (and, in A2, candidate-vs-
-// baseline) has to happen out here by spawning one harness process per
-// { source × model × block }.
+// Desktop run driver — the process-level orchestration the in-process harness
+// cannot do. The harness loads ONE build in ONE process, so warmup/measured round
+// scheduling (and candidate-vs-baseline build comparison) has to happen out here
+// by spawning one harness process per { source × model × block }.
 //
 // What this does:
 //   • planBlocks() lays out 1 warmup + N measured blocks per source, INTERLEAVED
@@ -19,11 +18,9 @@
 // changes stay in this folder (no YAML churn). The report side takes the median
 // over measured blocks (block >= 1) and drops warmup (block 0).
 //
-// A2 will make addonPrebuildDir() return real candidate/baseline dirs; today both
-// resolve to the published build on disk, so addon@candidate,addon@baseline is a
-// genuine A/A test (expect ~0% deltas).
-//
-// OWNERSHIP: runner workstream (Dev A).
+// addonPrebuildDir() resolves each source to its prebuild dir (candidate/baseline
+// builds staged by CI); when both point at the same build it is a genuine A/A test
+// (expect ~0% deltas).
 //
 // --selfcheck validates the contract wiring without running any model.
 
@@ -51,9 +48,8 @@ function resolveModels (config, parseModels) {
   return parseModels(env('QVAC_VLM_MODELS', ''), config.catalog, config.models)
 }
 
-// Source identity → the version string stamped into markers (source_ref). Until
-// A2 builds real candidate/baseline prebuilds, both resolve to the published
-// build on disk; the ref label still distinguishes them in the report.
+// Source identity → the version string stamped into markers (source_ref): the
+// candidate's git sha, the baseline's pinned npm version, or the published addon.
 function sourceRef (config, src) {
   if (src.type !== 'addon') return src.ref
   if (src.ref === 'baseline') return 'npm:' + ((config.defaultBaseline && config.defaultBaseline.npm) || 'baseline')
@@ -124,7 +120,7 @@ async function run () {
   } else {
     sources = parseSources(env('QVAC_VLM_SOURCES', 'addon')).filter(s => {
       if (s.type === 'addon') return true
-      note(`skipping non-addon source '${s.id}' — CLI sources run via the several-sources path (arbitrary refs land in A5)`)
+      note(`skipping non-addon source '${s.id}' — CLI sources run via the several-sources native-CLI step`)
       return false
     })
     if (!sources.length) throw new Error('no addon sources to schedule (set QVAC_VLM_SOURCES)')
