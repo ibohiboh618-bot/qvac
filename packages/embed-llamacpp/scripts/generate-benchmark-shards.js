@@ -87,15 +87,17 @@ function checkManifest () {
     }
   }
   // matrix() repeats each (model, quant) download cell once per (batchSize,
-  // flashAttn) shard, so dedupe to the unique download cells before comparing
-  // against the manifest (which has one entry per model x quant).
+  // flashAttn) shard, so dedupe to the unique download cells. The mobile matrix
+  // is a SUBSET of the manifest (the 4B is desktop-only — it OOMs phones), so
+  // assert every mobile cell exists in the manifest with matching repo/revision,
+  // rather than requiring equality. A drifted repo/revision/quant is still
+  // caught (it won't be in the manifest set).
+  const manifestSet = new Set(fromManifest)
   const fromMatrix = [...new Set(matrix().map((c) => `${c.model}|${c.quant}|${c.repo}|${c.revision}`))]
-  const expected = JSON.stringify(fromManifest)
-  const actual = JSON.stringify(fromMatrix)
-  if (expected !== actual) {
-    console.error('MISMATCH: _benchmark-matrix.js cells have drifted from models.manifest.json')
-    console.error(`  manifest: ${expected}`)
-    console.error(`  matrix:   ${actual}`)
+  const notInManifest = fromMatrix.filter((c) => !manifestSet.has(c))
+  if (notInManifest.length) {
+    console.error('MISMATCH: mobile matrix cells are not in models.manifest.json (mobile must be a subset of the manifest):')
+    notInManifest.forEach((c) => console.error(`  ${c}`))
     return 1
   }
   return 0

@@ -27,14 +27,16 @@
 // case per quant (embeddinggemma-300M-Q8_0 vs -300m-Q4_0; Qwen ...-f16 lowercase),
 // so the filename is pinned here rather than reconstructed: a guessed name 404s,
 // and a 404 is not retried. Verified against each repo's HF file listing.
+// MOBILE matrix is a SUBSET of the desktop manifest: the Qwen3-embedding-4B
+// (4.5-8GB) does not fit Device Farm phones (OOM hard-crash, confirmed on-device
+// run 27878011366), so it is desktop-only, mirroring the LLM benchmark which
+// dropped Qwen3-4B from mobile for the same reason. The desktop sweep
+// (benchmarks/performance) still covers all 3 models via the manifest.
 const CELLS = [
   { model: 'embeddingGemma', quant: 'Q8_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300M-Q8_0.gguf' },
   { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300m-Q4_0.gguf' },
   { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-Q8_0.gguf' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-f16.gguf' },
-  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main', file: 'Qwen3-Embedding-4B-Q8_0.gguf' },
-  { model: 'Qwen3-embedding-4B-gguf', quant: 'Q4_K_M', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main', file: 'Qwen3-Embedding-4B-Q4_K_M.gguf' },
-  { model: 'Qwen3-embedding-4B-gguf', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-4B-GGUF', revision: 'main', file: 'Qwen3-Embedding-4B-f16.gguf' }
+  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-f16.gguf' }
 ]
 
 // Sweep axes + input modes for the mobile sweep. The desktop copy of these
