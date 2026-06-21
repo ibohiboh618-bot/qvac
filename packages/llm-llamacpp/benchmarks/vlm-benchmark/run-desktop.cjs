@@ -126,21 +126,24 @@ async function run () {
   const { parseSources, addonPrebuildDir } = require('./sources.cjs')
   const { planBlocks, stabilityGuard } = require('./methodology.cjs')
 
-  // In several-sources mode the comparison axis is the engine: this leg always
-  // runs the published addon, while the fabric/upstream CLIs are built and run by
-  // the separate workflow step (not scheduled here). QVAC_VLM_SOURCES there holds
-  // the CLI tokens, so don't try to schedule them as addon builds.
+  // The comparison axis depends on the mode:
+  //   several-sources — ONE model across several sources. Candidate-vs-baseline
+  //     lives here: addon@candidate vs addon@baseline are two builds of the same
+  //     model. The addon-type sources are scheduled here (one prebuild each);
+  //     fabric/upstream CLIs are built and run by the separate native-CLI step.
+  //   two-models — two models compared on ONE source (the published addon). No
+  //     build comparison, so the source axis is just the published addon.
   const mode = env('QVAC_VLM_MODE', config.mode || 'two-models')
   let sources
   if (mode === 'several-sources') {
-    sources = parseSources('addon')
-  } else {
     sources = parseSources(env('QVAC_VLM_SOURCES', 'addon')).filter(s => {
       if (s.type === 'addon') return true
       note(`skipping non-addon source '${s.id}' — CLI sources run via the several-sources native-CLI step`)
       return false
     })
-    if (!sources.length) throw new Error('no addon sources to schedule (set QVAC_VLM_SOURCES)')
+    if (!sources.length) sources = parseSources('addon') // at least the published addon
+  } else {
+    sources = parseSources('addon')
   }
 
   const byId = new Map(sources.map(s => [s.id, s]))

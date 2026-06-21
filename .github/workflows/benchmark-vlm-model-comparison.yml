@@ -38,7 +38,7 @@ on:
         type: boolean
         default: true
       matrix_mode:
-        description: "  matrix mode: two-models (f16 vs q8, addon) or several-sources (addon+fabric-cli+upstream-cli; desktop only — builds native CLIs, so Linux/macOS/Windows, no mobile)"
+        description: "  matrix mode: two-models (compare two models on the published addon) or several-sources (one model across sources — addon@candidate/@baseline build comparison, and/or fabric/upstream native CLIs which are desktop-only)"
         required: false
         type: string
         default: "two-models"
@@ -506,7 +506,7 @@ jobs:
       # build-cli-sources.js compiles per-OS (Vulkan on linux/win, Metal on darwin),
       # so every desktop leg builds its own CLIs and reports a per-platform comparison.
       - name: Cache CLI builds (several-sources)
-        if: inputs.matrix_mode == 'several-sources'
+        if: inputs.matrix_mode == 'several-sources' && (contains(inputs.matrix_sources, 'fabric') || contains(inputs.matrix_sources, 'upstream'))
         uses: actions/cache@v4
         with:
           path: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark/cli-builds
@@ -517,7 +517,7 @@ jobs:
       # installed at C:\Program Files\LLVM. So skip choco entirely — put the pre-installed
       # clang on PATH, download cmake + Ninja (zip, no install), and build via Ninja+clang.
       - name: Setup clang + Ninja + cmake (Windows several-sources)
-        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows'
+        if: inputs.matrix_mode == 'several-sources' && matrix.host == 'windows' && (contains(inputs.matrix_sources, 'fabric') || contains(inputs.matrix_sources, 'upstream'))
         shell: powershell
         run: |
           $tmp = $env:RUNNER_TEMP
@@ -543,7 +543,7 @@ jobs:
           "CXX=clang++" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Build + run fabric/upstream CLIs over the fixture (several-sources)
-        if: inputs.matrix_mode == 'several-sources'
+        if: inputs.matrix_mode == 'several-sources' && (contains(inputs.matrix_sources, 'fabric') || contains(inputs.matrix_sources, 'upstream'))
         working-directory: ${{ env.WORKDIR }}/benchmarks/vlm-benchmark
         shell: bash
         env:
