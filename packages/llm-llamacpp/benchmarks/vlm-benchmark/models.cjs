@@ -1,6 +1,6 @@
 'use strict'
-// QVAC-19371 (A1 contract): resolve the `matrix_models` launch parameter into the
-// canonical model specs harness.cjs runs ({ label, ctx_size, llm: { source },
+// Resolve the `matrix_models` launch parameter into the canonical model specs
+// harness.cjs runs ({ label, ctx_size, llm: { source },
 // mmproj: { source } }). Any new model is benchmarkable with zero code changes —
 // a model is just two https URLs (LLM gguf + mmproj gguf).
 //

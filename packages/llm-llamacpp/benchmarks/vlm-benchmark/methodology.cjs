@@ -1,6 +1,6 @@
 'use strict'
-// QVAC-19371 (A1 contract): MEASUREMENT METHODOLOGY — how rounds are scheduled
-// so deltas are trustworthy (config.cjs `methodology` block is the knobs).
+// MEASUREMENT METHODOLOGY — how rounds are scheduled so deltas are trustworthy
+// (config.cjs `methodology` block is the knobs).
 //
 // Target behaviour (per docs/perf/metal-baseline.md findings):
 //   • 1 warmup block + N measured blocks per source; the report takes the
@@ -13,10 +13,10 @@
 //     (self-hosted Mac mini, pending sudo/powermetrics confirmation), else a
 //     fixed micro-workload whose timing must stabilise (sensor-free proxy)
 //
-// OWNERSHIP: runner workstream (Dev A). run-desktop.cjs (A3) drives the schedule
-// with these helpers; the harness stamps block from QVAC_VLM_BLOCK when scheduled,
-// else block = rep+1 for single-process runs. The report takes the median per
-// metric over measured blocks (block >= 1) and drops warmup (block 0).
+// The desktop scheduler (run-desktop.cjs) drives interleaved blocks across
+// processes with these helpers. The harness calls stabilityGuard() directly for
+// its own single-process warmup (mobile + desktop-direct). The report takes the
+// median per metric over measured blocks (block >= 1) and drops warmup (block 0).
 
 // Block plan for one (model × backend): the order sources run their blocks in.
 // interleave=true → [s1.warmup, s2.warmup, s1.b1, s2.b1, s1.b2, s2.b2, …]
@@ -53,7 +53,8 @@ function median (xs) {
 //               timing flattens (a window of probes within tolerance). Works
 //               everywhere, no privileges. Default.
 //   • 'off'   — no wait (CI A/A debugging only).
-// Device Farm phones run a single-block path and never call this.
+// Mobile calls this once after its in-harness warmup, bounded tight (maxWaitMs)
+// to stay under the Device Farm per-test ceiling.
 
 function sleep (ms) {
   return new Promise(resolve => setTimeout(resolve, ms))

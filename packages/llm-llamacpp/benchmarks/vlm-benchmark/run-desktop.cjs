@@ -1,9 +1,8 @@
 'use strict'
-// QVAC-19371 (A3, scaffolded for A2): desktop run driver — the process-level
-// orchestration the in-process harness cannot do. The harness loads ONE build in
-// ONE process, so warmup/measured round scheduling (and, in A2, candidate-vs-
-// baseline) has to happen out here by spawning one harness process per
-// { source × model × block }.
+// Desktop run driver — the process-level orchestration the in-process harness
+// cannot do. The harness loads ONE build in ONE process, so warmup/measured round
+// scheduling (and candidate-vs-baseline build comparison) has to happen out here
+// by spawning one harness process per { source × model × block }.
 //
 // What this does:
 //   • planBlocks() lays out 1 warmup + N measured blocks per source, INTERLEAVED
@@ -19,13 +18,11 @@
 // changes stay in this folder (no YAML churn). The report side takes the median
 // over measured blocks (block >= 1) and drops warmup (block 0).
 //
-// A2: addon@candidate / addon@baseline load builds staged by CI into
+// addon@candidate / addon@baseline load builds staged by CI into
 // builds/<id>/prebuilds; stagePrebuild() symlinks the live prebuilds dir at the
 // right one before each block so the whole native build (binding + backends) is
 // swapped. When both candidate and baseline point at the same staged build it is
 // a genuine A/A test (expect ~0% deltas).
-//
-// OWNERSHIP: runner workstream (Dev A).
 //
 // --selfcheck validates the contract wiring without running any model.
 
@@ -53,9 +50,8 @@ function resolveModels (config, parseModels) {
   return parseModels(env('QVAC_VLM_MODELS', ''), config.catalog, config.models)
 }
 
-// Source identity → the version string stamped into markers (source_ref). Until
-// A2 builds real candidate/baseline prebuilds, both resolve to the published
-// build on disk; the ref label still distinguishes them in the report.
+// Source identity → the version string stamped into markers (source_ref): the
+// candidate's git sha, the baseline's pinned npm version, or the published addon.
 function sourceRef (config, src) {
   if (src.type !== 'addon') return src.ref
   if (src.ref === 'baseline') return 'npm:' + ((config.defaultBaseline && config.defaultBaseline.npm) || 'baseline')
@@ -130,21 +126,24 @@ async function run () {
   const { parseSources, addonPrebuildDir } = require('./sources.cjs')
   const { planBlocks, stabilityGuard } = require('./methodology.cjs')
 
-  // In several-sources mode the comparison axis is the engine: this leg always
-  // runs the published addon, while the fabric/upstream CLIs are built and run by
-  // the separate workflow step (not scheduled here). QVAC_VLM_SOURCES there holds
-  // the CLI tokens, so don't try to schedule them as addon builds.
+  // The comparison axis depends on the mode:
+  //   several-sources — ONE model across several sources. Candidate-vs-baseline
+  //     lives here: addon@candidate vs addon@baseline are two builds of the same
+  //     model. The addon-type sources are scheduled here (one prebuild each);
+  //     fabric/upstream CLIs are built and run by the separate native-CLI step.
+  //   two-models — two models compared on ONE source (the published addon). No
+  //     build comparison, so the source axis is just the published addon.
   const mode = env('QVAC_VLM_MODE', config.mode || 'two-models')
   let sources
   if (mode === 'several-sources') {
-    sources = parseSources('addon')
-  } else {
     sources = parseSources(env('QVAC_VLM_SOURCES', 'addon')).filter(s => {
       if (s.type === 'addon') return true
-      note(`skipping non-addon source '${s.id}' — CLI sources run via the several-sources path (arbitrary refs land in A5)`)
+      note(`skipping non-addon source '${s.id}' — CLI sources run via the several-sources native-CLI step`)
       return false
     })
-    if (!sources.length) throw new Error('no addon sources to schedule (set QVAC_VLM_SOURCES)')
+    if (!sources.length) sources = parseSources('addon') // at least the published addon
+  } else {
+    sources = parseSources('addon')
   }
 
   const byId = new Map(sources.map(s => [s.id, s]))

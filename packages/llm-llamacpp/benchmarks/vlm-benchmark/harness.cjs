@@ -23,10 +23,11 @@ const LlmLlamacpp = require('../../index.js')
 const fixture = require('./fixture.data.cjs')
 const config = require('./config.cjs')
 const { parseModels } = require('./models.cjs')
+const { stabilityGuard } = require('./methodology.cjs')
 
 // Resolve a fixture image. Images live in a fixture object store (not git): CI syncs
-// them into this dir's images/ before the run. Desktop reads images/ directly; mobile
-// uses the bundled asset manifest (stage.cjs copies images/ -> test/mobile/testAssets
+// them into this dir's fixture/ before the run. Desktop reads fixture/ directly; mobile
+// uses the bundled asset manifest (stage.cjs copies fixture/ -> test/mobile/testAssets
 // after that sync).
 function getMediaPath (filename) {
   if ((os.platform() === 'ios' || os.platform() === 'android') && global.assetPaths) {
@@ -34,7 +35,7 @@ function getMediaPath (filename) {
     if (global.assetPaths[key]) return global.assetPaths[key].replace('file://', '')
     throw new Error(`Asset not found in testAssets: ${filename} (rebuild the app)`)
   }
-  return path.join(__dirname, 'images', filename)
+  return path.join(__dirname, 'fixture', filename)
 }
 
 function env (key) {
@@ -87,14 +88,26 @@ const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') 
 // mobile to stay under the Device Farm ceiling. Override with QVAC_VLM_REPEATS.
 const REPEATS = intEnv('QVAC_VLM_REPEATS') || PRESET.repeats || (isMobile ? 1 : 3)
 
-// Set by the A3 scheduler (run-desktop.cjs) when it drives one block per process:
-// the block number to stamp (0 = warmup, 1.. = measured) and which single model
-// from the resolved list to run. Absent on single-process / mobile runs.
+// Set by the desktop round scheduler (run-desktop.cjs) when it drives one block
+// per process: the block number to stamp (0 = warmup, 1.. = measured) and which
+// single model from the resolved list to run. Absent on single-process / mobile
+// runs, where the harness does its own warmup (see WARMUP_REPEATS below).
 const BLOCK_OVERRIDE = nonNegEnv('QVAC_VLM_BLOCK')
 const MODEL_INDEX = nonNegEnv('QVAC_VLM_MODEL_INDEX')
-// The addon prebuild dir to load (A2 candidate vs baseline swap). Empty = the
-// addon's own default (packages/llm-llamacpp/prebuilds).
+// The addon prebuild dir to load (candidate vs baseline build comparison). Empty
+// = the addon's own default (packages/llm-llamacpp/prebuilds).
 const BACKENDS_DIR = env('QVAC_VLM_BACKENDS_DIR')
+
+// Warmup passes run before the measured ones to prime weights/caches and let the
+// machine reach a steady thermal state — most important on phones, which throttle
+// hard. Stamped block 0 (the report drops block 0 from stats). Only the harness's
+// OWN warmup is controlled here: when the desktop scheduler drives blocks
+// (BLOCK_OVERRIDE set) it owns warmup across processes, so this is forced to 0.
+// Default 1 everywhere a single process runs the whole pass (mobile + desktop
+// direct); 0 under the scheduler. Override with QVAC_VLM_WARMUP_REPEATS.
+const WARMUP_REPEATS = BLOCK_OVERRIDE != null
+  ? 0
+  : (nonNegEnv('QVAC_VLM_WARMUP_REPEATS') != null ? nonNegEnv('QVAC_VLM_WARMUP_REPEATS') : 1)
 
 // tasks: QVAC_VLM_TASKS (csv) > preset.tasks > the scenario's task list.
 // preset.maxTasks (e.g. smoke = 1) trims to the first N distinct tasks so the
@@ -105,13 +118,24 @@ const TASKS = (() => {
   return PRESET.tasks || SCENARIO.tasks || null
 })()
 
+// Output token cap per task. ocr-page transcribes a whole document, so it needs far more
+// than a VQA answer; the run's cap is the max over its selected tasks. It's a CAP, not a
+// forced length — short answers still stop at EOS, so VQA pays nothing for the headroom.
+const TASK_NPREDICT = { 'ocr-page': 768, 'ocr-small': 96 }
+const DEFAULT_NPREDICT = 128
+
 function selectedItems () {
+  // Explicit item allowlist (preset.ids) wins — used to pick specific images
+  // (e.g. ocr1page = just ocr-page_0; ocr5pages = all 5 ocr-page docs).
+  if (PRESET.ids) { const want = new Set(PRESET.ids); return fixture.items.filter(it => want.has(it.id)) }
   const seen = {}
   return fixture.items.filter(it => {
     if (TASKS && !TASKS.includes(it.task)) return false
     if (!(it.task in seen) && PRESET.maxTasks && Object.keys(seen).length >= PRESET.maxTasks) return false
     seen[it.task] = (seen[it.task] || 0) + 1
-    return seen[it.task] <= SAMPLES_PER_TASK
+    // per-task sample cap (preset.taskSamples) overrides the global samplesPerTask
+    const cap = (PRESET.taskSamples && PRESET.taskSamples[it.task] != null) ? PRESET.taskSamples[it.task] : SAMPLES_PER_TASK
+    return seen[it.task] <= cap
   })
 }
 
@@ -242,20 +266,21 @@ function emitRow (obj) {
 }
 
 // Contract-v2 fields stamped into every marker (CONTRACT.md §1). `block` is the
-// measurement round: the A3 scheduler sets it explicitly (QVAC_VLM_BLOCK, one
-// block per process); on single-process runs there are no warmup blocks so
-// block = rep + 1.
-function stamp (rep, obj) {
+// measurement round: the desktop scheduler sets it explicitly (QVAC_VLM_BLOCK, one
+// block per process); single-process runs (mobile / desktop direct) pass an
+// explicit `block` for warmup (0) and derive measured blocks as rep + 1.
+function stamp (rep, obj, block) {
   const out = { v: 2, scenario: SCENARIO_ID, source_id: SRC_ID, source_ref: SRC_REF }
-  if (rep != null) out.block = BLOCK_OVERRIDE != null ? BLOCK_OVERRIDE : rep + 1
+  if (block != null) out.block = block
+  else if (rep != null) out.block = BLOCK_OVERRIDE != null ? BLOCK_OVERRIDE : rep + 1
   return Object.assign(out, obj)
 }
 
-// Peak process memory (MB), cross-platform (A4). bare-os exposes libuv's
-// getrusage as resourceUsage().maxRSS, reported in KB on every platform here
-// (Linux, macOS, Windows — verified on the Mac mini: a ~2 GB process reads
-// 2,097,152, i.e. KB not bytes). Fall back to the Linux /proc high-water for any
-// runtime without resourceUsage; null where neither is available.
+// Peak process memory (MB), cross-platform. bare-os exposes libuv's getrusage as
+// resourceUsage().maxRSS, reported in KB on every platform here (Linux, macOS,
+// Windows — verified on the Mac mini: a ~2 GB process reads 2,097,152, i.e. KB
+// not bytes). Fall back to the Linux /proc high-water for any runtime without
+// resourceUsage; null where neither is available.
 function peakRssMb () {
   try {
     if (typeof os.resourceUsage === 'function') {
@@ -296,6 +321,9 @@ function runModel (spec) {
         mmproj_url: displayUrl(spec.mmproj),
         mmproj_source: sourceType(spec.mmproj)
       })) + '[/VLMMETA]')
+      // Size the output cap to the heaviest task in this run (ocr-page needs ~768).
+      const items = selectedItems()
+      const nPredict = Math.max(DEFAULT_NPREDICT, ...items.map(it => TASK_NPREDICT[it.task] || 0))
       const inference = new LlmLlamacpp({
         files: { model: [path.join(dir, mainName)], projectionModel: path.join(dir, projName) },
         config: {
@@ -304,10 +332,10 @@ function runModel (spec) {
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
-          n_predict: '128',
+          n_predict: String(nPredict),
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
           'reasoning-budget': '0', // disable Qwen3.5 thinking -> clean direct answers
-          ...(BACKENDS_DIR ? { backendsDir: BACKENDS_DIR } : {}) // A2: candidate/baseline prebuild
+          ...(BACKENDS_DIR ? { backendsDir: BACKENDS_DIR } : {}) // candidate/baseline build swap
         },
         logger: console,
         opts: { stats: true }
@@ -315,7 +343,52 @@ function runModel (spec) {
       t.teardown(async () => { try { await inference.unload() } catch (_) {} })
       await inference.load()
 
-      const items = selectedItems()
+      // Warmup (single-process runs only): prime weights/caches and heat the
+      // pipeline on the first item, stamped block 0 so the report drops it from
+      // stats. The desktop scheduler sets WARMUP_REPEATS=0 — it owns warmup across
+      // its own block processes. Warmup rows are emitted so the run is auditable.
+      for (let w = 0; w < WARMUP_REPEATS && items.length; w++) {
+        const item = items[0]
+        console.error('[VLMSEG]' + JSON.stringify(stamp(null, { cell: axis, source: SOURCE, model: spec.label, device, id: item.id, rep: w }, 0)) + '[/VLMSEG]')
+        try {
+          const r = await runOne(inference, getMediaPath(item.image), item.prompt)
+          const st = r.stats || {}
+          emitRow(stamp(null, {
+            rss_mb: peakRssMb(),
+            cell: axis,
+            source: SOURCE,
+            model: spec.label,
+            device,
+            rep: w,
+            task: item.task,
+            id: item.id,
+            metric: item.metric,
+            gold: item.gold,
+            pred: String(r.text).slice(0, 600),
+            img: item.image,
+            img_w: r.dims.w,
+            img_h: r.dims.h,
+            ms: r.ms,
+            decode_tps: st.TPS != null ? st.TPS : null,
+            ttft_ms: st.TTFT != null ? st.TTFT : null,
+            gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
+            prompt_tokens: st.promptTokens != null ? st.promptTokens : null
+          }, 0))
+        } catch (e) {
+          emitRow(stamp(null, { rss_mb: peakRssMb(), cell: axis, source: SOURCE, model: spec.label, device, rep: w, task: item.task, id: item.id, metric: item.metric, gold: item.gold, error: String((e && e.message) || e) }, 0))
+        }
+      }
+      // After warming, wait for the machine to settle before the measured pass so
+      // throttling state doesn't bias the first measured block. Bounded tight on
+      // mobile to stay under the Device Farm per-test ceiling; the guard emits a
+      // [VLMBLOCK] marker recording what it did. (Defaults conservative — see
+      // config.methodology; real-device thermal tuning is a follow-up.)
+      if (WARMUP_REPEATS > 0) {
+        const guardOpts = isMobile ? { mode: 'probe', maxWaitMs: 6000, intervalMs: 800, window: 3 } : undefined
+        const stability = await stabilityGuard(guardOpts)
+        process.stdout.write('[VLMBLOCK]' + JSON.stringify({ v: 2, scenario: SCENARIO_ID, source_id: SRC_ID, source_ref: SRC_REF, model: spec.label, device, block: 1, stability }) + '[/VLMBLOCK]\n')
+      }
+
       let ok = 0
       for (const item of items) {
         for (let rep = 0; rep < REPEATS; rep++) {
@@ -366,8 +439,8 @@ function runAll () {
   const models = MODE === 'several-sources'
     ? [config.sourcesModel]
     : parseModels(env('QVAC_VLM_MODELS'), config.catalog, config.models)
-  // When the A3 scheduler drives one (source × model × block) per process it pins
-  // the model by index; otherwise run the whole list.
+  // When the desktop scheduler drives one (source × model × block) per process it
+  // pins the model by index; otherwise run the whole list.
   const selected = MODEL_INDEX != null && models[MODEL_INDEX] ? [models[MODEL_INDEX]] : models
   for (const spec of selected) runModel(spec)
 }

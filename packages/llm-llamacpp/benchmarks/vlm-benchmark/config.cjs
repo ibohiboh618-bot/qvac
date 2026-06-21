@@ -137,8 +137,8 @@ module.exports = {
 
   // ════════════════════════ SOURCES — builds under comparison ════════════════════════
   // Tokens for the matrix_sources launch param (parsed by sources.cjs).
-  // addon@candidate/addon@baseline are wired by A2; fabric/upstream run via the
-  // several-sources CLI path (Linux-only).
+  // addon@candidate/addon@baseline compare two addon builds; fabric/upstream run
+  // via the several-sources native-CLI path (Linux-only).
   sources: {
     'addon@candidate': { type: 'addon', ref: 'branch' },
     'addon@baseline': { type: 'addon', ref: 'npm' },
@@ -149,34 +149,50 @@ module.exports = {
   // model has no per-catalog-entry `baseline` pin. Bump deliberately.
   defaultBaseline: { npm: '0.24.0' },
 
-  // ════════════════════════ SCENARIOS — what kind of work ════════════════════════
+  // ════════════════════════ SCENARIOS — the task set ════════════════════════
+  // One descriptive set (5 VQA tasks + OCR), scored per task; see scenarios.cjs.
   scenarios: SCENARIOS,
-  defaultScenario: 'vqa-suite',
+  defaultScenario: 'default',
 
-  // ════════════════════════ METHODOLOGY — how rounds run (A3) ════════════════════════
+  // ════════════════════════ METHODOLOGY — how rounds run ════════════════════════
   // warmup + measured blocks per source, median reported, blocks interleaved
   // across sources, stability guard between blocks ('auto': temperature sensor
   // on macmini, timing-probe elsewhere). Consumed by methodology.cjs.
   methodology: { warmupBlocks: 1, measuredBlocks: 3, statistic: 'median', interleave: true, stability: 'auto' },
 
-  // ════════════════════════ PRESET — how much is run ════════════════════════
-  // A preset is purely the run size (tasks × samples × repeats); it is independent of
-  // the mode. The fallback on every target when QVAC_VLM_PRESET is unset (the workflow
-  // sets it everywhere, incl. phones via the pushed device config). Per-field env
-  // overrides:
+  // ════════════════════════ PRESET — which tasks run ════════════════════════
+  // A preset selects a TASK GROUP (and the run size). The fallback on every target
+  // when QVAC_VLM_PRESET is unset (the workflow sets it everywhere, incl. phones via
+  // the pushed device config). Per-field env overrides:
   //   QVAC_VLM_SAMPLES→samplesPerTask · QVAC_VLM_REPEATS→repeats
   //   QVAC_VLM_DEVICES→devices (csv) · QVAC_VLM_TASKS→tasks (csv)
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
-  defaultPreset: 'base',
+  defaultPreset: 'full',
 
+  // Mobile (AWS Device Farm) per-leg timeout in MINUTES — the in-repo default the CI
+  // workflow reads when its `mobile_timeout_min` input is empty. Raises the WDIO/Mocha
+  // per-test ceiling + the Android generated-spec per-test ceiling so a heavier preset
+  // can finish on-device (capped by the 120-min Device-Farm / GitHub job ceilings).
+  // null = use the shared pipeline default (35-min Mocha / 30-min Android per-test);
+  // the workflow input, when set, overrides this.
+  mobileTimeoutMin: null,
+
+  // The two task groups (cognitive = VQA reasoning, ocr = text recognition). Kept here
+  // so a preset can run one group in isolation (e.g. for the mobile session budget).
+  // `ids` = an explicit fixture-item allowlist (overrides tasks/samples — used to pick
+  // specific images). `taskSamples` = per-task overrides of samplesPerTask (first-N).
   presets: {
-    // smoke — first task of the active scenario, 1 image, 1 repeat: a single
-    // inference per config (wiring check). maxTasks (not a task list) so it
-    // works under any scenario, not just vqa-suite.
+    // smoke — first task only, 1 image: a single inference per config (wiring check).
     smoke: { tasks: null, maxTasks: 1, samplesPerTask: 1, repeats: 1, devices: null },
-    // base — DEFAULT eval: all the active scenario's tasks × 3 samples × 1 repeat.
-    base: { tasks: null, samplesPerTask: 3, repeats: 1, devices: null },
-    // full — all scenario tasks × 5 samples × 1 repeat (the complete fixture).
-    full: { tasks: null, samplesPerTask: 5, repeats: 1, devices: null }
+    // cognitive — the 5 VQA reasoning tasks × 5 samples.
+    cognitive: { tasks: ['textvqa', 'vizwiz', 'gqa', 'docvqa', 'ai2d'], samplesPerTask: 5, repeats: 1, devices: null },
+    // ocr1page — a single light document-OCR check: just ocr-page_0 (fits the mobile session).
+    ocr1page: { ids: ['ocr-page_0'], samplesPerTask: 5, repeats: 1, devices: null },
+    // ocr5pages — the full high-MP document-OCR set: all 5 ocr-page docs (desktop-oriented;
+    // overruns the mobile Device-Farm session window).
+    ocr5pages: { ids: ['ocr-page_0', 'ocr-page_1', 'ocr-page_2', 'ocr-page_3', 'ocr-page_4'], samplesPerTask: 5, repeats: 1, devices: null },
+    // full — cognitive + ocr-small + the one light ocr-page (ocr-page capped to its first
+    // sample = ocr-page_0); the heavy ocr5pages docs are excluded.
+    full: { tasks: null, samplesPerTask: 5, taskSamples: { 'ocr-page': 1 }, repeats: 1, devices: null }
   }
 }
