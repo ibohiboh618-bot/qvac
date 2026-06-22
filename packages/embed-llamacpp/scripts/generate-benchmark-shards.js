@@ -28,7 +28,6 @@ const {
 
 const integrationDir = path.resolve(__dirname, '..', 'test', 'integration')
 const mobileAutoFile = path.resolve(__dirname, '..', 'test', 'mobile', 'integration.auto.cjs')
-const perfTestsFile = path.resolve(__dirname, '..', 'test', 'mobile', 'perf-tests.json')
 const workflowFile = path.resolve(__dirname, '..', '..', '..', '.github', 'workflows', 'benchmark-perf-embed-llamacpp.yml')
 const manifestFile = path.resolve(__dirname, '..', 'benchmarks', 'performance', 'models.manifest.json')
 
@@ -148,27 +147,6 @@ function checkMobileAuto () {
   )
 }
 
-// test/mobile/perf-tests.json lists the benchmark on-device runner functions.
-// The Device Farm perf-only gate (qvac_perf_only) intersects each batch's grep
-// with this list so a batch runs ONLY its own perf shard instead of the whole
-// suite + every shard (which OOMs the device). Derived from the matrix so it
-// can't drift.
-function perfTestsContent () {
-  return JSON.stringify(matrix().map(runFunctionName), null, 2) + '\n'
-}
-
-function checkPerfTests () {
-  if (!fs.existsSync(perfTestsFile)) {
-    console.error(`MISMATCH: perf-tests.json not found at ${perfTestsFile}`)
-    return 1
-  }
-  if (fs.readFileSync(perfTestsFile, 'utf8') !== perfTestsContent()) {
-    console.error('MISMATCH: test/mobile/perf-tests.json has drifted from the matrix run-function names')
-    return 1
-  }
-  return 0
-}
-
 // Hard gate: every matrix shard file must exist on disk (so the bundle that
 // goes to Device Farm contains them). Makes it impossible to run the benchmark
 // without shards.
@@ -199,8 +177,7 @@ function writeShards () {
       pruned++
     }
   }
-  fs.writeFileSync(perfTestsFile, perfTestsContent())
-  console.log(`Wrote ${written} shard files from the matrix${pruned ? `, pruned ${pruned} orphan(s)` : ''}; refreshed perf-tests.json.`)
+  console.log(`Wrote ${written} shard files from the matrix${pruned ? `, pruned ${pruned} orphan(s)` : ''}.`)
 }
 
 if (mode === 'groups') {
@@ -209,7 +186,7 @@ if (mode === 'groups') {
     console.log(JSON.stringify(batch.groups))
   }
 } else if (mode === 'check') {
-  const bad = checkManifest() + checkGroups() + checkMobileAuto() + checkPerfTests()
+  const bad = checkManifest() + checkGroups() + checkMobileAuto()
   if (bad) {
     console.error('\nCommitted benchmark artifacts are out of sync with _benchmark-matrix.js.')
     console.error('Run: npm run generate:benchmark-shards && npm run test:mobile:generate, then commit integration.auto.cjs + the workflow groups.')
