@@ -104,6 +104,7 @@ jobs:
           addon-npm-name: '@qvac/diffusion-cpp'
           prebuild-artifact-prefix: 'sd-cpp-'
           pat-token: ${{ secrets.PAT_TOKEN }}
+          test-framework-ref: 'fix/fail-on-zero-subtests-with-filter'
 
       - name: Build mobile app
         id: build

@@ -175,6 +175,7 @@ jobs:
           addon-npm-name: '@qvac/llm-llamacpp'
           prebuild-artifact-prefix: 'llama-cpp-'
           pat-token: ${{ secrets.PAT_TOKEN }}
+          test-framework-ref: 'fix/fail-on-zero-subtests-with-filter'
 
       # The mobile perf benchmark shards (benchmark-perf-*.test.js) are not
       # committed — they are generated from test/integration/_benchmark-matrix.js.
