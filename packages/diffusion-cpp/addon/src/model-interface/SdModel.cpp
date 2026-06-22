@@ -177,11 +177,9 @@ void SdModel::load() {
   sd_ctx_params_t params{};
   sd_ctx_params_init(&params);
 
-  // Load the VAE encoder as well as the decoder so img2img (encode -> denoise
-  // -> decode) works.  sd_ctx_params_init() sets vae_decode_only = true by
-  // default which skips building the encoder graph and causes:
-  //   GGML_ASSERT(!decode_only || decode_graph) in vae_encode()
-  params.vae_decode_only = false;
+  // NOTE: upstream's master backend refactor dropped sd_ctx_params_t's
+  // vae_decode_only flag; the VAE encoder graph is now always available, so
+  // img2img (encode -> denoise -> decode) works without an explicit opt-in.
 
   // -- Model paths ------------------------------------------------------------
   // For FLUX.2 [klein] the GGUF contains only diffusion weights with no SD
@@ -194,6 +192,8 @@ void SdModel::load() {
   params.diffusion_model_path = optPath(config_.diffusionModelPath);
   params.high_noise_diffusion_model_path =
       optPath(config_.highNoiseDiffusionModelPath);
+  params.uncond_diffusion_model_path =
+      optPath(config_.uncondDiffusionModelPath);
   params.clip_l_path = optPath(config_.clipLPath);
   params.clip_g_path = optPath(config_.clipGPath);
   params.t5xxl_path = optPath(config_.t5XxlPath);
@@ -214,7 +214,14 @@ void SdModel::load() {
 
   // -- Memory management -----------------------------------------------------
   params.enable_mmap = config_.mmap;
-  params.offload_params_to_cpu = config_.offloadToCpu;
+
+  // Upstream's master backend refactor replaced the standalone
+  // offload_params_to_cpu / keep_clip_on_cpu / keep_vae_on_cpu flags with the
+  // backend/params_backend spec strings. Preserve the legacy "offload params to
+  // CPU" intent by storing all parameters on the CPU backend (they are copied
+  // to the compute backend per use), which keeps GPU VRAM free on constrained
+  // setups -- exactly what offload_to_cpu meant before.
+  params.params_backend = config_.offloadToCpu ? "cpu" : nullptr;
 
   params.preferred_gpu_backend =
       sd_backend_selection::preferredGpuBackendForConfigDevice(config_.device);
@@ -224,9 +231,6 @@ void SdModel::load() {
       "Preferred backend passed to stable-diffusion: " +
           preferredBackendToString(params.preferred_gpu_backend) + " (" +
           std::to_string(static_cast<int>(params.preferred_gpu_backend)) + ")");
-
-  params.keep_clip_on_cpu = config_.keepClipOnCpu;
-  params.keep_vae_on_cpu = config_.keepVaeOnCpu;
 
   // -- Precision -------------------------------------------------------------
   params.wtype = config_.wtype;
@@ -247,8 +251,10 @@ void SdModel::load() {
   params.vae_conv_direct = config_.vaeConvDirect;
   params.force_sdxl_vae_conv_scale = config_.forceSDXLVaeConvScale;
 
-  // -- Internal --------------------------------------------------------------
-  params.free_params_immediately = config_.freeParamsImmediately;
+  // NOTE: upstream's master backend refactor dropped the free_params_immediately
+  // flag; parameter lifetime is now owned by the model/backend managers, so the
+  // single-ctx reuse this addon relies on no longer needs the explicit opt-out
+  // that previously prevented a use-after-free on the second generation.
 
   sd_ctx_t* raw = new_sd_ctx(&params);
   if (!raw) {
@@ -916,9 +922,18 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
   // -- Generate -------------------------------------------------------------
   const auto t0 = std::chrono::steady_clock::now();
 
+  // Upstream's master API returns success as a bool and hands back frames /
+  // audio via out-params. This addon delivers video-only (MJPG AVI), so we
+  // release any audio track the model produced to avoid leaking it.
   int numFramesOut = 0;
-  sd_image_t* rawFrames =
-      generate_video(sdCtx_.get(), &vidParams, &numFramesOut);
+  sd_image_t* rawFrames = nullptr;
+  sd_audio_t* audioOut = nullptr;
+  const bool videoOk = generate_video(
+      sdCtx_.get(), &vidParams, &rawFrames, &numFramesOut, &audioOut);
+  if (audioOut) {
+    free_sd_audio(audioOut);
+    audioOut = nullptr;
+  }
   qvac_lib_inference_addon_sd::SdVideoFrames frames(rawFrames, numFramesOut);
 
   // If cancelled during the sampler, surface as an exception for the same
@@ -929,7 +944,7 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
     throw sd_errors::makeCancelledError();
   }
 
-  if (frames.empty())
+  if (!videoOk || frames.empty())
     throw StatusError(
         general_error::InternalError,
         "processVideo: generate_video() returned no frames");

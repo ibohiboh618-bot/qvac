@@ -13,6 +13,7 @@
     "generate:esrgan": "bare examples/generate-image-esrgan-upscale.js",
     "generate:sdxl": "bare examples/generate-image-sdxl.js",
     "generate:sd3": "bare examples/generate-image-sd3.js",
+    "generate:ideogram": "bare examples/generate-image-ideogram.js",
     "generate:video": "bare examples/generate-video-wan.js",
     "generate:img2vid": "bare examples/img2vid-wan.js",
     "build:pack": "mkdir -p dist && npm pack --pack-destination dist",

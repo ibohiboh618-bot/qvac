@@ -159,7 +159,10 @@ export interface DiffusionFiles {
   clipG?: string
   /** SD3: absolute path to T5-XXL text encoder */
   t5Xxl?: string
-  /** FLUX.2 [klein]: absolute path to Qwen3 4B text encoder (llm_path) */
+  /**
+   * LLM text encoder (llm_path). FLUX.2 [klein] → Qwen3 4B;
+   * Ideogram 4 → Qwen3-VL 8B Instruct.
+   */
   llm?: string
   /** Absolute path to VAE file */
   vae?: string
@@ -171,6 +174,12 @@ export interface DiffusionFiles {
    * be present as an empty string when unset.
    */
   highNoiseDiffusionModel?: string
+  /**
+   * Ideogram 4 only: unconditional (CFG) diffusion model
+   * (uncond_diffusion_model_path), loaded alongside `model` so real
+   * classifier-free guidance works. Omit for all other models.
+   */
+  uncondModel?: string
 }
 
 export interface EsrganFiles {
