@@ -33,7 +33,7 @@ const { loadSupertonicTTS, runSupertonicTTS } = require('../utils/runSupertonicT
 const { ensureChatterboxModels, ensureSupertonicModel } = require('../utils/downloadModel')
 const { recordTtsStats } = require('../utils/perf-helper')
 // DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE).
-const { assertSampleCorrelation } = require('../utils/correlation-helper')
+const { assertSampleCorrelation, compareSamples } = require('../utils/correlation-helper')
 
 const platform = os.platform()
 const isMobile = platform === 'ios' || platform === 'android'
@@ -477,4 +477,54 @@ test('Supertonic GPU-vs-CPU correctness (CAPTURE-LAST) - coopmat-off verify', { 
   const rg = rms16(gpu.samples)
   console.log(`[MALI-VERIFY] Supertonic/${gpuBtag} gpu_rms=${rg.toFixed(5)} cpu_rms=${rms16(cpu.samples).toFixed(5)} backendId=${gpu.stats.backendId} gpuUnsupported=${gpu.stats.gpuUnsupported}`)
   t.ok(rg > 0.001, `Supertonic/${gpuBtag} capture-last: GPU audio audible (rms ${rg.toFixed(5)} > 0.001)`)
+})
+
+// DEBUG (QVAC-20557 round-L, DO-NOT-MERGE): DETERMINISTIC Chatterbox S3Gen
+// GPU-vs-CPU correctness. Chatterbox's T3 is stochastic so an end-to-end GPU-vs-CPU
+// audio correlation is invalid (GPU and CPU sample different tokens). This test pins
+// T3 to CPU (TTS_CPP_T3_FORCE_CPU=1 -> native init_backend returns CPU for T3 only;
+// S3Gen still follows useGPU via its own backend) so BOTH runs feed S3Gen the SAME
+// deterministic tokens (seed=42, mt19937). The S3Gen Vulkan-vs-CPU output is then a
+// valid signal, and the native per-stage `[gpu-diag] xcorr.s3gen.*` trace in
+// logcat_full.txt localizes the first S3Gen stage that decorrelates on Mali (round K:
+// hift_wav ~5x quiet). Informational corr here (the authoritative GPU-engage proof +
+// per-stage localization is the `Vulkan.s3gen.*` btag + xcorr lines in logcat); the
+// hard gate + Mali-GPU ship decision follow once localization is in hand.
+test('Chatterbox S3Gen GPU-vs-CPU correctness (T3->CPU, deterministic tokens)', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Chatterbox S3Gen corr: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureChatterboxModels({ targetDir: modelsDir })
+  if (!download.success) {
+    t.fail('Chatterbox GGUFs not available - registry fetch failed.')
+    return
+  }
+  const refWavPath = resolveRefWavPath({})
+  if (!fs.existsSync(refWavPath)) { t.pass('Skipped: reference audio missing'); return }
+
+  const hadEnv = proc.env.TTS_CPP_T3_FORCE_CPU
+  if (proc.env) proc.env.TTS_CPP_T3_FORCE_CPU = '1'
+  try {
+    const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
+    const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
+    const gpuBtag = backendIdToName(gpu.stats && gpu.stats.backendId)
+    const rg = rms16(gpu.samples)
+    const rc = rms16(cpu.samples)
+    // backendDevice here reflects T3 (pinned to CPU); S3Gen's backend is confirmed by
+    // the `Vulkan.s3gen.*` vs `CPU.s3gen.*` btag in the per-stage logcat trace.
+    const res = compareSamples(gpu.samples, cpu.samples, { minSamples: 1000, minLenRatio: 0.90 })
+    const corrStr = Number.isFinite(res.corr) ? res.corr.toFixed(6) : String(res.corr)
+    console.log(`[Chatterbox-S3Gen/corr] gpu_n=${gpu.samples.length} cpu_n=${cpu.samples.length} ` +
+      `aligned_n=${res.n} lenRatio=${(res.lenRatio || 0).toFixed(3)} corr=${corrStr} ` +
+      `gpu_rms=${rg.toFixed(5)} cpu_rms=${rc.toFixed(5)} t3BackendId=${gpu.stats && gpu.stats.backendId}` +
+      `${res.reason ? ' reason=' + res.reason : ''}`)
+    console.log('[Chatterbox-S3Gen/note] T3 pinned to CPU; S3Gen backend = the Vulkan.s3gen.*/CPU.s3gen.* btag in ' +
+      'logcat. Read xcorr.s3gen.* to localize the first diverging S3Gen stage (informational corr; hard gate follows).')
+    t.ok(rg > 0.001, `Chatterbox S3Gen: GPU audio finite + audible (rms ${rg.toFixed(5)} > 0.001)`)
+  } finally {
+    if (proc.env) {
+      if (hadEnv === undefined) delete proc.env.TTS_CPP_T3_FORCE_CPU
+      else proc.env.TTS_CPP_T3_FORCE_CPU = hadEnv
+    }
+  }
 })
