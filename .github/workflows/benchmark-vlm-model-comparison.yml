@@ -525,6 +525,9 @@ jobs:
           QVAC_VLM_SCENARIOS: ${{ inputs.matrix_scenarios }} # '' → config.defaultScenario
           QVAC_VLM_SOURCES: ${{ inputs.matrix_sources }} # addon-type sources scheduled here; CLI sources run in the native-CLI step below
           QVAC_VLM_SOURCE_ID: addon
+          # The candidate build's version label = the resolved PR commit, so the report
+          # shows exactly what was tested (the scheduler stamps this onto addon@candidate rows).
+          QVAC_VLM_CANDIDATE_REF: git:${{ needs.context.outputs.head_sha }}
           NO_GPU: ${{ matrix.no_gpu }}
         run: |
           # The round scheduler (run-desktop.cjs) owns the run: it spawns one bare
@@ -709,7 +712,7 @@ jobs:
       platforms: ${{ matrix.platform }}
       device_manufacturer: ${{ matrix.manufacturer }}
       device_model: ${{ matrix.model }}
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }};QVAC_VLM_SOURCE_ID=${{ matrix.source }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }};QVAC_VLM_SOURCE_ID=${{ matrix.source }};QVAC_VLM_SOURCE_REF=${{ matrix.source == 'addon@candidate' && format('git:{0}', needs.context.outputs.head_sha) || (matrix.source == 'addon@baseline' && format('npm:{0}', needs.context.outputs.baseline_npm) || '') }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
       # Suffix logs with the source tag (candidate/baseline) so the two sessions of a
       # build comparison upload distinct, identifiable artifacts.
       artifact_suffix: ${{ matrix.token }}${{ matrix.srctag != '' && format('-{0}', matrix.srctag) || '' }}
