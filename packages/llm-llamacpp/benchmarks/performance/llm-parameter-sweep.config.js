@@ -95,8 +95,10 @@ const MODELS = loadModelsFromManifest()
 // is pinned to a single value. Edit these arrays to sweep more dimensions.
 // KV-cache is swept symmetrically (cache-type-k === cache-type-v): the cartesian
 // produces every k/v combination, but case-runner skips the mixed ones, so only
-// f16/q8_0/q4_0 symmetric pairs run. Quantized KV-cache does not require
-// flash-attn with this addon.
+// f16/q8_0/q4_0 symmetric pairs run. flash-attn is ON: a quantized KV-cache
+// (q8_0/q4_0) requires flash-attention — without it the context fails to
+// initialize ("Failed to initialize context") on both CUDA and Metal. f16 runs
+// fine with flash-attn on, so the whole KV sweep shares one flash-attn setting.
 const PARAMETER_SWEEP = {
   quantization: ['Q4_0', 'Q4_1', 'Q4_K_M', 'Q6_K', 'Q8_0'],
   device: getDefaultSweepDevices(),
@@ -104,7 +106,7 @@ const PARAMETER_SWEEP = {
   threads: ['4'],
   'batch-size': ['512'],
   'ubatch-size': ['512'],
-  'flash-attn': ['off'],
+  'flash-attn': ['on'],
   'cache-type-k': ['f16', 'q8_0', 'q4_0'],
   'cache-type-v': ['f16', 'q8_0', 'q4_0'],
   'reasoning-budget': ['-1', '0']
