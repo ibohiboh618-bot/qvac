@@ -123,6 +123,13 @@ function buildCases (modelDef, sweep) {
       if (Number(ubatchSize) > Number(batchSize)) {
         continue // Skip combinations where ubatchSize is greater than batchSize
       }
+      // Only symmetric KV-cache pairs (k === v) are benchmarked: the report's
+      // [kv=<type>] tag and the workbench comparison target the symmetric
+      // f16/q8_0/q4_0 caches, not the mixed k/v combos the cartesian would
+      // otherwise yield from the cache-type-k/v sweep arrays.
+      if (cacheTypeK !== cacheTypeV) {
+        continue
+      }
       const runtimeConfig = {
         ...defaults,
         device,
