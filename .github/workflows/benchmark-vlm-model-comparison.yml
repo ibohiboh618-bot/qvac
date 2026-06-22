@@ -275,8 +275,10 @@ jobs:
           for raw in "${toks[@]}"; do
             t=$(echo "$raw" | xargs)
             case "$t" in
-              ""|addon|fabric|upstream) ;;
-              addon@candidate|addon@baseline) echo "::warning::'$t' build comparison not yet wired on this leg — running the published addon" ;;
+              # addon / candidate / baseline are addon builds — scheduled by run-desktop
+              # (desktop) and the mobile matrix; nothing to resolve here. This step only
+              # extracts the native-CLI refs (fabric/upstream).
+              ""|addon|addon@candidate|addon@baseline|fabric|upstream) ;;
               fabric@*) fabric_ref="${t#fabric@}" ;;
               upstream@*) upstream_ref="${t#upstream@}" ;;
               *) echo "::warning::Unknown matrix_sources token '$t' (known: addon[@candidate|@baseline], fabric@<ref>, upstream@<ref>)" ;;
