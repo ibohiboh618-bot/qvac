@@ -310,7 +310,10 @@ The benchmark is meant to grow. The three common changes:
 - **Native CLI sources (fabric/upstream) are desktop-only.** `fabric-cli`/`upstream-cli`
   are native binaries built per desktop OS; the mobile path runs an addon app, not
   arbitrary CLIs. The other several-sources use — `addon@candidate` vs `addon@baseline`
-  (two builds of the same model) — runs on every desktop platform.
+  (two builds of the same model) — runs on every desktop platform **and on mobile**:
+  the addon is bundled into the app at build time (no runtime swap), so each build is a
+  separate Device Farm session (candidate bundles the freshly-built prebuild artifact;
+  baseline bundles the pinned published version from npm).
 - **Peak RSS is desktop-only.** Recorded on Linux / macOS / Windows (process high-water,
   max across measured blocks). The mobile runtime doesn't expose peak memory to the
   on-device harness, so the report's **Peak memory (RSS)** table shows `—` for phones.
