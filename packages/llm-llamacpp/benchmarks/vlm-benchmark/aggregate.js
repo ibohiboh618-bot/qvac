@@ -294,8 +294,8 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       tps: mean(okRows.map(r => r.decode_tps).filter(v => v != null)),
       wall: mean(okRows.map(r => r.ms).filter(v => v != null)),
       // Peak RSS is a per-process high-water mark; each measured block is its own
-      // process, so report the MAX across blocks (not the mean). null on mobile,
-      // where the runtime doesn't expose it.
+      // process, so report the MAX across blocks (not the mean). Populated on every
+      // platform the runtime exposes getrusage (desktop + Android); null otherwise.
       rss: (() => { const v = okRows.map(r => r.rss_mb).filter(x => x != null); return v.length ? Math.max(...v) : null })()
     }
   }
@@ -558,9 +558,9 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     L.push(`| \`${cell}\` | ${host || '—'} | ${dev.toUpperCase()} | ${g.rss == null ? '—' : g.rss} |`)
   }
   L.push('')
-  L.push('> Peak RSS is the process high-water mark (max across measured blocks), recorded on ' +
-    'Linux / macOS / Windows. Mobile (Device Farm) rows show `—` — the runtime does not expose ' +
-    'peak memory to the on-device harness.\n')
+  L.push('> Peak RSS is the process high-water mark (max across measured blocks), from the ' +
+    'runtime\'s getrusage — populated on desktop (Linux / macOS / Windows) and Android. A row ' +
+    'shows `—` only where the platform doesn\'t expose it.\n')
   // ── 3 · Test results (Device-Farm-style Metric | Count, per platform) ──────
   L.push('# 3 · Test Results (per platform)\n')
   L.push('| Platform | Metric | Count |')

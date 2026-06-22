@@ -314,9 +314,10 @@ The benchmark is meant to grow. The three common changes:
   the addon is bundled into the app at build time (no runtime swap), so each build is a
   separate Device Farm session (candidate bundles the freshly-built prebuild artifact;
   baseline bundles the pinned published version from npm).
-- **Peak RSS is desktop-only.** Recorded on Linux / macOS / Windows (process high-water,
-  max across measured blocks). The mobile runtime doesn't expose peak memory to the
-  on-device harness, so the report's **Peak memory (RSS)** table shows `—` for phones.
+- **Peak RSS** is the process high-water mark (max across measured blocks), from the
+  runtime's `getrusage`. Populated on desktop (Linux / macOS / Windows) **and Android**
+  (verified on S25); the report's **Peak memory (RSS)** table shows `—` only where a
+  platform doesn't expose it.
 - **Thermal stability guard uses conservative defaults.** Between the warmup and measured
   passes the harness waits for a sensor-free timing probe to stabilise (bounded tight on
   mobile to fit the Device Farm window). The real-device thermal thresholds are not yet
