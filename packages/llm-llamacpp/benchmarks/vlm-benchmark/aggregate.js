@@ -467,6 +467,20 @@ function build (rows, vision, meta, provText, title, opts = {}) {
 
   // ── 2 · Details ───────────────────────────────────────────────────────────
   L.push('# 2 · Details\n')
+  // Sources legend — what each compared source resolves to (e.g. addon@candidate =
+  // git:<sha>, addon@baseline = npm:0.24.0), so a reader knows exactly which builds the
+  // columns above represent. Keyed by the report's comparison cell; shown only when the
+  // markers carry a resolved version.
+  const refByCell = {}
+  for (const r of rows) if (r.source_ref && !refByCell[r.cell]) refByCell[r.cell] = r.source_ref
+  const refCells = Object.keys(refByCell).sort()
+  if (refCells.length) {
+    L.push('### Sources — resolved versions\n')
+    L.push('| Source | Resolved version |')
+    L.push('|---|---|')
+    for (const c of refCells) L.push(`| \`${c}\` | \`${refByCell[c]}\` |`)
+    L.push('')
+  }
   if (Object.keys(meta).length) {
     L.push('### Models & origins (Source = Registry / HF / S3 / URL · pinned commits)\n')
     L.push('| Cell | main model | mmproj |')
