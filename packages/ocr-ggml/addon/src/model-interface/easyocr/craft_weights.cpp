@@ -164,6 +164,11 @@ void CraftWeights::build_(const GgufLoader& loader, ggml_backend_t backend) {
           ? GGML_TYPE_F16
           : GGML_TYPE_F32;
 
+  // Opt-in F16 intermediate activations (OCR_GGML_CRAFT_F16_ACT), only when the
+  // conv kernels are themselves F16 so activation/kernel types match and the
+  // conv path never hits an unsupported mixed-type combination. Default off.
+  f16_act_ = ocr_craft_f16_act_env() && (kernel_type == GGML_TYPE_F16);
+
   for (const auto& d : kConvInventory) {
     auto* w_src = loader.get_tensor(std::string(d.conv) + ".weight");
     if (w_src == nullptr) {

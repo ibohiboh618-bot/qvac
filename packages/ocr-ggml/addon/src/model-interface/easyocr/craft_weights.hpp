@@ -87,6 +87,11 @@ public:
     return use_direct_conv_;
   }
 
+  // Whether the CRAFT graph should run intermediate activations in F16 (opt-in
+  // via OCR_GGML_CRAFT_F16_ACT, and only when the conv kernels are F16).
+  // Default off. See ocr_craft_f16_act_env.
+  [[nodiscard]] bool f16_act() const noexcept { return f16_act_; }
+
 private:
   void build_(const GgufLoader& loader, ggml_backend_t backend);
 
@@ -96,6 +101,7 @@ private:
   ::ggml_backend_buffer_t buf_ = nullptr;
   bool conv1x1_mulmat_ = false;
   bool use_direct_conv_ = false;
+  bool f16_act_ = false;
   std::string err_;
 };
 

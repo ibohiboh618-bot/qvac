@@ -40,42 +40,57 @@ void tap(
   }
 }
 
+// Cast an activation to F16 when the model runs CRAFT activations in half
+// precision (OCR_GGML_CRAFT_F16_ACT, only active when conv kernels are F16);
+// a no-op otherwise. Used to keep intermediate activations in F16 so the
+// detection U-net moves half the activation bandwidth on fast-F16 GPUs.
+::ggml_tensor*
+act_cast(::ggml_context* ctx, const CraftWeights& W, ::ggml_tensor* x) {
+  return W.f16_act() ? ggml_cast(ctx, x, GGML_TYPE_F16) : x;
+}
+
 // Apply a Conv -> (folded BN) -> ReLU triple from CRAFT's vgg16_bn backbone.
 ::ggml_tensor* conv_bn_relu(
     ::ggml_context* ctx, const CraftWeights& W, ::ggml_tensor* x,
     const char* path, int s, int p, int d) {
-  return ops::conv_2d_bias_relu(
+  return act_cast(
       ctx,
-      x,
-      W.w(path),
-      W.b(path),
-      s,
-      s,
-      p,
-      p,
-      d,
-      d,
-      W.conv1x1_mulmat(),
-      W.use_direct_conv());
+      W,
+      ops::conv_2d_bias_relu(
+          ctx,
+          x,
+          W.w(path),
+          W.b(path),
+          s,
+          s,
+          p,
+          p,
+          d,
+          d,
+          W.conv1x1_mulmat(),
+          W.use_direct_conv()));
 }
 
 // Apply a Conv (no activation, no BN) — used in slice5 and conv_cls.
 ::ggml_tensor* conv_only(
     ::ggml_context* ctx, const CraftWeights& W, ::ggml_tensor* x,
     const char* path, int s, int p, int d) {
-  return ops::conv_2d_bias(
+  return act_cast(
       ctx,
-      x,
-      W.w(path),
-      W.b(path),
-      s,
-      s,
-      p,
-      p,
-      d,
-      d,
-      W.conv1x1_mulmat(),
-      W.use_direct_conv());
+      W,
+      ops::conv_2d_bias(
+          ctx,
+          x,
+          W.w(path),
+          W.b(path),
+          s,
+          s,
+          p,
+          p,
+          d,
+          d,
+          W.conv1x1_mulmat(),
+          W.use_direct_conv()));
 }
 
 // CRAFT's `double_conv(in, mid, out)`:
@@ -103,6 +118,13 @@ cat_channels(::ggml_context* ctx, ::ggml_tensor* a, ::ggml_tensor* b) {
     ::ggml_context* ctx, const CraftWeights& W, ::ggml_tensor* x,
     std::unordered_map<std::string, ::ggml_tensor*>* taps) {
 
+  // Optionally run the whole detection graph's activations in F16 (opt-in via
+  // OCR_GGML_CRAFT_F16_ACT, only when kernels are F16): cast the F32 input to
+  // F16 up front; conv_bn_relu / conv_only keep their outputs F16, so every
+  // intermediate (pool/relu/concat/interpolate) flows in half precision. The
+  // final output is cast back to F32 before return for the host read-back.
+  x = act_cast(ctx, W, x);
+
   // === basenet.slice1 ====================================================
   // Conv 3->64 + BN + ReLU
   auto* h = conv_bn_relu(ctx, W, x, "basenet.slice1.0", 1, 1, 1);
@@ -114,19 +136,7 @@ cat_channels(::ggml_context* ctx, ::ggml_tensor* a, ::ggml_tensor* b) {
   h = conv_bn_relu(ctx, W, h, "basenet.slice1.7", 1, 1, 1);
   // Conv 128->128 + BN  (no trailing ReLU — slice1 ends at the BN; the
   // following ReLU is in slice2 at index 12)
-  h = ops::conv_2d_bias(
-      ctx,
-      h,
-      W.w("basenet.slice1.10"),
-      W.b("basenet.slice1.10"),
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      W.conv1x1_mulmat(),
-      W.use_direct_conv());
+  h = conv_only(ctx, W, h, "basenet.slice1.10", 1, 1, 1);
   auto* sources_4 = h; // h_relu2_2 in PyTorch (post-BN, pre-ReLU)
   tap(taps, craft_taps::kBasenetSlice1, sources_4);
 
@@ -134,19 +144,7 @@ cat_channels(::ggml_context* ctx, ::ggml_tensor* a, ::ggml_tensor* b) {
   h = relu(ctx, h);        // slice2 idx 12: ReLU
   h = maxpool_2x2(ctx, h); // slice2 idx 13: MaxPool2d(2,2)
   h = conv_bn_relu(ctx, W, h, "basenet.slice2.14", 1, 1, 1);
-  h = ops::conv_2d_bias(
-      ctx,
-      h,
-      W.w("basenet.slice2.17"),
-      W.b("basenet.slice2.17"),
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      W.conv1x1_mulmat(),
-      W.use_direct_conv());
+  h = conv_only(ctx, W, h, "basenet.slice2.17", 1, 1, 1);
   auto* sources_3 = h; // h_relu3_2
   tap(taps, craft_taps::kBasenetSlice2, sources_3);
 
@@ -155,19 +153,7 @@ cat_channels(::ggml_context* ctx, ::ggml_tensor* a, ::ggml_tensor* b) {
   h = conv_bn_relu(ctx, W, h, "basenet.slice3.20", 1, 1, 1);
   h = maxpool_2x2(ctx, h);
   h = conv_bn_relu(ctx, W, h, "basenet.slice3.24", 1, 1, 1);
-  h = ops::conv_2d_bias(
-      ctx,
-      h,
-      W.w("basenet.slice3.27"),
-      W.b("basenet.slice3.27"),
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      W.conv1x1_mulmat(),
-      W.use_direct_conv());
+  h = conv_only(ctx, W, h, "basenet.slice3.27", 1, 1, 1);
   auto* sources_2 = h; // h_relu4_3
   tap(taps, craft_taps::kBasenetSlice3, sources_2);
 
@@ -176,19 +162,7 @@ cat_channels(::ggml_context* ctx, ::ggml_tensor* a, ::ggml_tensor* b) {
   h = conv_bn_relu(ctx, W, h, "basenet.slice4.30", 1, 1, 1);
   h = maxpool_2x2(ctx, h);
   h = conv_bn_relu(ctx, W, h, "basenet.slice4.34", 1, 1, 1);
-  h = ops::conv_2d_bias(
-      ctx,
-      h,
-      W.w("basenet.slice4.37"),
-      W.b("basenet.slice4.37"),
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      W.conv1x1_mulmat(),
-      W.use_direct_conv());
+  h = conv_only(ctx, W, h, "basenet.slice4.37", 1, 1, 1);
   auto* sources_1 = h; // h_relu5_3
   tap(taps, craft_taps::kBasenetSlice4, sources_1);
 
@@ -293,6 +267,11 @@ cat_channels(::ggml_context* ctx, ::ggml_tensor* a, ::ggml_tensor* b) {
   // ggml_permute returns a non-contiguous view; the test harness reading
   // this back will need contiguous memory.
   nhwc = ggml_cont(ctx, nhwc);
+  // When activations ran in F16, cast the output back to F32 so the host
+  // read-back (ggml_backend_tensor_get into a float buffer) sees F32.
+  if (W.f16_act()) {
+    nhwc = ggml_cast(ctx, nhwc, GGML_TYPE_F32);
+  }
   tap(taps, craft_taps::kOutputNhwc, nhwc);
 
   return nhwc;

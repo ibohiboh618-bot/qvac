@@ -335,6 +335,33 @@ are set):
 > on a backend without `GGML_OP_CONV_2D` will abort. It does not affect the
 > DocTR pipeline.
 
+### CRAFT F16 activations (`OCR_GGML_CRAFT_F16_ACT`) — experimental, default OFF
+
+The [`OCR_GGML_CRAFT_KERNEL_*`](#kernel-precision-ocr_ggml_craft_kernel_f32f16--ocr_ggml_crnn_kernel_f32f16)
+flags only change how the **weights** are stored — the CRAFT detector's
+intermediate activations always flow as F32. This flag goes one step further and
+runs the whole detection U-net's activations in **F16**: the F32 input is cast
+to F16 up front, every conv output is kept in F16 (so pool/relu/concat/
+interpolate all move half-precision tensors), and the final map is cast back to
+F32 for the host read-back. On fast-F16 GPUs that roughly halves the activation
+memory bandwidth, which dominates the detection cost.
+
+This is **exploratory and OFF by default** — it is opt-in via
+`OCR_GGML_CRAFT_F16_ACT=1` and additionally only takes effect when the CRAFT conv
+kernels are themselves F16 (so the activation and kernel types match and no
+mixed-type conv path is hit); on F32-kernel backends (e.g. CPU) it is a no-op.
+
+| Env var | Effect |
+|---|---|
+| `OCR_GGML_CRAFT_F16_ACT=1` | run CRAFT intermediate activations in F16 (only when kernels are F16) |
+| _(unset)_ | CRAFT activations stay F32 (default) |
+
+> Note: F16 activations require every CRAFT op (conv/pool/relu/concat/
+> interpolate) to support F16 on the target backend — unverified backends may
+> abort. The CRNN recognizer is unaffected (its BiLSTM stays F32). Do **not**
+> flip the default until the OCRBench quality benchmark confirms it is
+> accuracy-neutral. It does not affect the DocTR pipeline.
+
 ### Conv bias broadcast (`OCR_GGML_CRAFT_BIAS_REPEAT`)
 
 Each convolution adds a per-output-channel bias. By default the EasyOCR

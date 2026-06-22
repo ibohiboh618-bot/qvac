@@ -189,6 +189,18 @@ inline bool ocr_use_direct_conv(ggml_backend_t backend) {
   return ocr_use_direct_conv_default(backend);
 }
 
+// Opt-in (OCR_GGML_CRAFT_F16_ACT=1): run the CRAFT detector's intermediate
+// activations in F16 (not just the conv kernels) to halve activation memory
+// bandwidth on fast-F16 GPUs — the dominant cost of the detection U-net.
+// DEFAULT OFF — exploratory; flip the default only after the OCRBench quality
+// benchmark confirms it is accuracy-neutral and faster. The caller additionally
+// gates this on the CRAFT conv kernels actually being F16 (kernel_type ==
+// GGML_TYPE_F16) so the activation and kernel types match and no mixed-type
+// conv path (which some backends abort on) is hit.
+inline bool ocr_craft_f16_act_env() {
+  return ocr_env_is_one("OCR_GGML_CRAFT_F16_ACT");
+}
+
 // Upload a BatchNorm-folded F32 conv kernel into its (already-declared)
 // destination tensor. When `w_dst` is F16, convert the F32 data first so
 // ggml_conv_2d takes the F16 fast path (mirrors the doctr
