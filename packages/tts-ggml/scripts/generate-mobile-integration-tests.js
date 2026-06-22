@@ -14,14 +14,29 @@ const integrationDir = path.join(repoRoot, 'test', 'integration')
 const mobileDir = path.join(repoRoot, 'test', 'mobile')
 const outputFile = path.join(mobileDir, 'integration.auto.cjs')
 
+// DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE): restrict the
+// ON-DEVICE mobile bundle to the GPU correctness test so BOTH device-farm
+// flagships (Pixel 9 / Mali + S25 / Adreno) finish within the farm timeout.
+// Round-2 (#2723) timed out on the S25/Adreno leg before reaching gpu-smoke,
+// leaving NO Adreno control. Source tests under test/integration/ are UNTOUCHED
+// and desktop integration CI still runs them all; this only narrows the mobile
+// bundle. validate-mobile-tests.js carries the SAME constant so the two agree.
+// Set to null to restore the full mobile bundle (this branch is never merged).
+const MOBILE_DIAG_SUBSET = ['gpu-smoke.test.js']
+
 function getIntegrationFiles () {
   if (!fs.existsSync(integrationDir)) {
     throw new Error(`Integration directory not found: ${integrationDir}`)
   }
 
-  return fs.readdirSync(integrationDir)
+  let files = fs.readdirSync(integrationDir)
     .filter(entry => entry.endsWith('.test.js'))
     .sort()
+  if (MOBILE_DIAG_SUBSET) {
+    const allow = new Set(MOBILE_DIAG_SUBSET)
+    files = files.filter(entry => allow.has(entry))
+  }
+  return files
 }
 
 function toFunctionName (fileName) {

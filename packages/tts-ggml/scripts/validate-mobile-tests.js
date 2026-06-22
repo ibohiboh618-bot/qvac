@@ -13,14 +13,25 @@ const repoRoot = path.resolve(__dirname, '..')
 const integrationDir = path.join(repoRoot, 'test', 'integration')
 const mobileAutoFile = path.join(repoRoot, 'test', 'mobile', 'integration.auto.cjs')
 
+// DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE): keep in sync
+// with generate-mobile-integration-tests.js — the mobile bundle is intentionally
+// narrowed to the GPU correctness test for the device-farm round (source tests
+// untouched; desktop CI runs them all). Set to null to restore the full bundle.
+const MOBILE_DIAG_SUBSET = ['gpu-smoke.test.js']
+
 function getIntegrationTestFiles () {
   if (!fs.existsSync(integrationDir)) {
     throw new Error(`Integration directory not found: ${integrationDir}`)
   }
 
-  return fs.readdirSync(integrationDir)
+  let files = fs.readdirSync(integrationDir)
     .filter(f => f.endsWith('.test.js'))
     .sort()
+  if (MOBILE_DIAG_SUBSET) {
+    const allow = new Set(MOBILE_DIAG_SUBSET)
+    files = files.filter(f => allow.has(f))
+  }
+  return files
 }
 
 function getGeneratedIntegrationRefs (content) {

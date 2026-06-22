@@ -5,12 +5,23 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <tts-cpp/supertonic/engine.h>
+// DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE): tts_cpp_log_set
+// (ggml log trampoline) so the backend-init banner (device name / vendor) reaches
+// the device-farm logcat. Ships in tts-cpp a679c7e7.
+#include <tts-cpp/log.h>
+
+#if defined(__ANDROID__)
+// DEBUG (QVAC-20557, DO-NOT-MERGE): __android_log_print — see emitDeviceDiag.
+#include <android/log.h>
+#endif
 
 #include "addon/TTSErrors.hpp"
 #include "inference-addon-cpp/Errors.hpp"
@@ -24,6 +35,46 @@ using qvac_errors::createTTSError;
 using qvac_errors::StatusError;
 using qvac_errors::tts_error::TTSErrorCode;
 namespace general_error = qvac_errors::general_error;
+
+// DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE) — native log
+// bridge (ported from QVAC #2723/#2610). On-device, QLOG/JsLogger rides a
+// uv_async that never reaches a captured sink in the embedded Bare-in-app
+// (React-Native host) runtime, and native stderr is swallowed — so native
+// diagnostics vanish. __android_log_print lands synchronously in the full device
+// logcat artifact (logcat_full.txt); off-device, stderr keeps local pre-flight
+// working. This is the ONLY native sink proven to reach the device-farm logcat.
+void emitDeviceDiag(const std::string& line) {
+#if defined(__ANDROID__)
+  __android_log_print(ANDROID_LOG_INFO, "qvac-supertonic", "%s", line.c_str());
+#else
+  std::fputs(line.c_str(), stderr);
+  std::fputc('\n', stderr);
+  std::fflush(stderr);
+#endif
+}
+
+// ggml emits log text in fragments not necessarily newline-terminated; buffer and
+// flush complete lines so the backend-init banner ("ggml_vulkan: … Mali-G715 …"),
+// op-support warnings, and unsupported-op fallbacks each reach the device log as
+// one clean line. Installed once via tts_cpp_log_set (forwards to ggml_log_set).
+void ggmlLogTrampoline(ggml_log_level /*level*/, const char* text,
+                       void* /*user_data*/) {
+  if (!text) return;
+  static std::mutex mu;
+  static std::string buf;
+  std::lock_guard<std::mutex> lk(mu);
+  buf += text;
+  std::size_t nl;
+  while ((nl = buf.find('\n')) != std::string::npos) {
+    emitDeviceDiag(buf.substr(0, nl));
+    buf.erase(0, nl + 1);
+  }
+}
+
+void installGgmlLogTrampolineOnce() {
+  static std::once_flag once;
+  std::call_once(once, [] { tts_cpp_log_set(&ggmlLogTrampoline, nullptr); });
+}
 
 tts_cpp::supertonic::EngineOptions toEngineOptions(const SupertonicConfig& cfg) {
   tts_cpp::supertonic::EngineOptions opts;
@@ -57,6 +108,13 @@ tts_cpp::supertonic::EngineOptions toEngineOptions(const SupertonicConfig& cfg) 
     opts.backends_dir = backendsDirPath.string();
   }
   opts.opencl_cache_dir = cfg.openclCacheDir;
+
+  // DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE): route the
+  // engine's per-stage [gpu-diag] lines (duration/latent_in/text_emb/cfm_latent/
+  // wav_full) to the device log bridge so they reach logcat_full.txt. Emitted on
+  // BOTH GPU and CPU runs (tagged by backend reg name) so a device-farm round can
+  // diff per-stage GPU-vs-CPU stats and localize the first miscomputing stage.
+  opts.diag_sink = &emitDeviceDiag;
   return opts;
 }
 
@@ -149,6 +207,12 @@ void SupertonicModel::reload() {
 
 void SupertonicModel::loadLocked() {
   if (engine_) return;
+
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): capture the ggml backend-init banner (device
+  // name / vendor) into logcat, and emit a canary proving the sink reaches the
+  // device-farm log this run (R2 observability validation).
+  installGgmlLogTrampolineOnce();
+  emitDeviceDiag("[gpu-diag] canary: native log reaches host (supertonic)");
 
   try {
     engine_ = std::make_shared<tts_cpp::supertonic::Engine>(toEngineOptions(cfg_));

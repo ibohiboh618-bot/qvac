@@ -198,6 +198,13 @@ if(ANDROID)
       -Wl,-z,max-page-size=16384
       -Wl,-z,common-page-size=16384
   )
+  # DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE):
+  # {Supertonic,Chatterbox}Model.cpp's emitDeviceDiag calls __android_log_print
+  # so the [gpu-diag] lines + canary reach the device logcat artifact. Bare
+  # modules link with `-undefined,dynamic_lookup`, so without an explicit
+  # DT_NEEDED the liblog symbol would defer to a load-time lookup that can
+  # silently fail (ADDON_NOT_FOUND). Link it explicitly. Mirrors qvac #2723/#2610.
+  target_link_libraries(${tts-ggml}_module PRIVATE log)
 endif()
 
 if(APPLE)

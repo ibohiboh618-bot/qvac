@@ -32,11 +32,36 @@ const { loadChatterboxTTS, runChatterboxTTS, resolveRefWavPath } = require('../u
 const { loadSupertonicTTS, runSupertonicTTS } = require('../utils/runSupertonicTTS')
 const { ensureChatterboxModels, ensureSupertonicModel } = require('../utils/downloadModel')
 const { recordTtsStats } = require('../utils/perf-helper')
+// DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE).
+const { assertSampleCorrelation } = require('../utils/correlation-helper')
 
 const platform = os.platform()
 const isMobile = platform === 'ios' || platform === 'android'
 const RELAX = proc.env && proc.env.QVAC_TTS_GPU_SMOKE_RELAX === '1'
 const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
+
+// DEBUG (QVAC-20557 Mali GPU correctness diagnostic, DO-NOT-MERGE): enable the
+// native per-stage [gpu-diag] trace (rms/nan/inf/min/max, on BOTH GPU and CPU,
+// tagged by backend) so a device-farm round can diff per stage in logcat_full.txt
+// and localize the first stage a GPU backend miscomputes. The addon also injects
+// a __android_log_print diag_sink unconditionally; this env enables the desktop
+// stderr fallback for local pre-flight. Must be set before any Engine construction
+// (native getenv runs at load()).
+if (proc.env) proc.env.TTS_CPP_GPU_TRACE = '1'
+
+// GPU-vs-CPU correlation threshold. GPU and CPU load the SAME gguf — only the
+// compute backend differs — so a correct backend correlates ~0.999+.
+const CORR_THRESHOLD = 0.99
+
+// RMS of an int16 PCM array in [-1,1] units. A NaN/garbage GPU collapses audio to
+// silence (rms ~0) once int16-clamped, so an audible-RMS floor is a backend-
+// independent correctness gate for the stochastic Chatterbox engine (where a
+// GPU-vs-CPU sample correlation is not valid — T3 samples different tokens).
+function rms16 (samples) {
+  let s = 0
+  for (let i = 0; i < samples.length; i++) { const v = samples[i] / 32768; s += v * v }
+  return samples.length ? Math.sqrt(s / samples.length) : 0
+}
 
 function getBaseDir () {
   return isMobile && global.testDir ? global.testDir : '.'
@@ -311,4 +336,145 @@ test('Supertonic CPU smoke - useGPU=false must run on the CPU backend', { timeou
   } finally {
     try { await model.unload() } catch (_e) {}
   }
+})
+
+// ---------------------------------------------------------------------------
+// GPU-vs-CPU CORRECTNESS gate (QVAC-20557 Mali diagnostic, DO-NOT-MERGE).
+//
+// The smoke tests above only prove the GPU is *engaged*. These prove its OUTPUT
+// is correct — the signal that was missing when a GPU could mis-compute yet still
+// emit non-silent audio (the Mali Valhall mul_mat bug). No token-pinning, no f32
+// dumps: per-stage localization comes from the native [gpu-diag] trace in
+// logcat_full.txt (diff GPU vs CPU rms/nan/min/max per stage); these tests carry
+// the hard PASS/FAIL signal.
+//
+//   - Supertonic is DETERMINISTIC (fixed seed) → GPU-vs-CPU end-to-end audio
+//     Pearson is a HARD gate (corr >= 0.99).
+//   - Chatterbox's T3 is STOCHASTIC → GPU and CPU sample different tokens, so a
+//     GPU-vs-CPU correlation is NOT valid. Its hard gate is audio SANITY (GPU
+//     output finite + audible); a NaN/garbage GPU collapses to silence and fails
+//     it. The CPU run + corr are logged as INFORMATIONAL only.
+//
+// ADRENO (S25) is the validity control: both engines MUST pass here (Adreno is a
+// validated vendor). If Adreno fails, the harness is wrong, not the device.
+// ---------------------------------------------------------------------------
+
+const CORR_TEXT = 'GPU versus CPU correctness check.'
+
+async function runSupertonicOn (useGPU, supertonicPath) {
+  const model = await loadSupertonicTTS({
+    supertonicModelPath: supertonicPath, language: 'en', voice: 'F1', useGPU, seed: 42
+  })
+  try {
+    const r = await runSupertonicTTS(model, { text: CORR_TEXT }, { minSamples: 5000 })
+    return { samples: r.data.samples, stats: r.data.stats }
+  } finally {
+    try { await model.unload() } catch (_e) {}
+  }
+}
+
+test('Supertonic GPU-vs-CPU correctness - output must correlate with CPU', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Supertonic corr: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureSupertonicModel({ targetDir: modelsDir })
+  if (!download || !download.success) {
+    t.fail('Supertonic GGUF not available - registry fetch failed.')
+    return
+  }
+  const supertonicPath = download.path || path.join(modelsDir, 'supertonic.gguf')
+
+  const gpu = await runSupertonicOn(true, supertonicPath)
+  if (!gpu.stats || gpu.stats.backendDevice !== 1) {
+    const msg = `Supertonic corr: GPU did not engage (backendDevice=${gpu.stats && gpu.stats.backendDevice}); engagement is asserted by the smoke test above`
+    if (RELAX) { t.pass(msg + ' (relaxed)') } else { t.comment(msg) }
+    return
+  }
+  const cpu = await runSupertonicOn(false, supertonicPath)
+  const gpuBtag = backendIdToName(gpu.stats.backendId)
+  // Deterministic → HARD gate.
+  assertSampleCorrelation(t, `Supertonic/${gpuBtag}`, gpu.samples, cpu.samples, {
+    threshold: CORR_THRESHOLD, minSamples: 1000, minLenRatio: 0.90
+  })
+  const rg = rms16(gpu.samples)
+  console.log(`[Supertonic/${gpuBtag}/rms] gpu=${rg.toFixed(5)} cpu=${rms16(cpu.samples).toFixed(5)}`)
+  t.ok(rg > 0.001, `Supertonic/${gpuBtag}: GPU audio must be audible (rms ${rg.toFixed(5)} > 0.001)`)
+})
+
+async function runChatterboxOn (useGPU, modelDir, refWavPath) {
+  const model = await loadChatterboxTTS({ modelDir, refWavPath, language: 'en', useGPU, seed: 42 })
+  try {
+    const r = await runChatterboxTTS(model, { text: CORR_TEXT }, { minSamples: 5000 })
+    return { samples: r.data.samples, stats: r.data.stats }
+  } finally {
+    try { await model.unload() } catch (_e) {}
+  }
+}
+
+test('Chatterbox GPU correctness - GPU audio must be finite + audible (per-stage in [gpu-diag])', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Chatterbox corr: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureChatterboxModels({ targetDir: modelsDir })
+  if (!download.success) {
+    t.fail('Chatterbox GGUFs not available - registry fetch failed.')
+    return
+  }
+  const refWavPath = resolveRefWavPath({})
+  if (!fs.existsSync(refWavPath)) { t.pass('Skipped: reference audio missing'); return }
+
+  const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
+  if (!gpu.stats || gpu.stats.backendDevice !== 1) {
+    t.comment(`Chatterbox corr: GPU did not engage (backendDevice=${gpu.stats && gpu.stats.backendDevice}); per-stage [gpu-diag] trace still emitted`)
+    return
+  }
+  const gpuBtag = backendIdToName(gpu.stats.backendId)
+
+  // HARD gate: GPU audio finite + audible. A Mali NaN cascade (the f0/stft NaN
+  // seen on Mali) collapses the int16 audio to silence and fails this.
+  const rg = rms16(gpu.samples)
+  // INFORMATIONAL: a CPU reference run (T3 stochastic → corr is NOT a valid gate;
+  // logged only so the by-ear RMS magnitudes can be compared).
+  const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
+  const rc = rms16(cpu.samples)
+  console.log(`[Chatterbox/${gpuBtag}/rms] gpu=${rg.toFixed(5)} cpu=${rc.toFixed(5)} (gpu samples=${gpu.samples.length} cpu samples=${cpu.samples.length})`)
+  console.log(`[Chatterbox/${gpuBtag}/note] T3 is stochastic; GPU-vs-CPU sample correlation is not a valid gate — localize via the per-stage [gpu-diag] trace in logcat_full.txt`)
+  t.ok(rg > 0.001, `Chatterbox/${gpuBtag}: GPU audio must be finite + audible (rms ${rg.toFixed(5)} > 0.001); silence/NaN = Mali miscompute`)
+})
+
+// DEBUG (QVAC-20557 round-C verify, DO-NOT-MERGE): a DUPLICATE Supertonic
+// GPU-vs-CPU correctness test placed LAST in the file. On the device farm the
+// Supertonic GPU load triggers the native vk_mulmat_selftest oracle + the
+// GGML_VK_DISABLE_COOPMAT env line + the mulmat_needs_pad line, and the
+// correlation helper logs the corr value. In round C those landed mid-run and
+// were EVICTED from the logcat ring buffer by the long Chatterbox correctness
+// run that follows the original (mid-bundle) copy. This copy runs LAST so all of
+// that coopmat-off proof lands in the TAIL of the buffer and survives. Reuses
+// runSupertonicOn / assertSampleCorrelation; identical assertion to the copy above.
+test('Supertonic GPU-vs-CPU correctness (CAPTURE-LAST) - coopmat-off verify', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Supertonic capture-last: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureSupertonicModel({ targetDir: modelsDir })
+  if (!download || !download.success) {
+    t.fail('Supertonic GGUF not available - registry fetch failed.')
+    return
+  }
+  const supertonicPath = download.path || path.join(modelsDir, 'supertonic.gguf')
+
+  const gpu = await runSupertonicOn(true, supertonicPath)
+  if (!gpu.stats || gpu.stats.backendDevice !== 1) {
+    const msg = `[MALI-VERIFY] Supertonic capture-last: GPU did not engage (backendDevice=${gpu.stats && gpu.stats.backendDevice})`
+    if (RELAX) { t.pass(msg + ' (relaxed)') } else { t.comment(msg) }
+    return
+  }
+  const cpu = await runSupertonicOn(false, supertonicPath)
+  const gpuBtag = backendIdToName(gpu.stats.backendId)
+  // Deterministic → HARD gate (same as the mid-bundle copy).
+  assertSampleCorrelation(t, `Supertonic/${gpuBtag}/capture-last`, gpu.samples, cpu.samples, {
+    threshold: CORR_THRESHOLD, minSamples: 1000, minLenRatio: 0.90
+  })
+  const rg = rms16(gpu.samples)
+  console.log(`[MALI-VERIFY] Supertonic/${gpuBtag} gpu_rms=${rg.toFixed(5)} cpu_rms=${rms16(cpu.samples).toFixed(5)} backendId=${gpu.stats.backendId} gpuUnsupported=${gpu.stats.gpuUnsupported}`)
+  t.ok(rg > 0.001, `Supertonic/${gpuBtag} capture-last: GPU audio audible (rms ${rg.toFixed(5)} > 0.001)`)
 })
