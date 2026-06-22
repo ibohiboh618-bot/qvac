@@ -438,6 +438,9 @@ jobs:
           QVAC_VLM_DEVICES: ${{ matrix.backend }}
           QVAC_VLM_MODELS: ${{ inputs.matrix_models }} # '' → config defaults (CONTRACT.md §3)
           QVAC_VLM_SOURCE_ID: addon
+          # Per-test harness ceiling (minutes), tied to mobile_timeout_min. '' → harness
+          # default 30 min (unchanged). Lets slow CPU legs finish heavy models on desktop.
+          QVAC_VLM_TEST_TIMEOUT_MIN: ${{ needs.context.outputs.mobile_pertest_min }}
           NO_GPU: ${{ matrix.no_gpu }}
         run: |
           # Point brittle straight at the benchmark dir (no staging needed on desktop),
@@ -619,7 +622,7 @@ jobs:
       platforms: ${{ matrix.platform }}
       device_manufacturer: ${{ matrix.manufacturer }}
       device_model: ${{ matrix.model }}
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}${{ needs.context.outputs.mobile_pertest_min != '' && format(';QVAC_VLM_TEST_TIMEOUT_MIN={0}', needs.context.outputs.mobile_pertest_min) || '' }}"
       artifact_suffix: ${{ matrix.token }}
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't

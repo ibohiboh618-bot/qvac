@@ -85,6 +85,12 @@ const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') 
 // mobile to stay under the Device Farm ceiling. Override with QVAC_VLM_REPEATS.
 const REPEATS = intEnv('QVAC_VLM_REPEATS') || PRESET.repeats || (isMobile ? 1 : 3)
 
+// Per-test bare-runner ceiling (minutes) for the whole vlm-matrix test on one device.
+// Large models on slow CPUs / phones can exceed the default 30 min and get cut off mid
+// run (partial markers). QVAC_VLM_TEST_TIMEOUT_MIN raises it in step with the workflow's
+// mobile_timeout_min. Absent/empty = 30, identical to the original hardcoded ceiling.
+const TEST_TIMEOUT_MIN = intEnv('QVAC_VLM_TEST_TIMEOUT_MIN') || 30
+
 // tasks: QVAC_VLM_TASKS (csv) > preset.tasks > the scenario's task list.
 // preset.maxTasks (e.g. smoke = 1) trims to the first N distinct tasks so the
 // preset stays scenario-agnostic.
@@ -271,7 +277,7 @@ function runModel (spec) {
   }
   for (const device of devicesToRun()) {
     const dev = device.toUpperCase()
-    test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: 30 * 60 * 1000 }, async t => {
+    test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: TEST_TIMEOUT_MIN * 60 * 1000 }, async t => {
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
       // model-origin provenance (stderr, parsed host-side into the report)
