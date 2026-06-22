@@ -86,6 +86,11 @@ on:
         type: string
         required: false
         default: ""
+      addon_npm_version:
+        description: "Bundle a specific published addon version from npm instead of the freshly-built prebuild artifact (skips the artifact download). Used to run a pinned BASELINE build on-device. Default '' keeps the established artifact-first behaviour (test the build produced in this run) — unchanged for existing callers."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -168,7 +173,12 @@ jobs:
           platform: ${{ matrix.platform }}
           addon-workdir: 'packages/llm-llamacpp'
           addon-npm-name: '@qvac/llm-llamacpp'
-          prebuild-artifact-prefix: 'llama-cpp-'
+          # Default (addon_npm_version unset): artifact-first — bundle the prebuild built
+          # in THIS run (the established behaviour for PR/merge mobile tests). When a
+          # pinned version is requested (baseline leg), skip the artifact so it can't pick
+          # up a candidate prebuild from the same run, and pull that exact version from npm.
+          prebuild-artifact-prefix: ${{ inputs.addon_npm_version == '' && 'llama-cpp-' || '' }}
+          package-version: ${{ inputs.addon_npm_version }}
           pat-token: ${{ secrets.PAT_TOKEN }}
 
       # ── Benchmark bootstrap (additive, opt-in via pre_build_script) ──────────

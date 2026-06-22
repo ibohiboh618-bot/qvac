@@ -92,6 +92,7 @@ jobs:
       mobile_count: ${{ steps.mmatrix.outputs.count }}
       mobile_mocha_ms: ${{ steps.tmo.outputs.mocha_ms }}
       mobile_pertest_min: ${{ steps.tmo.outputs.pertest_min }}
+      baseline_npm: ${{ steps.tmo.outputs.baseline_npm }}
       engine: ${{ steps.sources.outputs.engine }}
       fabric_ref: ${{ steps.sources.outputs.fabric_ref }}
       upstream_ref: ${{ steps.sources.outputs.upstream_ref }}
@@ -143,6 +144,12 @@ jobs:
             echo "pertest_min=" >> "$GITHUB_OUTPUT"
             echo "Mobile timeout: pipeline default (35-min Mocha / 30-min Android per-test)"
           fi
+          # Baseline addon version (config.defaultBaseline.npm) — the pinned published
+          # build the mobile baseline session bundles from npm (candidate uses the
+          # freshly-built prebuild artifact instead).
+          baseline_npm=$(node -e 'try{const c=require("./packages/llm-llamacpp/benchmarks/vlm-benchmark/config.cjs");process.stdout.write((c.defaultBaseline&&c.defaultBaseline.npm)||"")}catch(e){}' || true)
+          echo "baseline_npm=$baseline_npm" >> "$GITHUB_OUTPUT"
+          echo "Baseline addon (mobile): ${baseline_npm:-<none>}"
       - id: dmatrix
         shell: bash
         env:
@@ -196,10 +203,27 @@ jobs:
           RUN_MATRIX: ${{ inputs.run_matrix }}
           MATRIX_MOBILE: ${{ inputs.matrix_mobile }}
           MATRIX_MODE: ${{ inputs.matrix_mode }}
+          MATRIX_SOURCES: ${{ inputs.matrix_sources }}
         run: |
           cells='[]'
-          # Mobile runs the addon only; several-sources (native CLIs) is desktop-only.
-          if [[ "$RUN_MATRIX" == "true" && "$MATRIX_MODE" != "several-sources" && -n "$MATRIX_MOBILE" ]]; then
+          # Which addon build(s) to run on mobile. two-models runs the published addon.
+          # several-sources runs the addon-type builds it requests (candidate/baseline) —
+          # each is a SEPARATE Device Farm session, since the addon is bundled into the app
+          # at build time (no runtime swap). Native CLI sources (fabric/upstream) are
+          # desktop-only, so a several-sources run with only those gets no mobile legs.
+          mobile_sources=''
+          if [[ "$MATRIX_MODE" == "several-sources" ]]; then
+            IFS=',' read -ra stoks <<< "${MATRIX_SOURCES:-addon}"
+            for st in "${stoks[@]}"; do
+              s=$(echo "$st" | xargs)
+              case "$s" in
+                addon@candidate|addon@baseline|addon) mobile_sources="${mobile_sources:+$mobile_sources }$s" ;;
+              esac
+            done
+          else
+            mobile_sources='addon'
+          fi
+          if [[ "$RUN_MATRIX" == "true" && -n "$MATRIX_MOBILE" && -n "$mobile_sources" ]]; then
             IFS=',' read -ra tokens <<< "$MATRIX_MOBILE"
             for raw in "${tokens[@]}"; do
               sel=$(echo "$raw" | xargs)
@@ -218,10 +242,19 @@ jobs:
                 iphone17pro) platform=iOS;     manufacturer=Apple;   model="iPhone 17 Pro" ;;
                 *) echo "::warning::Unknown matrix_mobile device '$dev' (known: s26, s25, pixel9, iphone16, iphone17, iphone17pro)"; continue ;;
               esac
-              cells=$(echo "$cells" | jq -c \
-                --arg t "$sel" --arg p "$platform" --arg man "$manufacturer" \
-                --arg mod "$model" --arg d "$vlm_devices" \
-                '. + [{"token":$t,"platform":$p,"manufacturer":$man,"model":$mod,"vlm_devices":$d}]')
+              # One cell per (device × addon source). srctag is the artifact-name-safe
+              # short label (no '@') for unique per-leg log artifacts.
+              for source in $mobile_sources; do
+                case "$source" in
+                  addon@candidate) srctag=candidate ;;
+                  addon@baseline)  srctag=baseline ;;
+                  *)               srctag="" ;;
+                esac
+                cells=$(echo "$cells" | jq -c \
+                  --arg t "$sel" --arg p "$platform" --arg man "$manufacturer" \
+                  --arg mod "$model" --arg d "$vlm_devices" --arg src "$source" --arg st "$srctag" \
+                  '. + [{"token":$t,"platform":$p,"manufacturer":$man,"model":$mod,"vlm_devices":$d,"source":$src,"srctag":$st}]')
+              done
             done
           fi
           count=$(echo "$cells" | jq 'length')
@@ -647,8 +680,11 @@ jobs:
   # the S25's logcat / the iPhone's bare_console.log (no logcat on iOS),
   # uploaded as console-logs-…-<platform>-<token>.
   matrix-mobile:
-    needs: context
-    if: needs.context.outputs.mobile_count != '0'
+    # prebuild-candidate is skipped unless a candidate is requested; the status-function
+    # gate keeps this job running when that need is skipped (only a real failure blocks
+    # it). The candidate mobile session bundles its freshly-built prebuild artifact.
+    needs: [context, prebuild-candidate]
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
@@ -658,6 +694,9 @@ jobs:
     with:
       ref: ${{ needs.context.outputs.ref }}
       repository: ${{ needs.context.outputs.repository }}
+      # Baseline session bundles the pinned published version from npm; candidate (and
+      # plain two-models 'addon') uses the freshly-built prebuild artifact (addon_npm_version='').
+      addon_npm_version: ${{ matrix.source == 'addon@baseline' && needs.context.outputs.baseline_npm || '' }}
       # Bootstrap the benchmark into the framework at launch (stages test/harness/config/
       # fixture into test/integration + images into testAssets, regenerates the test list)
       # — nothing committed outside benchmarks/vlm-benchmark/.
@@ -668,8 +707,10 @@ jobs:
       platforms: ${{ matrix.platform }}
       device_manufacturer: ${{ matrix.manufacturer }}
       device_model: ${{ matrix.model }}
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
-      artifact_suffix: ${{ matrix.token }}
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }};QVAC_VLM_SOURCE_ID=${{ matrix.source }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}"
+      # Suffix logs with the source tag (candidate/baseline) so the two sessions of a
+      # build comparison upload distinct, identifiable artifacts.
+      artifact_suffix: ${{ matrix.token }}${{ matrix.srctag != '' && format('-{0}', matrix.srctag) || '' }}
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
