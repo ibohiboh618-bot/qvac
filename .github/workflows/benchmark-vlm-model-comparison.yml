@@ -368,6 +368,28 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # ── Branch Android prebuild (for the S25 / mobile leg) ─────────────
+  # QVAC-21257: the mobile setup resolves prebuilds PR-artifact -> npm fallback.
+  # A standalone benchmark dispatch has no branch prebuild, so it would fall back to
+  # the PUBLISHED npm addon — which lacks branch-only native changes (e.g. the
+  # mmproj-use-gpu config key) and fails on-device with
+  # "invalid argument: --mmproj-use-gpu". Build the branch prebuilds here so the
+  # mobile setup picks up llama-cpp-android-* from THIS run. fail-fast:false in the
+  # reusable matrix means the android artifact is still produced if an unrelated
+  # platform build flakes.
+  prebuild:
+    needs: context
+    if: inputs.run_matrix && inputs.run_matrix_s25 && inputs.matrix_mode != 'several-sources'
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/prebuilds-llm-llamacpp.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.context.outputs.ref }}
+      repository: ${{ needs.context.outputs.repository }}
+
   # ── Matrix mode: Samsung S25 (AWS Device Farm) ─────────────────────
   # Reuses the Android-only mobile workflow to run the SAME matrix harness
   # on-device. qvac_perf_only restricts the run to perf-tests.json
@@ -377,7 +399,9 @@ jobs:
   # raw on-device log (bare_console.log) carries the [VLMROW] markers and is
   # uploaded by collect-and-upload-logs as console-logs-llamacpp-llm-Android.
   matrix-s25:
-    needs: context
+    # Depends on prebuild so the mobile setup finds the branch llama-cpp-android-*
+    # artifact (with branch native changes) instead of falling back to the npm addon.
+    needs: [context, prebuild]
     # S25 runs the addon only; several-sources (native CLIs) is Linux-only.
     if: inputs.run_matrix && inputs.run_matrix_s25 && inputs.matrix_mode != 'several-sources'
     uses: ./.github/workflows/integration-mobile-test-llm-llamacpp.yml
