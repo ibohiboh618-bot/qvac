@@ -431,6 +431,11 @@ jobs:
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
       qvac_perf_only: false
+      # QVAC-21257: forward matrix_samples to the device as QVAC_PERF_RUNS — the harness
+      # reads it as samples-per-task (mobile has no other env passthrough). Empty => the
+      # on-device config.defaultPreset governs. Set matrix_samples=5 for a full-preset
+      # quality pass (5 samples × 5 tasks) without changing the committed default.
+      qvac_perf_runs: ${{ inputs.matrix_samples }}
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
 
   # ── Matrix mode: combine ───────────────────────────────────────────
