@@ -268,9 +268,11 @@ function peakRssMb () {
 }
 
 function runModel (spec) {
-  // Marker axis: source label in several-sources mode (engine comparison), else the
-  // model label. The VLM loaded is always spec (llm + mmproj).
-  const axis = MODE === 'several-sources' ? SOURCE : spec.label
+  // Marker axis (the report's comparison column): in several-sources the axis is the
+  // SOURCE IDENTITY (source_id) — so build comparisons (addon@candidate vs
+  // addon@baseline, same engine) get distinct columns, not just engine comparisons
+  // (addon vs fabric-cli vs upstream-cli). In two-models it's the model label.
+  const axis = MODE === 'several-sources' ? SRC_ID : spec.label
   if (!ENABLED) {
     test(`vlm-matrix ${spec.label} (disabled; set QVAC_VLM_MATRIX=1)`, t => t.pass('disabled'))
     return

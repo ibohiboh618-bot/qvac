@@ -42,10 +42,16 @@ function parseSources (raw) {
   return String(raw || '').split(',').map(parseSourceToken).filter(Boolean)
 }
 
-// Resolve an addon source to the prebuilds directory the harness should load.
-// TODO(A2): candidate → the PR-ref prebuild artifact dir; baseline → the
-// pinned-npm prebuild dir. Today both fall through to the workspace default.
+// Resolve an addon source to the prebuilds dir the harness should load — the whole
+// native build (the require.addon() binding AND the compute backends), so a run uses
+// candidate or baseline end to end. CI stages these (A2):
+//   addon@candidate → builds/candidate/prebuilds (built from the PR ref)
+//   addon@baseline  → builds/baseline/prebuilds  (pinned published npm version)
+//   addon           → the workspace prebuilds, loaded in place (no swap)
 function addonPrebuildDir (source, workdir) {
+  const ref = source && source.ref
+  if (ref === 'candidate') return `${workdir}/builds/candidate/prebuilds`
+  if (ref === 'baseline') return `${workdir}/builds/baseline/prebuilds`
   return `${workdir}/prebuilds`
 }
 

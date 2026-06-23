@@ -6,6 +6,8 @@ fixture/*
 # several-sources CLI build artifacts (built at CI time by build-cli-sources.js).
 cli-builds/
 cli-sources-resolved.json
+# candidate/baseline addon prebuilds staged by CI (A2); swapped into ./prebuilds.
+builds/
 # misc
 node_modules/
 *.tgz
