@@ -384,11 +384,17 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
-    uses: ./.github/workflows/prebuilds-llm-llamacpp.yml
+    uses: ./.github/workflows/reusable-prebuild-targeted.yml
     secrets: inherit
     with:
       ref: ${{ needs.context.outputs.ref }}
       repository: ${{ needs.context.outputs.repository }}
+      # Build ONLY the target the Android Device Farm test consumes (android-arm64),
+      # not the full 9-variant matrix. Add an ios entry here for iOS device farm later.
+      targets: '[{"platform":"android","arch":"arm64","os":"ubuntu-24.04"}]'
+      workdir: packages/llm-llamacpp
+      artifact-name-prefix: llama-cpp-
+      include-vulkan-sdk: true
 
   # ── Matrix mode: Samsung S25 (AWS Device Farm) ─────────────────────
   # Reuses the Android-only mobile workflow to run the SAME matrix harness
