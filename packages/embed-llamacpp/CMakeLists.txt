@@ -126,9 +126,12 @@ target_compile_definitions(${embed-llamacpp} PRIVATE BACKENDS_SUBDIR="${BACKENDS
 
 # Install the @qvac/fabric runtime as a companion library next to this addon's
 # .bare so the dynamic linker resolves qvac__fabric@0.bare via RPATH, and ship
-# any ggml backend shared libraries that @qvac/fabric staged (e.g. Android). On
-# desktop the backends are static inside the shared runtime, so the glob is
-# empty and backends self-register when qvac__fabric@0.bare is loaded.
+# any ggml backend shared libraries that @qvac/fabric staged. On desktop Linux
+# fabric builds the ggml backends as separate GGML_BACKEND_DL modules (CPU
+# micro-arch variants, Vulkan) that are dlopen'd at runtime, so the glob copies
+# them next to the addon. On macOS/Windows the backends are static inside the
+# shared runtime, so the glob is empty and they self-register when
+# qvac__fabric@0.bare is loaded.
 if(NOT FABRIC_STATIC_MOBILE)
   bare_target(host)
   bare_module_target("." _fabric_unused NAME addon_name)
