@@ -70,6 +70,7 @@ async function loadChatterboxTTS (params = {}) {
     seed: params.seed,
     threads: params.threads,
     nGpuLayers: params.nGpuLayers,
+    backendsDir: params.backendsDir,
     config,
     opts: { stats: true }
   })
