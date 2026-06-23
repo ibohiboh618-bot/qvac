@@ -11,7 +11,7 @@ endif()
 find_package(cmake-bare REQUIRED PATHS node_modules/cmake-bare)
 find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
-set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${VCPKG_OVERLAY_TRIPLETS}")
+set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/../../vcpkg-overlays/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
 set(VCPKG_INSTALL_OPTIONS --clean-after-build)
 
@@ -20,9 +20,9 @@ string(JSON _pkg_version GET "${_pkg_json}" "version")
 
 project(qvac-fabric VERSION ${_pkg_version} LANGUAGES C CXX)
 
-# Test-only AddressSanitizer build, enabled with QVAC_FABRIC_ASAN=1 (the same
-# flag the overlay triplet uses to instrument the qvac-fabric dependency). Here we
-# instrument the module itself and, crucially, link the *shared* libc++ instead
+# Test-only AddressSanitizer build, enabled with QVAC_FABRIC_ASAN=1 (set by
+# link-local-qvac-fabric with asan:true, which also exports VCPKG_* sanitizer
+# flags for the qvac-fabric vcpkg port). Here we instrument the module itself
 # of -static-libstdc++. A module-local static libc++ would provide its own
 # operator new/delete and the symbols.map `local: *` rule would bind them
 # internally, so allocations made inside fabric would bottom out at malloc and
@@ -285,5 +285,4 @@ endif()
 if(WIN32)
   add_definitions(-DNOMINMAX -DWIN32_LEAN_AND_MEAN -DNOGDI)
   target_compile_options(${qvac-fabric} PRIVATE "/utf-8")
-  target_link_libraries(${qvac-fabric} PRIVATE msvcrt.lib)
 endif()
