@@ -53,6 +53,16 @@ if (proc.env) proc.env.TTS_CPP_GPU_TRACE = '1'
 // compute backend differs — so a correct backend correlates ~0.999+.
 const CORR_THRESHOLD = 0.99
 
+// QVAC-20557 Supertonic text-encoder localization round (DO-NOT-MERGE): trim the
+// Chatterbox tests so the device-farm bundle is short + Supertonic-only. A short
+// run minimizes the on-device logcat ring-buffer eviction (round D) so the
+// per-island [gpu-diag] te.* lines emitted by supertonic_text_encoder.cpp survive.
+// N_LOCALIZE = how many times the localizer below re-runs the Supertonic GPU synth
+// to catch the run-to-run non-deterministic NaN (physical Pixel 9 Pro: iter1
+// text_emb finite, iter2 all-NaN, same binary).
+const SKIP_CB = true
+const N_LOCALIZE = 8
+
 // RMS of an int16 PCM array in [-1,1] units. A NaN/garbage GPU collapses audio to
 // silence (rms ~0) once int16-clamped, so an audible-RMS floor is a backend-
 // independent correctness gate for the stochastic Chatterbox engine (where a
@@ -171,7 +181,7 @@ function recordSmoke (t, label, result, wallMs) {
   ))
 }
 
-test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
+test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU || SKIP_CB }, async (t) => {
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
@@ -260,7 +270,7 @@ test('Supertonic GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
 // which could silently fall back to GPU.  Now that ChatterboxModel /
 // SupertonicModel translate explicit useGPU=false → n_gpu_layers=0,
 // these tests lock that contract in.
-test('Chatterbox CPU smoke - useGPU=false must run on the CPU backend', { timeout: 600000 }, async (t) => {
+test('Chatterbox CPU smoke - useGPU=false must run on the CPU backend', { timeout: 600000, skip: SKIP_CB }, async (t) => {
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
@@ -411,7 +421,7 @@ async function runChatterboxOn (useGPU, modelDir, refWavPath) {
   }
 }
 
-test('Chatterbox GPU correctness - GPU audio must be finite + audible (per-stage in [gpu-diag])', { timeout: 600000, skip: NO_GPU }, async (t) => {
+test('Chatterbox GPU correctness - GPU audio must be finite + audible (per-stage in [gpu-diag])', { timeout: 600000, skip: NO_GPU || SKIP_CB }, async (t) => {
   if (!expectsGpu()) { t.pass('Chatterbox corr: no GPU wired on this platform'); return }
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
@@ -490,7 +500,7 @@ test('Supertonic GPU-vs-CPU correctness (CAPTURE-LAST) - coopmat-off verify', { 
 // hift_wav ~5x quiet). Informational corr here (the authoritative GPU-engage proof +
 // per-stage localization is the `Vulkan.s3gen.*` btag + xcorr lines in logcat); the
 // hard gate + Mali-GPU ship decision follow once localization is in hand.
-test('Chatterbox S3Gen GPU-vs-CPU correctness (T3->CPU, deterministic tokens)', { timeout: 600000, skip: NO_GPU }, async (t) => {
+test('Chatterbox S3Gen GPU-vs-CPU correctness (T3->CPU, deterministic tokens)', { timeout: 600000, skip: NO_GPU || SKIP_CB }, async (t) => {
   if (!expectsGpu()) { t.pass('Chatterbox S3Gen corr: no GPU wired on this platform'); return }
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
@@ -527,4 +537,60 @@ test('Chatterbox S3Gen GPU-vs-CPU correctness (T3->CPU, deterministic tokens)', 
       else proc.env.TTS_CPP_T3_FORCE_CPU = hadEnv
     }
   }
+})
+
+// QVAC-20557 Supertonic text-encoder per-island NaN localization (DO-NOT-MERGE),
+// CAPTURE-LAST. Runs the Supertonic GPU synth N_LOCALIZE times to catch the
+// run-to-run non-deterministic failure seen on the physical Pixel 9 Pro (iter1
+// text_emb finite-but-decorrelated, iter2 text_emb all-NaN, same binary/device).
+// Each GPU synth makes supertonic_text_encoder.cpp emit per-island [gpu-diag] te.*
+// lines: diag_stats (rms/min/max + BIT-PATTERN nan, fires every run) localizes the
+// FIRST island a cold run drives to NaN; diag_xcorr (vs the trailing CPU ref)
+// localizes an rms-preserved decorrelation. The FIRST te.* island with nan>0 (or
+// corr<0.99) names the hazard for the native-GPU fix. The per-run [MALI-LOCALIZE]
+// JS log is a non-evicted backstop (lands in the console-logs artifact) proving the
+// run-to-run non-determinism even if logcat evicts the native tail.
+test('Supertonic per-island NaN localization (N runs, CAPTURE-LAST)', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Supertonic localize: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureSupertonicModel({ targetDir: modelsDir })
+  if (!download || !download.success) {
+    t.fail('Supertonic GGUF not available - registry fetch failed.')
+    return
+  }
+  const supertonicPath = download.path || path.join(modelsDir, 'supertonic.gguf')
+
+  let engaged = false
+  let nGarbageRuns = 0
+  for (let i = 0; i < N_LOCALIZE; i++) {
+    const gpu = await runSupertonicOn(true, supertonicPath)
+    if (gpu.stats && gpu.stats.backendDevice === 1) engaged = true
+    // JS-side backstop (non-evicted console-logs): count non-finite samples + rms per
+    // run so the run-to-run non-determinism is visible even if the native te.* tail
+    // evicts. CPU rms ~0.0376; the iter2 NaN-cascade rms was ~0.099 (loud garbage).
+    let bad = 0
+    for (let k = 0; k < gpu.samples.length; k++) { if (!Number.isFinite(gpu.samples[k])) bad++ }
+    const rg = rms16(gpu.samples)
+    const garbage = bad > 0 || rg > 0.08
+    if (garbage) nGarbageRuns++
+    console.log(`[MALI-LOCALIZE] supertonic GPU run ${i + 1}/${N_LOCALIZE}: ` +
+      `backendId=${gpu.stats && gpu.stats.backendId} n=${gpu.samples.length} ` +
+      `nonfinite=${bad} rms=${rg.toFixed(5)} ${garbage ? 'GARBAGE' : 'ok'}`)
+  }
+  // Trailing CPU reference: gives diag_xcorr a finite same-size partner so the last
+  // GPU run's per-island corr lines emit (decorrelation localizer).
+  const cpu = await runSupertonicOn(false, supertonicPath)
+  console.log(`[MALI-LOCALIZE] supertonic CPU ref: n=${cpu.samples.length} rms=${rms16(cpu.samples).toFixed(5)} ` +
+    '(read [gpu-diag] te.* in logcat: first island with nan>0 or corr<0.99 names the hazard)')
+  console.log(`[MALI-LOCALIZE] summary: garbage_runs=${nGarbageRuns}/${N_LOCALIZE} gpu_engaged=${engaged}`)
+  if (!engaged) {
+    const msg = '[MALI-LOCALIZE] Supertonic GPU did not engage on a GPU-capable platform'
+    if (RELAX) { t.pass(msg + ' (relaxed)') } else { t.comment(msg) }
+    return
+  }
+  // Diagnostic round: PASS regardless of garbage — the localization signal is the
+  // logcat te.* trace + the [MALI-LOCALIZE] run table, NOT a hard correctness gate
+  // (the Supertonic correctness tests above already gate corr >= 0.99).
+  t.pass(`Supertonic localization done: ${nGarbageRuns}/${N_LOCALIZE} GPU runs garbage; localize via [gpu-diag] te.* in logcat`)
 })
