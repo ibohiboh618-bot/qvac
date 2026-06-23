@@ -410,9 +410,9 @@ function parseArgs () {
  * three per-image groups on Android / iOS). The default behaviour of
  * keeping only the largest report would drop two of the three groups.
  *
- * Deduping by `(test, output, metrics snapshot)` keeps the reporter's
- * repeated lightweight flushes from inflating the row count — those
- * flushes emit cumulative snapshots, so the same (test, iteration)
+ * Deduping by `(test, execution_provider, status, metrics)` keeps the
+ * reporter's repeated lightweight flushes from inflating the row count —
+ * those flushes emit cumulative snapshots, so the same (test, iteration)
  * can appear in many payloads from one group.
  */
 function mergeDeviceReports (reports) {
