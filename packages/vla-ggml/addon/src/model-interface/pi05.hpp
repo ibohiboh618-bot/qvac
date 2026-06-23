@@ -328,8 +328,10 @@ struct Pi05ExpertBlockWeights {
 // expert block (M3.10) or `action_out_proj` (M3.10).
 struct ggml_tensor* pi05BuildExpertBlockGraph(
     struct ggml_context* ctx, struct ggml_tensor* xExp,
-    struct ggml_tensor* actPositions, struct ggml_tensor* cachedK,
-    struct ggml_tensor* cachedV, struct ggml_tensor* cond,
+    struct ggml_tensor* actPositions, struct ggml_tensor* kBuf,
+    struct ggml_tensor* vBuf, struct ggml_tensor* modPreAttn,
+    struct ggml_tensor* modPreFfw,
+    std::vector<struct ggml_tensor*>& kvWrites,
     const Pi05ExpertBlockWeights& w, int expertHidden, int nHeads, int nKvHeads,
     int headDim, int prefixLen, int nAct, float rmsNormEps, float ropeFreqBase);
 
@@ -371,13 +373,17 @@ struct ggml_tensor* pi05BuildEulerStepGraph(
 Pi05ExpertODEStepOutputs pi05BuildExpertOdeStepGraph(
     struct ggml_context* ctx,
     struct ggml_tensor* xExp,                        // (expert_hidden, n_act)
-    struct ggml_tensor* actPositions,                // I32 (n_act,)
-    const std::vector<struct ggml_tensor*>& cachedK, // per-layer
-    const std::vector<struct ggml_tensor*>& cachedV,
-    struct ggml_tensor* cond, // (cond_dim,)
+    struct ggml_tensor* actPositions,              // I32 (n_act,)
+    const std::vector<struct ggml_tensor*>& kBufs, // per-layer unified F16 KV
+    const std::vector<struct ggml_tensor*>& vBufs, // [head_dim, prefix+act, kv]
+    // Per-layer precomputed adaRMSNorm modulations for this ODE step —
+    // each (3·hidden,). Computed once for all steps in a batched matmul.
+    const std::vector<struct ggml_tensor*>& modsPreAttn,
+    const std::vector<struct ggml_tensor*>& modsPreFfw,
+    struct ggml_tensor* modFinal, // (3·hidden,) — final-norm modulation
+    // Out: the in-graph action-K/V copy nodes; caller must expand them.
+    std::vector<struct ggml_tensor*>& kvWrites,
     const std::vector<Pi05ExpertBlockWeights>& blocks,
-    struct ggml_tensor* finalNormAdaW,  // (cond_dim, 3·hidden)
-    struct ggml_tensor* finalNormAdaB,  // (3·hidden,)
     struct ggml_tensor* actionOutProjW, // (expert_hidden, action_dim)
     struct ggml_tensor* actionOutProjB, // (action_dim,)
     int expertHidden, int nHeads, int nKvHeads, int headDim, int prefixLen,
