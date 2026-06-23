@@ -1034,7 +1034,8 @@ void LlamaModel::commonParamsParse(
   // manually before configVector is built)
   for (const std::string& key : {"image-tile-mode", "image_tile_mode"}) {
     if (auto it = configFilemap.find(key); it != configFilemap.end()) {
-      const std::string& val = it->second;
+      std::string val = it->second;
+      std::transform(val.begin(), val.end(), val.begin(), ::tolower);
       if (val == "0" || val == "batched") {
         params.image_tile_mode = COMMON_IMAGE_TILE_MODE_BATCHED;
       } else if (val == "1" || val == "sequential") {
@@ -1049,10 +1050,9 @@ void LlamaModel::commonParamsParse(
             string_format(
                 "image-tile-mode must be 0/batched, 1/sequential, or "
                 "2/disabled, got: %s",
-                val.c_str()));
+                it->second.c_str()));
       }
       configFilemap.erase(it);
-      break;
     }
   }
 
