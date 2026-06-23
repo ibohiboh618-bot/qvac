@@ -66,6 +66,11 @@ on:
         type: string
         required: false
         default: ""
+      android_extra_flagship_models:
+        description: "Opt-in CSV of extra Android device MODEL substrings (e.g. 'Galaxy S26') to also target in dual-flagship mode. Default '' = S25 Ultra + Pixel 9 only."
+        type: string
+        required: false
+        default: ""
     # Additive outputs (QVAC weekend job): surface the monitor verdict so a
     # caller can read real pass/fail past the job's `continue-on-error: true`.
     # When a caller runs both platforms in one call the matrix overwrites these
@@ -273,6 +278,7 @@ jobs:
           app-upload-arn: ${{ steps.upload.outputs.app-upload-arn }}
           test-package-upload-arn: ${{ steps.upload.outputs.test-package-upload-arn }}
           test-specs: ${{ steps.upload.outputs.test-specs }}
+          android-extra-flagship-models: ${{ inputs.android_extra_flagship_models }}
 
       - name: Monitor Device Farm test runs
         id: monitor

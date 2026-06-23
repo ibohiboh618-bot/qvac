@@ -186,8 +186,14 @@ const fmtPct = x => x == null ? '—' : (100 * x).toFixed(1)
 const fmtNum = (x, d = 1) => x == null ? '—' : Number(x).toFixed(d)
 
 function build (rows, vision, meta, provText, title, opts = {}) {
-  const base = opts.base || 'model_1'
-  const candidate = opts.candidate || 'model_2'
+  // QVAC-21257 mmproj-compare: cells are 'mmproj-cpu' / 'mmproj-gpu' (one model, the
+  // projector backend varies). Render via the existing two-models tables, using those
+  // as the base/candidate columns. Detected by --mode mmproj or the cell naming.
+  const cellSet = [...new Set(rows.map(r => r.cell))]
+  const isMmproj = opts.mode === 'mmproj' ||
+    (cellSet.length > 0 && cellSet.every(c => /^mmproj-/.test(String(c))))
+  const base = isMmproj ? 'mmproj-cpu' : (opts.base || 'model_1')
+  const candidate = isMmproj ? 'mmproj-gpu' : (opts.candidate || 'model_2')
   // Drop the first segment per cell as warmup (Vulkan shader-compile / JIT spike on the
   // first encode after each model load) so the mean reflects steady-state encode cost.
   function visStats (key) {
@@ -246,7 +252,9 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   L.push(`## ${title}\n`)
   const modeLabel = opts.mode === 'several-sources'
     ? 'several sources (engine varies; model fixed)'
-    : `two models (${base} vs ${candidate}; engine fixed)`
+    : isMmproj
+      ? 'mmproj projector backend (CPU vs GPU; one model, GPU model-backend)'
+      : `two models (${base} vs ${candidate}; engine fixed)`
   L.push(`**Mode:** ${modeLabel}  ·  **Engine:** ${opts.engine || 'addon'}\n`)
   const severalSources = opts.mode === 'several-sources'
   L.push(severalSources
