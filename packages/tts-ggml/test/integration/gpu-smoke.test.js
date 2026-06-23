@@ -171,6 +171,68 @@ function recordSmoke (t, label, result, wallMs) {
   ))
 }
 
+// DEBUG (QVAC-20557 T3-on-Mali, DO-NOT-MERGE): TEACHER-FORCED T3 logits validation.
+// Registered FIRST (ahead of the smoke tests) on purpose: the device-farm bare-app TestRunner
+// caps a module at ~7.5 min, and 9 tests x 1-2 full synths overran it -> this test (last in
+// round #2) was cut before running. brittle runs in registration order, so placing it first
+// guarantees it lands inside the budget; deps (runChatterboxOn hoisted fn, CORR_TEXT const,
+// rms16/backendIdToName) resolve at callback time. The tail (smoke/Supertonic/S3Gen) is
+// already-confirmed / known-red; nothing is skipped, the external budget just trims the tail.
+//
+// T3 is stochastic (samples speech tokens) so GPU-vs-CPU token sequences diverge and a
+// per-token correlation is impossible. The native engine supports a teacher-force mode
+// (TTS_CPP_T3_TEACHER, read fresh per run): a CPU "record" run captures the fed token
+// sequence + each step's conditional logits; a GPU "replay" run feeds the SAME tokens and
+// Pearson-correlates its per-step logits against the recorded CPU logits, isolating T3's
+// matmul correctness from the sampling cascade. The native emits ONE eviction-safe summary
+// line `[gpu-diag] t3 logits xcorr: steps=.. min_corr=.. first_below_0.99=..` (replay run)
+// plus `[gpu-diag] t3_audio.full rms/zcr/samples` for BOTH runs (end-to-end audio shape).
+// Read those from logcat_full.txt: min_corr≈1.0 => T3 computes correctly on Mali (ship full
+// Chatterbox on GPU); a drop / first_below_0.99>=0 => T3 miscomputes (keep T3->CPU hybrid).
+// NOT TTS_CPP_T3_FORCE_CPU here: T3 runs on the ACTUAL backend (CPU on the cpu run, Mali GPU
+// on the gpu run) so this is full Chatterbox (T3+S3Gen) on the Mali GPU. Single-segment text
+// (CORR_TEXT, one sentence) is required: the record/replay buffer is per-run_t3.
+test('Chatterbox T3 GPU-vs-CPU logits (teacher-forced, full Chatterbox on GPU)', { timeout: 600000, skip: NO_GPU }, async (t) => {
+  if (!expectsGpu()) { t.pass('Chatterbox T3 teacher-force: no GPU wired on this platform'); return }
+  const baseDir = getBaseDir()
+  const modelsDir = path.join(baseDir, 'models')
+  const download = await ensureChatterboxModels({ targetDir: modelsDir })
+  if (!download.success) {
+    t.fail('Chatterbox GGUFs not available - registry fetch failed.')
+    return
+  }
+  const refWavPath = resolveRefWavPath({})
+  if (!fs.existsSync(refWavPath)) { t.pass('Skipped: reference audio missing'); return }
+
+  const hadEnv = proc.env.TTS_CPP_T3_TEACHER
+  try {
+    // Run 1 (CPU, record): captures the fed token sequence + per-step logits (process-global).
+    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'record'
+    const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
+    // Run 2 (GPU, replay): teacher-forces the recorded tokens, xcorr per-step logits, emits
+    // the summary + audio characteristics. Full Chatterbox (T3+S3Gen) on the Mali GPU.
+    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'replay'
+    const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
+
+    const gpuBtag = backendIdToName(gpu.stats && gpu.stats.backendId)
+    const rg = rms16(gpu.samples)
+    const rc = rms16(cpu.samples)
+    console.log(`[Chatterbox-T3/teacher] gpu_btag=${gpuBtag} gpu_backendDevice=${gpu.stats && gpu.stats.backendDevice} ` +
+      `gpu_rms=${rg.toFixed(5)} cpu_rms=${rc.toFixed(5)} gpu_n=${gpu.samples.length} cpu_n=${cpu.samples.length}`)
+    console.log('[Chatterbox-T3/note] read `[gpu-diag] t3 logits xcorr: ... min_corr=..` (GPU replay run) in ' +
+      'logcat_full.txt: min_corr≈1.0 => T3 matmuls correct on Mali; a drop => T3 miscomputes. ' +
+      '`[gpu-diag] t3_audio.full` (both runs) = end-to-end audio shape (rms/zcr).')
+    // HARD gate: full-Chatterbox GPU audio finite + audible (a T3 garbage cascade collapses
+    // to silence/NaN). The numeric T3-correctness gate is the logcat min_corr.
+    t.ok(rg > 0.001, `Chatterbox T3 teacher-force: full-GPU audio finite + audible (rms ${rg.toFixed(5)} > 0.001)`)
+  } finally {
+    if (proc.env) {
+      if (hadEnv === undefined) delete proc.env.TTS_CPP_T3_TEACHER
+      else proc.env.TTS_CPP_T3_TEACHER = hadEnv
+    }
+  }
+})
+
 test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
@@ -524,61 +586,6 @@ test('Chatterbox S3Gen GPU-vs-CPU correctness (T3->CPU, deterministic tokens)', 
     if (proc.env) {
       if (hadEnv === undefined) delete proc.env.TTS_CPP_T3_FORCE_CPU
       else proc.env.TTS_CPP_T3_FORCE_CPU = hadEnv
-    }
-  }
-})
-
-// DEBUG (QVAC-20557 T3-on-Mali, DO-NOT-MERGE): TEACHER-FORCED T3 logits validation.
-// T3 is stochastic (samples speech tokens) so GPU-vs-CPU token sequences diverge and a
-// per-token correlation is impossible. The native engine supports a teacher-force mode
-// (TTS_CPP_T3_TEACHER, read fresh per run): a CPU "record" run captures the fed token
-// sequence + each step's conditional logits; a GPU "replay" run feeds the SAME tokens and
-// Pearson-correlates its per-step logits against the recorded CPU logits, isolating T3's
-// matmul correctness from the sampling cascade. The native emits ONE eviction-safe summary
-// line `[gpu-diag] t3 logits xcorr: steps=.. min_corr=.. first_below_0.99=..` (replay run)
-// plus `[gpu-diag] t3_audio.full rms/zcr/samples` for BOTH runs (end-to-end audio shape).
-// Read those from logcat_full.txt: min_corr≈1.0 => T3 computes correctly on Mali (ship full
-// Chatterbox on GPU); a drop / first_below_0.99>=0 => T3 miscomputes (keep T3->CPU hybrid).
-// NOT TTS_CPP_T3_FORCE_CPU here: T3 runs on the ACTUAL backend (CPU on the cpu run, Mali GPU
-// on the gpu run) so this is full Chatterbox (T3+S3Gen) on the Mali GPU. Single-segment text
-// (CORR_TEXT, one sentence) is required: the record/replay buffer is per-run_t3.
-test('Chatterbox T3 GPU-vs-CPU logits (teacher-forced, full Chatterbox on GPU)', { timeout: 600000, skip: NO_GPU }, async (t) => {
-  if (!expectsGpu()) { t.pass('Chatterbox T3 teacher-force: no GPU wired on this platform'); return }
-  const baseDir = getBaseDir()
-  const modelsDir = path.join(baseDir, 'models')
-  const download = await ensureChatterboxModels({ targetDir: modelsDir })
-  if (!download.success) {
-    t.fail('Chatterbox GGUFs not available - registry fetch failed.')
-    return
-  }
-  const refWavPath = resolveRefWavPath({})
-  if (!fs.existsSync(refWavPath)) { t.pass('Skipped: reference audio missing'); return }
-
-  const hadEnv = proc.env.TTS_CPP_T3_TEACHER
-  try {
-    // Run 1 (CPU, record): captures the fed token sequence + per-step logits (process-global).
-    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'record'
-    const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
-    // Run 2 (GPU, replay): teacher-forces the recorded tokens, xcorr per-step logits, emits
-    // the summary + audio characteristics. Full Chatterbox (T3+S3Gen) on the Mali GPU.
-    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'replay'
-    const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
-
-    const gpuBtag = backendIdToName(gpu.stats && gpu.stats.backendId)
-    const rg = rms16(gpu.samples)
-    const rc = rms16(cpu.samples)
-    console.log(`[Chatterbox-T3/teacher] gpu_btag=${gpuBtag} gpu_backendDevice=${gpu.stats && gpu.stats.backendDevice} ` +
-      `gpu_rms=${rg.toFixed(5)} cpu_rms=${rc.toFixed(5)} gpu_n=${gpu.samples.length} cpu_n=${cpu.samples.length}`)
-    console.log('[Chatterbox-T3/note] read `[gpu-diag] t3 logits xcorr: ... min_corr=..` (GPU replay run) in ' +
-      'logcat_full.txt: min_corr≈1.0 => T3 matmuls correct on Mali; a drop => T3 miscomputes. ' +
-      '`[gpu-diag] t3_audio.full` (both runs) = end-to-end audio shape (rms/zcr).')
-    // HARD gate: full-Chatterbox GPU audio finite + audible (a T3 garbage cascade collapses
-    // to silence/NaN). The numeric T3-correctness gate is the logcat min_corr.
-    t.ok(rg > 0.001, `Chatterbox T3 teacher-force: full-GPU audio finite + audible (rms ${rg.toFixed(5)} > 0.001)`)
-  } finally {
-    if (proc.env) {
-      if (hadEnv === undefined) delete proc.env.TTS_CPP_T3_TEACHER
-      else proc.env.TTS_CPP_T3_TEACHER = hadEnv
     }
   }
 })
