@@ -15,28 +15,12 @@ set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/../../vcpkg-overlays/tri
 
 project(inference-addon-llama C CXX)
 
-# When the unit tests run against an AddressSanitizer-instrumented @qvac/fabric
-# (QVAC_FABRIC_ASAN=1, set by the Linux cpp-tests jobs), the test executable
-# must link the *shared* libc++ that fabric also links. Statically linking
-# libc++ here would put a second libc++ -- with its own locale facets and RTTI
-# -- in the process alongside fabric's libc++.so.1; the duplicate type_info
-# makes std::use_facet throw std::bad_cast during startup. A single shared
-# libc++ also lets ASan's new/delete interpose across the module boundary.
-# Production prebuilds build without QVAC_FABRIC_ASAN and keep -static-libstdc++.
-set(QVAC_FABRIC_ASAN OFF)
-if(DEFINED ENV{QVAC_FABRIC_ASAN}
-   AND NOT "$ENV{QVAC_FABRIC_ASAN}" STREQUAL "0"
-   AND NOT "$ENV{QVAC_FABRIC_ASAN}" STREQUAL "")
-  set(QVAC_FABRIC_ASAN ON)
-endif()
-
+# The addon links libc++ statically, matching the production prebuilds and the
+# regular @qvac/fabric runtime. fabric hides its internal libc++ symbols via its
+# symbol map, so each module carries its own copy without colliding in-process.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_compile_options(-stdlib=libc++)
-  if(QVAC_FABRIC_ASAN)
-    add_link_options(-stdlib=libc++)
-  else()
-    add_link_options(-stdlib=libc++ -static-libstdc++)
-  endif()
+  add_link_options(-stdlib=libc++ -static-libstdc++)
 endif()
 
 find_path(VCPKG_INSTALLED_PATH share/lint-cpp/.clang-format REQUIRED)
