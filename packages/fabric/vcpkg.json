@@ -1,6 +1,4 @@
 {
-  "name": "qvac-fabric-addon",
-  "version": "0.1.0",
   "dependencies": [
     {
       "name": "opencl",
