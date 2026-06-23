@@ -87,13 +87,6 @@ target_link_libraries(
     GTest::gmock_main
 )
 
-if(NOT WIN32)
-  target_link_libraries(
-    addon-test
-    PRIVATE
-      -fsanitize=address
-  )
-endif()
 if(WIN32)
   # The fabric runtime is delay-loaded: the imported prebuilt module target
   # propagates /DELAYLOAD:qvac__fabric@0.bare but not the delay-load helper.

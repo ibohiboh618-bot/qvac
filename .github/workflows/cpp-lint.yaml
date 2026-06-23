@@ -128,12 +128,6 @@ jobs:
         run: |
           echo "VULKAN_SDK=/opt/vulkansdk/x86_64" >> "$GITHUB_ENV"
 
-      - name: Link local @qvac/fabric
-        uses: ./.github/actions/link-local-qvac-fabric
-        with:
-          workdir: ${{ env.WORKDIR }}
-          build-if-missing: "true"
-
       - name: Install npm dependencies
         shell: bash
         working-directory: ${{ env.WORKDIR }}

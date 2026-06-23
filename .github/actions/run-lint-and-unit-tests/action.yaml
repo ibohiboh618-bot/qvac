@@ -60,11 +60,6 @@ runs:
         fi
       shell: bash
       working-directory: ${{ inputs.workdir }}
-    - name: Link local @qvac/fabric
-      uses: ./.github/actions/link-local-qvac-fabric
-      with:
-        workdir: ${{ inputs.workdir }}
-
     - name: Install dependencies
       shell: bash
       run: npm install
