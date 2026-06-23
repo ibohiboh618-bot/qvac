@@ -405,10 +405,12 @@ struct ggml_tensor* pi05BuildGemmaVlmBlockGraph(
   h = pi05GemmaRmsNorm(ctx, h, w.pre_ffw_norm_scale, rmsNormEps);
   struct ggml_tensor* gate = pi05Linear(ctx, h, w.mlp_gate_w, nullptr);
   struct ggml_tensor* up = pi05Linear(ctx, h, w.mlp_up_w, nullptr);
-  // GeGLU: gelu(gate) * up. ggml_gelu is the tanh approximation —
-  // matches PyTorch's `gelu_pytorch_tanh` (lerobot pi05 hidden_act).
-  gate = ggml_gelu(ctx, gate);
-  struct ggml_tensor* ff = ggml_mul(ctx, gate, up);
+  // GeGLU: gelu(gate) * up, as ONE fused op. ggml_geglu uses the tanh-approx
+  // gelu (matches PyTorch's gelu_pytorch_tanh). Fusing gelu+mul keeps the
+  // intermediate on-chip (one read+write instead of three) and lets ggml-cuda
+  // fuse it with the gate/up matmuls — reduces DRAM traffic on the
+  // memory-bound iGPU. ggml_geglu_split(a,b) = gelu(a)*b.
+  struct ggml_tensor* ff = ggml_geglu_split(ctx, gate, up);
   struct ggml_tensor* down = pi05Linear(ctx, ff, w.mlp_down_w, nullptr);
   return ggml_add(ctx, down, residual);
 }
@@ -552,18 +554,18 @@ static Pi05AdaSplit pi05AdaViewsFromMod(
 }
 
 // ── adaRMSNorm application: `(1 + ada_scale) * rms_norm(x) + ada_shift` ─
-// Per openpi/gemma.py:130. The base `.scale` weight is *not* used in the
-// adaptive branch (the formula doesn't reference it). For pi05_base the
-// converter writes that weight as zeros anyway — see the rationale in
-// `_optional_pt_keys_with_shape` in convert_pi05_to_gguf.py.
+// Per openpi/gemma.py:130. `adaScalePlus1` already holds (1 + ada_scale) —
+// the `+1` is folded into the precomputed modulation (see the ODE precompute)
+// so this is a single `rms_norm(x) * weight + bias`, which ggml-cuda fuses
+// into ONE kernel ({RMS_NORM, MUL, ADD} → rms_norm_fused_add). That collapses
+// the previous rms_norm + mul + add + add (4 DRAM round-trips) — a real win on
+// the memory-bound iGPU since this runs N_layers × N_steps times in the ODE.
 static struct ggml_tensor* pi05AdarmsApply(
     struct ggml_context* ctx, struct ggml_tensor* x,
-    struct ggml_tensor* adaScale, struct ggml_tensor* adaShift, float eps) {
+    struct ggml_tensor* adaScalePlus1, struct ggml_tensor* adaShift,
+    float eps) {
   struct ggml_tensor* normed = ggml_rms_norm(ctx, x, eps);
-  // normed * (1 + ada_scale) = normed + normed * ada_scale
-  struct ggml_tensor* s =
-      ggml_add(ctx, normed, ggml_mul(ctx, normed, adaScale));
-  return ggml_add(ctx, s, adaShift);
+  return ggml_add(ctx, ggml_mul(ctx, normed, adaScalePlus1), adaShift);
 }
 
 // ── M3.9: one expert block (Gemma-1 300M) with joint attention ──────────
@@ -694,8 +696,9 @@ struct ggml_tensor* pi05BuildExpertBlockGraph(
       pi05AdarmsApply(ctx, h, b.scale, b.shift, rmsNormEps);
   struct ggml_tensor* gate = pi05Linear(ctx, normedFfw, w.mlp_gate_w, nullptr);
   struct ggml_tensor* up = pi05Linear(ctx, normedFfw, w.mlp_up_w, nullptr);
-  gate = ggml_gelu(ctx, gate);
-  struct ggml_tensor* ff = ggml_mul(ctx, gate, up);
+  // Fused GeGLU (gelu(gate)*up) — see VLM block for the memory-traffic
+  // rationale; runs 10× per inference here so the saving compounds.
+  struct ggml_tensor* ff = ggml_geglu_split(ctx, gate, up);
   struct ggml_tensor* down = pi05Linear(ctx, ff, w.mlp_down_w, nullptr);
   return ggml_add(ctx, h, ggml_mul(ctx, down, b.gate));
 }
@@ -1699,6 +1702,23 @@ static bool pi05Inference(
     }
     ggml_backend_tensor_get(
         mFin, modFinalAll.data(), 0, perSite * sizeof(float));
+    // Fold the adaRMSNorm `+1` into the scale half of each modulation column
+    // (scale occupies the first expert_hidden of each modDim block) so the
+    // apply becomes a single fusable rms_norm*scale+shift. modDim layout per
+    // column is [scale | shift | gate], each `expert_hidden` wide.
+    const int eh = m.expert_hidden;
+    auto addOneToScale = [&](std::vector<float>& buf, int nSites) {
+      for (int site = 0; site < nSites; ++site) {
+        for (int s = 0; s < nSteps; ++s) {
+          float* col = buf.data() + static_cast<size_t>(site) * perSite +
+                       static_cast<size_t>(s) * modDim;
+          for (int i = 0; i < eh; ++i) col[i] += 1.0f;
+        }
+      }
+    };
+    addOneToScale(modPreAttnAll, nBlocks);
+    addOneToScale(modPreFfwAll, nBlocks);
+    addOneToScale(modFinalAll, 1);
   }
 
   Pi05StagedGuard og;
