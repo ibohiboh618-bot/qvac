@@ -507,7 +507,6 @@ test('Chatterbox S3Gen GPU-vs-CPU correctness (T3->CPU, deterministic tokens)', 
   try {
     const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
     const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
-    const gpuBtag = backendIdToName(gpu.stats && gpu.stats.backendId)
     const rg = rms16(gpu.samples)
     const rc = rms16(cpu.samples)
     // backendDevice here reflects T3 (pinned to CPU); S3Gen's backend is confirmed by
