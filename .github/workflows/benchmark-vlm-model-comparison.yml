@@ -60,6 +60,11 @@ on:
         required: false
         type: string
         default: ""
+      matrix_mmproj_gpu:
+        description: "  mmproj (vision encoder) backend: auto | cpu | gpu. Desktop only; S25 uses config.cjs mmprojGpu."
+        required: false
+        type: string
+        default: "auto"
       run_matrix_s25:
         description: "  also run the matrix on Samsung S25 (AWS Device Farm)"
         required: false
@@ -273,6 +278,7 @@ jobs:
           QVAC_VLM_ENGINE: addon # this leg is always the 'addon' source
           QVAC_VLM_SAMPLES: ${{ inputs.matrix_samples }} # '' → use the preset's value
           QVAC_VLM_DEVICES: ${{ matrix.backend }}
+          QVAC_VLM_MMPROJ_GPU: ${{ inputs.matrix_mmproj_gpu }} # auto = addon per-platform default
           NO_GPU: ${{ matrix.no_gpu }}
         run: |
           # Point brittle straight at the benchmark dir (no staging needed on desktop),

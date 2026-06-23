@@ -59,6 +59,12 @@ const PRESET = config.presets[env('QVAC_VLM_PRESET') || config.defaultPreset] ||
 const MODE = env('QVAC_VLM_MODE') || config.mode || 'two-models'
 const SOURCE = env('QVAC_VLM_ENGINE') || config.engine || 'addon'
 
+// QVAC-21257: which backend runs the multimodal projector (vision encoder).
+// QVAC_VLM_MMPROJ_GPU > config.mmprojGpu > 'auto'. 'auto' leaves the addon's
+// per-platform default; 'cpu'/'gpu' set the addon's mmproj-use-gpu key. No env
+// passthrough on mobile, so config.mmprojGpu governs the on-device run.
+const MMPROJ_GPU = (env('QVAC_VLM_MMPROJ_GPU') || config.mmprojGpu || 'auto').toLowerCase()
+
 // samples/task precedence: explicit env > preset > (mobile 2 / desktop 5). Mobile
 // defaults low to fit the 30-min Device Farm ceiling; qvac_perf_runs lands here.
 const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') ||
@@ -241,6 +247,12 @@ function runModel (spec) {
         config: {
           device,
           gpu_layers: device === 'cpu' ? '0' : '98',
+          // QVAC-21257: force the projector backend only when explicitly set;
+          // 'auto' leaves the addon's per-platform default untouched. No-op on
+          // the cpu device leg (no GPU to offload the projector to).
+          ...((MMPROJ_GPU === 'cpu' || MMPROJ_GPU === 'gpu')
+            ? { 'mmproj-use-gpu': MMPROJ_GPU === 'gpu' ? 'true' : 'false' }
+            : {}),
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
