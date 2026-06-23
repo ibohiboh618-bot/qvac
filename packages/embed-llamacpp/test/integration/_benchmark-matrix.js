@@ -12,7 +12,7 @@
 // the shard key keeps every shard to ONE (batchSize, flashAttn) pair — its
 // internal sweep is only device (2 loads) x inputMode (a runtime-only re-run of
 // the same loaded model, no reload). A coarser (model x quant) shard would load
-// the model once per batchSize x flashAttn combo (16 loads/session); the addon
+// the model once per batchSize x flashAttn combo (8 loads/session); the addon
 // does not fully free native model memory between cycles, so that OOMs the
 // phones. inputMode is the runtime-only axis swept inside each shard.
 //
@@ -50,8 +50,8 @@ const PARAMETER_SWEEP = {
 }
 const INPUT_MODES = ['single', 'array']
 
-// Cross-product of the 7 base (model x quant) download cells with the
-// reload-heavy axes batchSize (4) x flashAttn (2) = 56 cells, preserving order
+// Cross-product of the 4 base (model x quant) download cells with the
+// reload-heavy axes batchSize (4) x flashAttn (2) = 32 cells, preserving order
 // (model/quant outer, batchSize middle, flashAttn inner) so the shard list and
 // workflow groups are stable. inputMode is NOT in the cell: it is swept inside
 // each shard at runtime against the already-loaded model.
@@ -122,7 +122,7 @@ function shardContents (cell) {
 }
 
 // One workflow matrix entry per (batchSize, flashAttn) pair, each carrying its
-// 7 model x quant groups in matrix order, matching the mobile-benchmark job's
+// 4 model x quant groups in matrix order, matching the mobile-benchmark job's
 // test_groups. Batching by the reload-heavy (bs, fa) pair keeps every Device
 // Farm session to one (batchSize, flashAttn) so it does at most 2 model loads
 // (one per device), mirroring the LLM benchmark's per-KV-cache batching.

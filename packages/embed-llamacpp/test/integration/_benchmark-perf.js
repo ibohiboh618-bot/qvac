@@ -240,6 +240,14 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
         }
 
         try {
+          // Warm up once per loaded backend (discarded, never a measured rep)
+          // to prime GPU kernels/caches so rep 1 isn't a cold-start outlier.
+          try {
+            const w = await addon.run(inputsFor(INPUT_MODES[0]))
+            await w.await()
+          } catch (warmErr) {
+            t.comment(`[${spec.id} q=${quant}] [${device}] warmup failed: ${warmErr && warmErr.message ? warmErr.message : warmErr}`)
+          }
           for (const inputMode of INPUT_MODES) {
             const label = labelFor(spec, device, batchSize, flashAttn, inputMode)
             try {
