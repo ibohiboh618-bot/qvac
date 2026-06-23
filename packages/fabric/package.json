@@ -1,6 +1,6 @@
 {
   "name": "@qvac/fabric",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Shared bare addon hosting the qvac-fabric (forked llama.cpp + ggml) runtime for QVAC inference addons",
   "addon": true,
   "engines": {
@@ -19,7 +19,7 @@
     "binding.js",
     "prebuilds/*/*.bare",
     "prebuilds/*/*.bare.exports",
-    "prebuilds/*/qvac__fabric",
+    "prebuilds/*/qvac__fabric/**",
     "prebuilds/include",
     "prebuilds/share/qvac-fabric",
     "LICENSE",

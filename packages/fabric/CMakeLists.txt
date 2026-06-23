@@ -73,7 +73,12 @@ if((ANDROID OR UNIX) AND NOT APPLE)
   foreach(_backend ${GGML_AVAILABLE_BACKENDS})
     if(TARGET ggml::${_backend})
       get_target_property(_backend_type ggml::${_backend} TYPE)
-      if(_backend_type STREQUAL "SHARED_LIBRARY")
+      # GGML_BACKEND_DL backends are imported as MODULE libraries (dlopen'd at
+      # runtime), not SHARED_LIBRARY: ggml-targets.cmake emits each as
+      # `add_library(ggml::ggml-cpu-* MODULE IMPORTED)`, so TYPE is
+      # MODULE_LIBRARY. Accept both so the .so backends are actually staged next
+      # to the module (matching only SHARED_LIBRARY silently shipped nothing).
+      if(_backend_type STREQUAL "SHARED_LIBRARY" OR _backend_type STREQUAL "MODULE_LIBRARY")
         list(APPEND BACKEND_DL_LIBS INSTALL TARGET ggml::${_backend})
       endif()
     endif()
