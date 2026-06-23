@@ -54,6 +54,14 @@ inputs:
     description: "Per-run Device Farm jobTimeoutMinutes. Default 120 gives headroom for slower devices (Pixel 9 Pro VLM ~56 min). The crash monitor kills hung tests early so the extra ceiling doesn't waste time on crashes."
     required: false
     default: "120"
+  android-extra-flagship-models:
+    description: |
+      Opt-in (default empty). CSV of additional Android device MODEL substrings to
+      target with their own filter-based run in dual-flagship mode (e.g. "Galaxy S26").
+      Each becomes one extra run alongside S25 Ultra + Pixel 9. Empty => no extra runs,
+      so every other caller is unaffected. Only honored for Android dual-flagship.
+    required: false
+    default: ""
 
 outputs:
   run-arns:
@@ -79,6 +87,7 @@ runs:
         TEST_SPECS_JSON: ${{ inputs.test-specs }}
         SCHEDULING_MODE: ${{ inputs.scheduling-mode }}
         JOB_TIMEOUT_MINUTES: ${{ inputs.job-timeout-minutes }}
+        ANDROID_EXTRA_FLAGSHIP_MODELS: ${{ inputs.android-extra-flagship-models }}
       run: |
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
           RUN_NAME_BASE="Manual-${{ github.run_number }}-${PLATFORM}"
@@ -175,6 +184,21 @@ runs:
           echo "  Run 1: $RUN_ARN_1"
           echo "  Run 2: $RUN_ARN_2"
           RUN_ARNS_JSON=$(jq -n --arg a "$RUN_ARN_1" --arg b "$RUN_ARN_2" '[$a,$b]')
+          # QVAC-21257: opt-in extra Android flagship targets (CSV of MODEL substrings,
+          # e.g. "Galaxy S26"). Each becomes one more filter-targeted run appended here.
+          # Empty (every other caller) => no-op. A substring that matches no Device Farm
+          # device yields an empty run that the monitor simply reports as 0 tests.
+          if [ "$PLATFORM" = "Android" ] && [ -n "$ANDROID_EXTRA_FLAGSHIP_MODELS" ]; then
+            IFS=',' read -ra EXTRA_MODELS <<< "$ANDROID_EXTRA_FLAGSHIP_MODELS"
+            for raw_model in "${EXTRA_MODELS[@]}"; do
+              model=$(echo "$raw_model" | xargs)
+              [ -z "$model" ] && continue
+              EXTRA_FILTER=$(jq -nc --arg m "$model" '{filters:[{attribute:"MODEL",operator:"CONTAINS",values:[$m]},{attribute:"PLATFORM",operator:"EQUALS",values:["ANDROID"]}],maxDevices:1}')
+              EXTRA_ARN=$(schedule_run_with_filter "${RUN_NAME_BASE}-${model// /_}" "$EXTRA_FILTER" "$SPEC_ARN")
+              echo "  Extra ($model): $EXTRA_ARN"
+              RUN_ARNS_JSON=$(echo "$RUN_ARNS_JSON" | jq --arg arn "$EXTRA_ARN" '. + [$arn]')
+            done
+          fi
         fi
 
         RUN_COUNT=$(echo "$RUN_ARNS_JSON" | jq 'length')

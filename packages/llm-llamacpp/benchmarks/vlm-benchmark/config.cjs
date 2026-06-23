@@ -107,9 +107,14 @@ module.exports = {
   // QVAC-21257: which backend runs the multimodal projector (vision encoder).
   //   'auto' — leave the addon's per-platform default (Android CPU, desktop/iOS GPU)
   //   'cpu' / 'gpu' — force the projector backend via the addon's mmproj-use-gpu key
+  //   'both' — mmproj-compare: run ONE model (mmprojModel) on the GPU model-backend
+  //            with the projector on CPU vs GPU as the two report columns.
   // Desktop overrides this with QVAC_VLM_MMPROJ_GPU; on mobile (no env passthrough)
-  // this default governs the on-device run.
-  mmprojGpu: 'auto',
+  // this default governs the on-device run. Set to 'both' for the Android Device
+  // Farm projector cpu-vs-gpu benchmark (QVAC-21257).
+  mmprojGpu: 'both',
+  // Single VLM used by mmproj-compare (mmprojGpu='both'); reuses MODEL_2's blobs.
+  mmprojModel: MODEL_2,
 
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of

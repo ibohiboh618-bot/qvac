@@ -217,22 +217,46 @@ function emitRow (obj) {
   console.log('[VLMROW]' + JSON.stringify(obj) + '[/VLMROW]')
 }
 
+// QVAC-21257: mmproj-compare mode. When the projector backend axis is 'both'
+// the comparison is mmproj-on-CPU vs mmproj-on-GPU for ONE model on the GPU
+// model-backend leg — two cells ('mmproj-cpu' / 'mmproj-gpu') the report renders
+// side by side. Otherwise behaviour is unchanged.
+const MMPROJ_COMPARE = MMPROJ_GPU === 'both'
+
+// A "leg" = one test() = one (model device-backend, projector backend) combo.
+// Normal modes: one leg per device, projector follows MMPROJ_GPU (single/auto).
+// mmproj-compare: GPU model backend, projector cpu vs gpu → two labelled cells.
+function legsFor (spec) {
+  const baseAxis = MODE === 'several-sources' ? SOURCE : spec.label
+  if (MMPROJ_COMPARE) {
+    return ['cpu', 'gpu'].map(m => ({
+      device: 'gpu',
+      mmproj: m, // forces the addon's mmproj-use-gpu key
+      cell: `mmproj-${m}`, // distinct report column per projector backend
+      dev: `GPU·mmproj=${m}`
+    }))
+  }
+  return devicesToRun().map(device => ({
+    device,
+    mmproj: (MMPROJ_GPU === 'cpu' || MMPROJ_GPU === 'gpu') ? MMPROJ_GPU : null,
+    cell: baseAxis,
+    dev: device.toUpperCase()
+  }))
+}
+
 function runModel (spec) {
-  // Marker axis: source label in several-sources mode (engine comparison), else the
-  // model label. The VLM loaded is always spec (llm + mmproj).
-  const axis = MODE === 'several-sources' ? SOURCE : spec.label
   if (!ENABLED) {
     test(`vlm-matrix ${spec.label} (disabled; set QVAC_VLM_MATRIX=1)`, t => t.pass('disabled'))
     return
   }
-  for (const device of devicesToRun()) {
-    const dev = device.toUpperCase()
+  for (const leg of legsFor(spec)) {
+    const { device, mmproj, cell, dev } = leg
     test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: 30 * 60 * 1000 }, async t => {
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
       // model-origin provenance (stderr, parsed host-side into the report)
       console.error('[VLMMETA]' + JSON.stringify({
-        cell: axis,
+        cell,
         source: SOURCE,
         model: spec.label,
         main_origin: spec.llm.origin,
@@ -248,11 +272,9 @@ function runModel (spec) {
           device,
           gpu_layers: device === 'cpu' ? '0' : '98',
           // QVAC-21257: force the projector backend only when explicitly set;
-          // 'auto' leaves the addon's per-platform default untouched. No-op on
+          // null leaves the addon's per-platform default untouched. No-op on
           // the cpu device leg (no GPU to offload the projector to).
-          ...((MMPROJ_GPU === 'cpu' || MMPROJ_GPU === 'gpu')
-            ? { 'mmproj-use-gpu': MMPROJ_GPU === 'gpu' ? 'true' : 'false' }
-            : {}),
+          ...(mmproj ? { 'mmproj-use-gpu': mmproj === 'gpu' ? 'true' : 'false' } : {}),
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
@@ -272,12 +294,12 @@ function runModel (spec) {
         for (let rep = 0; rep < REPEATS; rep++) {
           // SEG per repeat so each run's `image slice encoded` lines attribute to its
           // own segment (stderr — same stream as the native timing lines).
-          console.error('[VLMSEG]' + JSON.stringify({ cell: axis, source: SOURCE, model: spec.label, device, id: item.id, rep }) + '[/VLMSEG]')
+          console.error('[VLMSEG]' + JSON.stringify({ cell, source: SOURCE, model: spec.label, device, id: item.id, rep }) + '[/VLMSEG]')
           try {
             const r = await runOne(inference, getMediaPath(item.image), item.prompt)
             const st = r.stats || {}
             emitRow({
-              cell: axis,
+              cell,
               source: SOURCE,
               model: spec.label,
               device,
@@ -298,7 +320,7 @@ function runModel (spec) {
             })
             ok++
           } catch (e) {
-            emitRow({ cell: axis, source: SOURCE, model: spec.label, device, rep, task: item.task, id: item.id, metric: item.metric, gold: item.gold, error: String((e && e.message) || e) })
+            emitRow({ cell, source: SOURCE, model: spec.label, device, rep, task: item.task, id: item.id, metric: item.metric, gold: item.gold, error: String((e && e.message) || e) })
           }
         }
       }
@@ -307,10 +329,12 @@ function runModel (spec) {
   }
 }
 
-// One test file -> one mobile test function -> one Device Farm spec -> Samsung S25.
-// two-models loads MODEL_1 then MODEL_2; several-sources loads the one sourcesModel
-// (the other engines run via cli-fixture-runner.cjs and append to the same log).
+// One test file -> one mobile test function -> one Device Farm spec.
+// mmproj-compare loads ONE model (config.mmprojModel) and varies the projector
+// backend; two-models loads MODEL_1 then MODEL_2; several-sources loads the one
+// sourcesModel (other engines run via cli-fixture-runner.cjs into the same log).
 function runAll () {
+  if (MMPROJ_COMPARE) { runModel(config.mmprojModel || config.models[1]); return }
   const models = MODE === 'several-sources' ? [config.sourcesModel] : config.models
   for (const spec of models) runModel(spec)
 }

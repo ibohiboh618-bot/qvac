@@ -392,8 +392,11 @@ jobs:
       # Fixture-image object store (kept only in this workflow). The reusable workflow
       # syncs from this URI without referencing it literally.
       fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
-      # Samsung S25 (Android) only — the benchmark targets the S25 device pool; skip iOS.
+      # Android only — the benchmark targets Android flagships; skip iOS.
       platforms: Android
+      # QVAC-21257: dual-flagship targets S25 Ultra + Pixel 9; add Galaxy S26 (best-effort
+      # — empty run if Device Farm has no matching device). Three Android targets total.
+      android_extra_flagship_models: 'Galaxy S26'
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
@@ -454,35 +457,39 @@ jobs:
           for f in $(find matrix-logs -name 'vlm-matrix-linux-*.log' 2>/dev/null | sort); do
             ARGS="$ARGS --in linux $f"
           done
-          # S25: the Samsung device's full logcat carries the [VLMROW] markers
-          # (the Android pool may also include a Pixel; we surface S25 here).
-          for f in $(find matrix-logs -name '*Galaxy_S25*logcat_full*' 2>/dev/null | sort); do
-            ARGS="$ARGS --in s25 $f"
-          done
-          # HW/SW provenance: Linux legs ship prov-linux-*.md; synthesize one for S25.
+          # HW/SW provenance: Linux legs ship prov-linux-*.md.
           PROV=""
-          for p in $(find matrix-logs -name 'prov-*.md' 2>/dev/null | sort); do
+          for p in $(find matrix-logs -name 'prov-linux-*.md' 2>/dev/null | sort); do
             PROV="$PROV --provenance $p"
           done
-          # S25 hardware provenance, parsed from the device's own logcat (model /
-          # Android / ABI from the Play-store UA line, RAM from the JS totalMemory
-          # line, GPU from the Adreno-Vulkan driver load).
-          S25F=$(find matrix-logs -name '*Galaxy_S25*logcat_full*' 2>/dev/null | head -1)
-          if [ -n "$S25F" ]; then
-            MODEL=$(grep -oE 'model=SM-[A-Z0-9]+' "$S25F" | head -1 | cut -d= -f2)
-            ANDROID=$(grep -oE 'platformVersionRelease=[0-9]+' "$S25F" | head -1 | cut -d= -f2)
-            ABI=$(grep -oE 'supportedAbis=[a-z0-9-]+' "$S25F" | head -1 | cut -d= -f2)
-            RAMB=$(grep -oE 'totalMemory: [0-9]+' "$S25F" | head -1 | grep -oE '[0-9]+$')
+          # QVAC-21257: Android flagships — one Device Farm run (hence one *_logcat_full*)
+          # per targeted device: S25 Ultra + Pixel 9 (dual-flagship) + Galaxy S26 (opt-in).
+          # Each is tagged with a distinct host via --in so the report shows one row per
+          # physical device ([VLMROW].device only carries cpu/gpu; __host separates them).
+          # Provenance is parsed best-effort from the device's own logcat.
+          add_android () { # <host-label> <logcat-name-glob> <pretty-name>
+            local host="$1" glob="$2" pretty="$3" f
+            f=$(find matrix-logs -name "$glob" 2>/dev/null | head -1)
+            [ -z "$f" ] && return 0
+            ARGS="$ARGS --in $host $f"
+            local MODEL ANDROID ABI RAMB RAMGB GPU
+            MODEL=$(grep -oE 'model=[A-Za-z0-9 _-]+' "$f" | head -1 | cut -d= -f2)
+            ANDROID=$(grep -oE 'platformVersionRelease=[0-9]+' "$f" | head -1 | cut -d= -f2)
+            ABI=$(grep -oE 'supportedAbis=[a-z0-9-]+' "$f" | head -1 | cut -d= -f2)
+            RAMB=$(grep -oE 'totalMemory: [0-9]+' "$f" | head -1 | grep -oE '[0-9]+$')
             RAMGB=$(awk -v b="${RAMB:-0}" 'BEGIN{ if (b>0) printf "%.1f GB", b/1073741824; else printf "?" }')
-            GPU=$(grep -qiE 'AdrenoVK|vulkan\.adreno' "$S25F" && echo 'Adreno (Vulkan)' || echo '?')
+            GPU=$(grep -qiE 'AdrenoVK|vulkan\.adreno|Mali' "$f" && echo 'GPU (Vulkan)' || echo '?')
             {
-              echo "**s25** — Samsung Galaxy S25 Ultra (AWS Device Farm)"
-              echo "- device: ${MODEL:-SM-?} · Android ${ANDROID:-?} · ${ABI:-arm64-v8a}"
+              echo "**$host** — $pretty (AWS Device Farm)"
+              echo "- device: ${MODEL:-?} · Android ${ANDROID:-?} · ${ABI:-arm64-v8a}"
               echo "- ram: ${RAMGB} · gpu: ${GPU}"
               echo "- engine: \`@qvac/llm-llamacpp\` addon (published prebuild)"
-            } > prov-s25.md
-            PROV="$PROV --provenance prov-s25.md"
-          fi
+            } > "prov-$host.md"
+            PROV="$PROV --provenance prov-$host.md"
+          }
+          add_android s25 '*Galaxy_S25*logcat_full*' 'Samsung Galaxy S25 Ultra'
+          add_android pixel9 '*Pixel_9*logcat_full*' 'Google Pixel 9'
+          add_android s26 '*Galaxy_S26*logcat_full*' 'Samsung Galaxy S26'
           echo "aggregate inputs:$ARGS"
           echo "provenance:$PROV"
           if [ -z "$ARGS" ]; then
