@@ -104,11 +104,14 @@ runs:
           else
             echo "Local @qvac/fabric prebuilds missing; building from source..."
             # ASan builds use a dedicated cache so their instrumented archives
-            # never collide with (or get restored from) the regular cache: the
-            # overlay triplet adds -fsanitize=address without changing the
-            # triplet file's name/ABI hash, so the two must stay separated.
+            # never collide with (or get restored from) the regular cache.
+            # Instrument the qvac-fabric vcpkg port via env flags (appended to
+            # the shared linux triplet) instead of a package-local triplet copy.
             if [ "${{ inputs.asan }}" = "true" ]; then
               export QVAC_FABRIC_ASAN=1
+              export VCPKG_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+              export VCPKG_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+              export VCPKG_LINKER_FLAGS="-fsanitize=address"
               export VCPKG_BINARY_SOURCES="clear;files,${fabric_dir}/vcpkg/cache-asan,readwrite"
               mkdir -p "${fabric_dir}/vcpkg/cache-asan"
             else
