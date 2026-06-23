@@ -151,7 +151,7 @@ if(WIN32)
 endif()
 
 # Copy the shared @qvac/fabric runtime next to the test executable so it
-# resolves at runtime (on desktop the ggml backends are static inside it).
+# resolves at runtime via the $ORIGIN/@loader_path rpath set below.
 if(NOT FABRIC_STATIC_MOBILE)
   add_custom_command(TARGET addon-test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -159,6 +159,28 @@ if(NOT FABRIC_STATIC_MOBILE)
       ${CMAKE_CURRENT_BINARY_DIR}/qvac__fabric@0.bare
     COMMENT "Copying qvac__fabric@0.bare to test directory"
   )
+
+  # On desktop Linux @qvac/fabric builds its ggml compute backends as separate
+  # shared libraries (GGML_BACKEND_DL): the runtime-dispatched CPU micro-arch
+  # variants (and Vulkan) are dlopen'd at runtime via
+  # ggml_backend_load_all_from_path(). The tests set backendsDir to this
+  # directory (TEST_BINARY_DIR) and addon-test does not define BACKENDS_SUBDIR,
+  # so the addon loads backends straight from here -- stage them next to the
+  # executable, mirroring the production install in the parent CMakeLists.
+  # Without them the ggml backend registry is empty and every model-loading
+  # test fails with "no backends are loaded". On macOS/Windows the backends are
+  # static inside qvac__fabric@0.bare, so the glob is empty and the CPU backend
+  # self-registers when the runtime loads.
+  bare_target(host)
+  file(GLOB _fabric_test_backends
+    "${CMAKE_SOURCE_DIR}/node_modules/@qvac/fabric/prebuilds/${host}/qvac__fabric/*.so")
+  if(_fabric_test_backends)
+    add_custom_command(TARGET addon-test POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${_fabric_test_backends}
+        ${CMAKE_CURRENT_BINARY_DIR}/
+      COMMENT "Staging @qvac/fabric ggml backends next to addon-test")
+  endif()
 endif()
 
 # The runtime is named qvac__fabric@0.bare (the module SONAME) only in the copy
