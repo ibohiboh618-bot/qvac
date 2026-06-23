@@ -206,12 +206,15 @@ test('Chatterbox T3 GPU-vs-CPU logits (teacher-forced, full Chatterbox on GPU)',
 
   const hadEnv = proc.env.TTS_CPP_T3_TEACHER
   try {
-    // Run 1 (CPU, record): captures the fed token sequence + per-step logits (process-global).
-    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'record'
+    // Set the teacher mode ONCE (auto): the native t3tf resolves record on the 1st run (empty
+    // buffer) and replay on the 2nd (populated). Round #3 proved a mid-test proc.env change
+    // ('record'->'replay') does NOT reach native getenv, so set it once and let the native
+    // side auto-transition between the CPU (record) and GPU (replay) runs.
+    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'auto'
+    // Run 1 (CPU): auto -> record (captures fed token sequence + per-step logits, process-global).
     const cpu = await runChatterboxOn(false, download.targetDir, refWavPath)
-    // Run 2 (GPU, replay): teacher-forces the recorded tokens, xcorr per-step logits, emits
-    // the summary + audio characteristics. Full Chatterbox (T3+S3Gen) on the Mali GPU.
-    if (proc.env) proc.env.TTS_CPP_T3_TEACHER = 'replay'
+    // Run 2 (GPU): auto -> replay (teacher-forces recorded tokens, xcorr per-step logits, emits
+    // the summary + audio characteristics). Full Chatterbox (T3+S3Gen) on the Mali GPU.
     const gpu = await runChatterboxOn(true, download.targetDir, refWavPath)
 
     const gpuBtag = backendIdToName(gpu.stats && gpu.stats.backendId)
