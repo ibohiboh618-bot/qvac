@@ -24,11 +24,6 @@ void applyGenerationOverridesToSampling(
   setIf(overrides.top_p, sampling.top_p);
   setIf(overrides.top_k, sampling.top_k);
   setIf(overrides.n_predict, nPredict);
-  // [VLM-BENCH A2 VALIDATION PERTURBATION — REVERT BEFORE MERGE]
-  // Deliberately cap output to 24 tokens so the candidate build measurably differs from
-  // the published baseline: it truncates OCR transcriptions (worse CER/WER) and shortens
-  // generation (faster). Used to confirm the candidate-vs-baseline report shows a delta.
-  if (nPredict <= 0 || nPredict > 24) nPredict = 24;
   setIf(overrides.seed, sampling.seed);
   setIf(overrides.frequency_penalty, sampling.penalty_freq);
   setIf(overrides.presence_penalty, sampling.penalty_present);

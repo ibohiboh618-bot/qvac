@@ -478,6 +478,11 @@ bool MtmdLlmContext::generateResponse(
     const std::function<void(const std::string&)>& outputCallback) {
 
   int nRemain = params_.n_predict;
+  // [VLM-BENCH A2 VALIDATION PERTURBATION — REVERT BEFORE MERGE]
+  // Cap the VLM generation loop at 24 tokens so the candidate build measurably differs
+  // from the published baseline: truncates OCR transcriptions (worse CER/WER) + faster.
+  // On the actual VLM decode path (params_.n_predict), unlike the per-request override.
+  if (nRemain <= 0 || nRemain > 24) nRemain = 24;
   LlamaBatch batch(1, 0, 1); // batch for next token generation
 
   if (thinkingForcedOpen_ && outputCallback) {
