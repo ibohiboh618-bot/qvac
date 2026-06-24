@@ -465,11 +465,9 @@ bool MtmdLlmContext::evalMessageWithTools(
     }
     const bool isImageChunk =
         mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE;
-    // QVAC-21257 iter 2 (Pixel/Mali probe): cap the image-chunk encode batch to
-    // 128 to test whether smaller GPU dispatches reduce Mali Vulkan encode time.
-    // Text chunks keep the configured batch.
-    const int32_t chunkBatch =
-        isImageChunk ? std::min(params_.n_batch, 128) : params_.n_batch;
+    // QVAC-21257 iter 2: capping the image-chunk encode batch to 128 was tried and
+    // made the encode slower (more, smaller GPU dispatches) — reverted to the
+    // configured batch. The encode is dispatch/launch-overhead-bound on Mali.
     const auto chunkStart = std::chrono::steady_clock::now();
     int32_t res = mtmd_helper_eval_chunk_single(
         ctxVision_.get(),
@@ -477,7 +475,7 @@ bool MtmdLlmContext::evalMessageWithTools(
         chunk,
         nPastLocal,
         0,
-        chunkBatch,
+        params_.n_batch,
         chunkLogitsLast,
         &nPastLocal);
     if (isImageChunk) {
