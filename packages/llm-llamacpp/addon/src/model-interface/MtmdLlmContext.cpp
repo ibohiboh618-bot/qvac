@@ -164,10 +164,8 @@ void MtmdLlmContext::initVisionContext() {
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
   mparams.n_threads = params_.cpuparams.n_threads;
-  // QVAC-21257 (Pixel/Mali investigation): run a warmup encode at init so the first
-  // real image doesn't pay Vulkan shader/pipeline compilation cost (mobile GPUs can
-  // spend hundreds of ms compiling SPIR-V on the first dispatch).
-  mparams.warmup = true;
+  // QVAC-21257 iter 1: mtmd warmup=true was tried and showed no improvement on Pixel
+  // (the penalty is steady-state, not first-encode shader compile) — left at default.
   ctxVision_.reset(mtmd_init_from_file(clipPath, modelCtx_.model, mparams));
   if (ctxVision_.get() == nullptr) {
     std::string errorMsg = string_format(
@@ -467,6 +465,11 @@ bool MtmdLlmContext::evalMessageWithTools(
     }
     const bool isImageChunk =
         mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE;
+    // QVAC-21257 iter 2 (Pixel/Mali probe): cap the image-chunk encode batch to
+    // 128 to test whether smaller GPU dispatches reduce Mali Vulkan encode time.
+    // Text chunks keep the configured batch.
+    const int32_t chunkBatch =
+        isImageChunk ? std::min(params_.n_batch, 128) : params_.n_batch;
     const auto chunkStart = std::chrono::steady_clock::now();
     int32_t res = mtmd_helper_eval_chunk_single(
         ctxVision_.get(),
@@ -474,7 +477,7 @@ bool MtmdLlmContext::evalMessageWithTools(
         chunk,
         nPastLocal,
         0,
-        params_.n_batch,
+        chunkBatch,
         chunkLogitsLast,
         &nPastLocal);
     if (isImageChunk) {
