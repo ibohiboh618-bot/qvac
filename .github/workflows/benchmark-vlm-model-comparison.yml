@@ -584,12 +584,15 @@ jobs:
           # filename from the first run and adjust if the iPhone row is missing.
           add_ios () { # <host-label> <log-name-glob> <pretty-name>
             local host="$1" glob="$2" pretty="$3" f
-            f=$(find matrix-logs -name "$glob" 2>/dev/null | head -1)
+            # `|| true` everywhere: this step runs under `set -e -o pipefail`, so a
+            # non-matching grep (or a head-closed-pipe SIGPIPE) would otherwise abort the
+            # whole aggregation — which silently drops the Android rows too.
+            f=$(find matrix-logs -name "$glob" 2>/dev/null | head -1 || true)
             [ -z "$f" ] && return 0
             ARGS="$ARGS --in $host $f"
             local MODEL IOSVER
-            MODEL=$(grep -oiE 'iPhone[0-9, ]+' "$f" | head -1)
-            IOSVER=$(grep -oiE 'iOS [0-9.]+' "$f" | head -1)
+            MODEL=$(grep -oiE 'iPhone ?[0-9]+[a-z ]*' "$f" 2>/dev/null | head -1 || true)
+            IOSVER=$(grep -oiE 'iOS [0-9.]+' "$f" 2>/dev/null | head -1 || true)
             {
               echo "**$host** — $pretty (AWS Device Farm)"
               echo "- device: ${MODEL:-iPhone} · ${IOSVER:-iOS ?} · Apple GPU (Metal)"
@@ -600,7 +603,9 @@ jobs:
           add_android s25 '*Galaxy_S25*logcat_full*' 'Samsung Galaxy S25 Ultra'
           add_android pixel9 '*Pixel_9*logcat_full*' 'Google Pixel 9'
           add_android s26 '*Galaxy_S26*logcat_full*' 'Samsung Galaxy S26'
-          add_ios iphone '*iPhone*' 'Apple iPhone'
+          # iOS [VLMROW] markers live in the per-device *_bare_console.log (no logcat on iOS).
+          add_ios iphone17 '*iPhone_17*bare_console.log' 'Apple iPhone 17'
+          add_ios iphone16 '*iPhone_16*bare_console.log' 'Apple iPhone 16'
           echo "aggregate inputs:$ARGS"
           echo "provenance:$PROV"
           if [ -z "$ARGS" ]; then
