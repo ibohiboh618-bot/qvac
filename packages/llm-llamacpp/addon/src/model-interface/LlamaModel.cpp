@@ -1133,13 +1133,26 @@ void LlamaModel::commonParamsParse(
 
     const std::optional<MainGpu> mainGpu = tryMainGpuFromMap(configFilemap);
 
+    // QVAC-21257: optional `gpu-backend` override (auto/vulkan/opencl) — force the
+    // GPU backend instead of the default Adreno->OpenCL / else->Vulkan selection.
+    // Read + erase here so it never reaches llama.cpp's arg parser.
+    GpuBackendPreference gpuPref = GpuBackendPreference::Auto;
+    for (const char* key : {"gpu-backend", "gpu_backend"}) {
+      auto it = configFilemap.find(key);
+      if (it != configFilemap.end()) {
+        gpuPref = gpuBackendPreferenceFromString(it->second);
+        configFilemap.erase(it);
+      }
+    }
+
     const std::pair<BackendType, std::string> chosenBackend = chooseBackend(
         preferredBackend,
         LlamaModel::llamaLogCallback,
         mainGpu,
         &metadata_,
         &outAdrenoVersion,
-        pendingFinetuneOverrides_.active);
+        pendingFinetuneOverrides_.active,
+        gpuPref);
 
     // QVAC-21257: optional runtime override for the multimodal projector
     // (mmproj / vision encoder) backend. The default preserves the historical

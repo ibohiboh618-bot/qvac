@@ -65,6 +65,19 @@ const SOURCE = env('QVAC_VLM_ENGINE') || config.engine || 'addon'
 // passthrough on mobile, so config.mmprojGpu governs the on-device run.
 const MMPROJ_GPU = (env('QVAC_VLM_MMPROJ_GPU') || config.mmprojGpu || 'auto').toLowerCase()
 
+// QVAC-21257: backend-compare mode. CSV of gpu-backend values to compare on the
+// GPU leg (e.g. 'opencl,vulkan'). QVAC_VLM_BACKENDS > config.compareBackends.
+// When set, runs ONE model on device:gpu once per backend (model + projector both
+// forced onto that backend) as distinct cells, to A/B the whole compute backend.
+// Takes priority over mmproj-compare. No env passthrough on mobile → config drives it.
+const BACKENDS = (() => {
+  const raw = env('QVAC_VLM_BACKENDS')
+  if (raw) return raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  if (Array.isArray(config.compareBackends)) return config.compareBackends.map(s => String(s).toLowerCase())
+  return []
+})()
+const BACKEND_COMPARE = BACKENDS.length > 0
+
 // samples/task precedence: explicit env > preset > (mobile 2 / desktop 5). Mobile
 // defaults low to fit the 30-min Device Farm ceiling; qvac_perf_runs lands here.
 const SAMPLES_PER_TASK = intEnv('QVAC_VLM_SAMPLES') || intEnv('QVAC_PERF_RUNS') ||
@@ -228,6 +241,18 @@ const MMPROJ_COMPARE = MMPROJ_GPU === 'both'
 // mmproj-compare: GPU model backend, projector cpu vs gpu → two labelled cells.
 function legsFor (spec) {
   const baseAxis = MODE === 'several-sources' ? SOURCE : spec.label
+  if (BACKEND_COMPARE) {
+    // One model on the GPU leg, model + projector both forced onto each backend
+    // (gpu-backend + mmproj-use-gpu). Distinct cells per backend, e.g.
+    // 'backend-opencl' / 'backend-vulkan'. Takes priority over mmproj-compare.
+    return BACKENDS.map(b => ({
+      device: 'gpu',
+      gpuBackend: b, // forces the addon's gpu-backend key
+      mmproj: 'gpu', // projector follows the GPU backend
+      cell: `backend-${b}`,
+      dev: `GPU·${b}`
+    }))
+  }
   if (MMPROJ_COMPARE) {
     return ['cpu', 'gpu'].map(m => ({
       device: 'gpu',
@@ -250,7 +275,7 @@ function runModel (spec) {
     return
   }
   for (const leg of legsFor(spec)) {
-    const { device, mmproj, cell, dev } = leg
+    const { device, mmproj, cell, dev, gpuBackend } = leg
     test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: 30 * 60 * 1000 }, async t => {
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
@@ -271,6 +296,8 @@ function runModel (spec) {
         config: {
           device,
           gpu_layers: device === 'cpu' ? '0' : '98',
+          // QVAC-21257: force the GPU compute backend when set (backend-compare).
+          ...(gpuBackend ? { 'gpu-backend': gpuBackend } : {}),
           // QVAC-21257: force the projector backend only when explicitly set;
           // null leaves the addon's per-platform default untouched. No-op on
           // the cpu device leg (no GPU to offload the projector to).
@@ -334,7 +361,8 @@ function runModel (spec) {
 // backend; two-models loads MODEL_1 then MODEL_2; several-sources loads the one
 // sourcesModel (other engines run via cli-fixture-runner.cjs into the same log).
 function runAll () {
-  if (MMPROJ_COMPARE) { runModel(config.mmprojModel || config.models[1]); return }
+  // backend-compare and mmproj-compare both run ONE model and vary a single axis.
+  if (BACKEND_COMPARE || MMPROJ_COMPARE) { runModel(config.mmprojModel || config.models[1]); return }
   const models = MODE === 'several-sources' ? [config.sourcesModel] : config.models
   for (const spec of models) runModel(spec)
 }

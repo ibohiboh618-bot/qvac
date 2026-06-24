@@ -112,9 +112,14 @@ module.exports = {
   // Desktop overrides this with QVAC_VLM_MMPROJ_GPU; on mobile (no env passthrough)
   // this default governs the on-device run. Set to 'both' for the Android Device
   // Farm projector cpu-vs-gpu benchmark (QVAC-21257).
-  mmprojGpu: 'both',
-  // Single VLM used by mmproj-compare (mmprojGpu='both'); reuses MODEL_2's blobs.
+  mmprojGpu: 'auto',
+  // Single VLM used by mmproj-compare / backend-compare; reuses MODEL_2's blobs.
   mmprojModel: MODEL_2,
+  // QVAC-21257 backend-compare: A/B the whole GPU compute backend (model + projector)
+  // on the GPU leg. On Adreno (S25/S26) this is OpenCL vs Vulkan; on Mali (Pixel) the
+  // 'opencl' cell has no device and falls back to CPU. 'opencl' first => report base;
+  // 'vulkan' => candidate. Set to null/[] to disable. Takes priority over mmprojGpu.
+  compareBackends: ['opencl', 'vulkan'],
 
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of
