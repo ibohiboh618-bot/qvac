@@ -1,11 +1,17 @@
 # tts-cpp — LOCAL OVERLAY PORT (Chatterbox Mali-GPU verify; DO NOT MERGE).
 #
-# Replaces the registry tts-cpp port so the tts-ggml prebuild carries ONE change
-# vs master: allow_arm_mali=true for Chatterbox T3 (main.cpp) + S3Gen
-# (chatterbox_tts.cpp), to ADMIT Chatterbox onto ARM Mali/Immortalis Vulkan.
+# Replaces the registry tts-cpp port so the tts-ggml prebuild carries THREE
+# changes vs master, all for the Bug-2 Mali-GPU verify (DO NOT MERGE):
+#   1. allow_arm_mali=true for Chatterbox T3 (main.cpp) + S3Gen
+#      (chatterbox_tts.cpp) — ADMITS Chatterbox onto ARM Mali/Immortalis Vulkan.
+#   2. S3GEN_DIAG=1 — per-stage (mu_T/mel/f0/wav) per-block rms/min/max +
+#      bit-pattern NaN/Inf trace to localize the token-32 S3Gen collapse.
+#   3. S3GEN_FIX=cfm_unfused — swap the CFM flash_attn_ext for soft_max+matmul
+#      (the FA-on-Mali fix-swing). Both env-gated; default off = stock behaviour.
 # Everything else is current master. ggml-speech is consumed UNCHANGED from the
-# registry — origin/speech has no conv_transpose Mali gate, so conv_transpose_1d
-# runs on the Mali GPU in this build.
+# registry (origin/speech). NB: in the S3Gen graph only HiFT is scheduler-routed
+# and conv_transpose_1d runs on CPU there; the encoder/CFM (the mel producers)
+# run on the Mali GPU, which is where Bug 2 lives.
 #
 # Pinned at tetherto/qvac-ext-lib-whisper.cpp branch
 # QVAC-20557-chbx-mali-gpu-verify-0624 (off master). REF/SHA512 are filled by
@@ -20,8 +26,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF bc0847ad59172a2b05198fcfaf56dcfe32ffcc10
-    SHA512 0038bf407190752ddfc4df59c99e6d839665fd159b85230d4c9de776119ee17c561087e5cbd27ba3d5e4a7f9a3e113f11ce84742cf39b17cbdf8e261b5e6abe2
+    REF 93dcfdadf13b7b92db661e1728986331d15feea4
+    SHA512 0a6da017486f78292432ae85aca995313fe4f5606661de63cb2b2e69ad3a57db2b4bcac0374c73a485a4d2b90f1f983dc31a126c6e0d8a6e1b0392412a48e044
     HEAD_REF master
 )
 
