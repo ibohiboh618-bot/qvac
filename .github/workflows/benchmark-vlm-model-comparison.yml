@@ -423,10 +423,13 @@ jobs:
       # syncs from this URI without referencing it literally.
       fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
       # Android only — the benchmark targets Android flagships; skip iOS.
+      # QVAC-21318: iOS leg is a follow-up (desktop+Android first); see plan.
       platforms: Android
-      # QVAC-21257: Pixel-9-only matrix (replaces the default S25 Ultra + Pixel 9) to
-      # iterate cheaply on the Pixel/Mali mmproj-GPU TTFT investigation.
-      android_flagship_models: 'Pixel 9'
+      # QVAC-21318: KV-cache-quant matrix across the Android flagships — Adreno
+      # (S25 Ultra, S26) + Mali (Pixel 9). android_flagship_models REPLACES the
+      # default set; android_extra_flagship_models ADDS the opt-in S26.
+      android_flagship_models: 'S25 Ultra,Pixel 9'
+      android_extra_flagship_models: 'Galaxy S26'
       # Select ONLY our test via the shard override (no edits to the committed
       # test-groups.json / perf-tests.json). qvac_perf_only=false so the override isn't
       # intersected with perf-tests.json (which we don't touch).
