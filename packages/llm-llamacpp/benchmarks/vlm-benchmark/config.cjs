@@ -25,61 +25,58 @@
 //     source.type 'url' : { type:'url', url }             -> arbitrary direct link
 //     source.type 's3'  : { type:'s3', url }              -> S3 (presigned URL)
 
-// Pinned commit SHAs (immutable provenance).
-const SHA = {
-  qwenUnsloth: '6ab461498e2023f6e3c1baea90a8f0fe38ab64d0', // registry: Qwen3.5 main + f16 mmproj
-  qwenMrader: '9d48fdbc0d8f133716da87ec1d904e5d2c7175a6', //  registry: Qwen3.5 q8 mmproj
-  gemmaBart: 'b5e99bd964eaacc27ba484bb2eb3e9f6160b9143' //    Gemma main + f16 mmproj
-}
+// QVAC-21372: the A1 model pair — Gemma4-E2B (prefill prefers CPU on M4) vs Qwen3.5-2B
+// (prefill prefers GPU). Sourced from the unsloth GGUF repos at revision `main`, matching
+// benchmarks/performance/models.manifest.json and the gemma4/qwen integration tests. We use
+// a `url` source (the same `resolve/main/...` link those tests use): the repos are public,
+// so the mobile (Device Farm) legs — which forward no HF token — can fetch them too.
+const HF = 'https://huggingface.co'
+const GEMMA_REPO = 'unsloth/gemma-4-E2B-it-GGUF'
+const QWEN_REPO = 'unsloth/Qwen3.5-2B-GGUF'
 
-// Apache-2.0 Qwen mmproj blobs are published in the QVAC registry; the pinned HF URL
-// below is byte-identical to the registry's canonical source.
-const QWEN_REG = { license: 'Apache-2.0', link: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF' }
-
-// hf-source blob helper: { modelName (local cache file), origin (human label),
-// source (fetch plan), registry? (mark as a registry entry) }.
-function hf (modelName, origin, repo, sha, file, registry) {
-  return { modelName, origin, registry, source: { type: 'hf', repo, sha, file } }
+// url-source blob helper: { modelName (local cache file), origin (human label),
+// source: { type:'url', url } }.
+function url (modelName, origin, repo, file) {
+  return { modelName, origin, source: { type: 'url', url: `${HF}/${repo}/resolve/main/${file}` } }
 }
 
 // ════════════════════ THE TWO MODELS UNDER TEST (two-models mode) ════════════════════
-// Edit these two to change what two-models compares. The default compares two BLOBS of
-// the SAME model — Qwen3.5-0.8B with the mmproj projector at F16 vs Q8 (same main LLM,
-// different vision-projector quant). To compare two DIFFERENT models instead, point the
-// two `llm` blobs at different models.
+// QVAC-21372 uses two DIFFERENT models (not two mmproj variants): the A1 pair. Each is run
+// on CPU and GPU (premise: CPU-vs-GPU prefill) on every target — the mobile legs measure the
+// per-SoC premise; the desktop legs add the hybrid hook (several-sources, below). Q4_K_M is
+// the cross-leg variant (fits every phone + desktop); mmproj at F16.
 const MODEL_1 = {
-  label: 'qwen3.5-f16', //    short id — report column + marker key (keep filesystem-safe)
-  name: 'Qwen3.5-0.8B · mmproj-F16', // display name
+  label: 'gemma4-e2b-q4km', // short id — report column + marker key (keep filesystem-safe)
+  name: 'Gemma4-E2B-it · Q4_K_M · mmproj-F16',
   ctx_size: '4096',
-  llm: hf('reg-qwen-unsloth-Q8_0.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)}`,
-    'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'Qwen3.5-0.8B-Q8_0.gguf', QWEN_REG),
-  mmproj: hf('reg-qwen-unsloth-mmproj-F16.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)} · mmproj-F16`,
-    'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'mmproj-F16.gguf', QWEN_REG)
+  llm: url('gemma-4-E2B-it-Q4_K_M.gguf', 'unsloth/gemma-4-E2B-it-GGUF · Q4_K_M',
+    GEMMA_REPO, 'gemma-4-E2B-it-Q4_K_M.gguf'),
+  mmproj: url('gemma-4-E2B-it-mmproj-F16.gguf', 'unsloth/gemma-4-E2B-it-GGUF · mmproj-F16',
+    GEMMA_REPO, 'mmproj-F16.gguf')
 }
 
 const MODEL_2 = {
-  label: 'qwen3.5-q8', //     short id
-  name: 'Qwen3.5-0.8B · mmproj-Q8', // display name
+  label: 'qwen35-2b-q4km', //  short id
+  name: 'Qwen3.5-2B · Q4_K_M · mmproj-F16',
   ctx_size: '4096',
-  llm: hf('reg-qwen-unsloth-Q8_0.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)}`,
-    'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'Qwen3.5-0.8B-Q8_0.gguf', QWEN_REG),
-  mmproj: hf('reg-qwen-mradermacher-mmproj-Q8_0.gguf', `mradermacher/Qwen3.5-0.8B-GGUF@${SHA.qwenMrader.slice(0, 10)} · mmproj-Q8_0`,
-    'mradermacher/Qwen3.5-0.8B-GGUF', SHA.qwenMrader, 'Qwen3.5-0.8B.mmproj-Q8_0.gguf',
-    { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
+  llm: url('Qwen3.5-2B-Q4_K_M.gguf', 'unsloth/Qwen3.5-2B-GGUF · Q4_K_M',
+    QWEN_REPO, 'Qwen3.5-2B-Q4_K_M.gguf'),
+  mmproj: url('Qwen3.5-2B-mmproj-F16.gguf', 'unsloth/Qwen3.5-2B-GGUF · mmproj-F16',
+    QWEN_REPO, 'mmproj-F16.gguf')
 }
 
 // ════════════════════ THE MODEL FOR SOURCE COMPARISON (several-sources mode) ════════════════════
-// One fixed VLM, run through every engine. Its blob filenames must match the names the
-// workflow's CLI step feeds to fabric-cli/upstream-cli.
+// The desktop hybrid leg runs this one VLM through fabric-cli with QVAC_PREFILL_CPU off vs on.
+// We pick Gemma4-E2B: on M4 its prefill prefers CPU, so the hybrid hook is the meaningful test.
+// Its blob filenames must match the names the workflow's CLI step feeds to fabric-cli.
 const SOURCES_MODEL = {
-  label: 'qwen3.5-0.8b-q8',
-  name: 'Qwen3.5-0.8B (mmproj Q8)',
+  label: 'gemma4-e2b-q4km',
+  name: 'Gemma4-E2B-it · Q4_K_M (mmproj-F16)',
   ctx_size: '4096',
-  llm: hf('reg-qwen-unsloth-Q8_0.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)}`,
-    'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'Qwen3.5-0.8B-Q8_0.gguf', QWEN_REG),
-  mmproj: hf('reg-qwen-mradermacher-mmproj-Q8_0.gguf', `mradermacher/Qwen3.5-0.8B-GGUF@${SHA.qwenMrader.slice(0, 10)} · mmproj-Q8_0`,
-    'mradermacher/Qwen3.5-0.8B-GGUF', SHA.qwenMrader, 'Qwen3.5-0.8B.mmproj-Q8_0.gguf',
-    { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
+  llm: url('gemma-4-E2B-it-Q4_K_M.gguf', 'unsloth/gemma-4-E2B-it-GGUF · Q4_K_M',
+    GEMMA_REPO, 'gemma-4-E2B-it-Q4_K_M.gguf'),
+  mmproj: url('gemma-4-E2B-it-mmproj-F16.gguf', 'unsloth/gemma-4-E2B-it-GGUF · mmproj-F16',
+    GEMMA_REPO, 'mmproj-F16.gguf')
 }
 
 // Open-licensed fixture tasks (regenerate/curate via build-fixture.cjs;
