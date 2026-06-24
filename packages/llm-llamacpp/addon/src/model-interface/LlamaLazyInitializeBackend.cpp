@@ -4,6 +4,7 @@
 #include <string>
 
 #include <llama.h>
+#include <llama/mtmd/mtmd.h>
 
 #include "LlamaModel.hpp"
 #include "utils/LoggingMacros.hpp"
@@ -37,6 +38,10 @@ bool LlamaLazyInitializeBackend::initialize(
   }
 
   llama_log_set(LlamaModel::llamaLogCallback, nullptr);
+  // Route mtmd/clip logs (including the vision-encoder "slice encoded in N ms"
+  // timing from mtmd-helper) through the same callback as llama, so they reach
+  // logcat on Android instead of going to stderr (which is not captured).
+  mtmd_log_set_llama_callback(LlamaModel::llamaLogCallback, nullptr);
 
 #ifdef __ANDROID__
   if (!openclCacheDir.empty()) {

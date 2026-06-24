@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 
 #include <common/log.h>
 #include <inference-addon-cpp/Errors.hpp>
@@ -162,6 +163,14 @@ void MtmdLlmContext::initVisionContext() {
   mparams.backend_device =
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
+  // Flash attention on the vision tower is kept on by default (llama's
+  // FA-auto). The Adreno OpenCL flash_attn_f32 kernel previously corrupted the
+  // SigLIP encode due to a missing shared-memory tile barrier (fixed in the
+  // qvac-fabric overlay patch), so FA-on is now both fast and correct on
+  // OpenCL. QVAC_VISION_NO_FLASH_ATTN=1 forces standard attention for A/B.
+  if (std::getenv("QVAC_VISION_NO_FLASH_ATTN") != nullptr) {
+    mparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+  }
   mparams.n_threads = params_.cpuparams.n_threads;
   ctxVision_.reset(mtmd_init_from_file(clipPath, modelCtx_.model, mparams));
   if (ctxVision_.get() == nullptr) {
@@ -456,6 +465,9 @@ bool MtmdLlmContext::evalMessageWithTools(
       stopGeneration_.store(false);
       return false;
     }
+    const bool isImageChunk =
+        mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE;
+    const int64_t chunkT0 = isImageChunk ? ggml_time_ms() : 0;
     int32_t res = mtmd_helper_eval_chunk_single(
         ctxVision_.get(),
         modelCtx_.lctx,
@@ -465,6 +477,18 @@ bool MtmdLlmContext::evalMessageWithTools(
         params_.n_batch,
         chunkLogitsLast,
         &nPastLocal);
+    if (isImageChunk) {
+      // Vision encode + image-token projection for this chunk. Logged via the
+      // addon logger so it reaches logcat (mtmd's own "slice encoded in N ms"
+      // uses common/log.h, which is not routed there). Used to A/B the SigLIP
+      // encoder on CPU vs the Adreno OpenCL backend.
+      QLOG_IF(
+          Priority::INFO,
+          "[VISION_ENCODE_MS] " +
+              std::to_string(ggml_time_ms() - chunkT0) +
+              " (tokens=" +
+              std::to_string(mtmd_input_chunk_get_n_tokens(chunk)) + ")");
+    }
     if (res != 0) {
       std::string errorMsg =
           "[MtmdLlm] failed to eval chunk " + std::to_string(i);
