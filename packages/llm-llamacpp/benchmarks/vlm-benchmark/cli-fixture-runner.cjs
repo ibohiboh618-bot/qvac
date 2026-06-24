@@ -72,7 +72,11 @@ function main () {
       temperature: 0,
       seed: 42,
       thinkingEnabled: false, // match the addon harness (reasoning-budget=0)
-      verbosePrompt: true, // print the rendered prompt for prompt-parity audits
+      // QVAC-21372: must stay false. Current llama-mtmd-cli builds (fabric v9341+, upstream
+      // b8189) reject `--verbose-prompt` ("invalid argument") and exit 1, which silently
+      // failed every several-sources CLI cell. The prompt-parity audit isn't needed for the
+      // perf/quality run.
+      verbosePrompt: false,
       perRunTimeoutMs: 5 * 60 * 1000
     }
     for (let rep = 0; rep < REPEATS; rep++) {
