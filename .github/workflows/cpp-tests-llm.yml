@@ -49,6 +49,12 @@ jobs:
     environment: release
     name: cpp-tests-${{ matrix.platform }}-${{ matrix.arch || 'x64' }}
 
+    # id-token: write is required to mint the OIDC token for the
+    # vcpkg S3 binary cache (see "Setup AWS + Windows CLI" below).
+    permissions:
+      contents: read
+      id-token: write
+
     env:
       WORKDIR: ${{ inputs.workdir }}
       # keep cache inside workdir so everything is self-contained
@@ -73,6 +79,16 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
 
+
+      # Mint OIDC creds (eu-central-1) and install the AWS CLI on the
+      # Windows self-hosted runner so vcpkg's `x-aws` provider can reach
+      # the shared S3 binary cache. Mirrors reusable-prebuilds.yml, which
+      # populates the same s3://.../vcpkg-cache/<platform>-<arch>/ prefix.
+      # Must run before Setup vcpkg so creds are present for the build.
+      - name: Setup AWS + Windows CLI
+        uses: tetherto/qvac/.github/actions/setup-aws-prebuild@2e2c94d66a50c8b8851824314e343ede5297eb1f
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
 
       - name: Setup vcpkg
         uses: tetherto/qvac/.github/actions/setup-vcpkg@98990f3d11736a1ae88feddc514d14d78d7abdc7
