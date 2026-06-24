@@ -70,6 +70,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_matrix_ios:
+        description: "  also run the matrix on iOS (iPhone, AWS Device Farm — QVAC-21318)"
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
   packages: read
@@ -379,7 +384,7 @@ jobs:
   # platform build flakes.
   prebuild:
     needs: context
-    if: inputs.run_matrix && inputs.run_matrix_s25 && inputs.matrix_mode != 'several-sources'
+    if: inputs.run_matrix && (inputs.run_matrix_s25 || inputs.run_matrix_ios) && inputs.matrix_mode != 'several-sources'
     permissions:
       contents: write
       pull-requests: write
@@ -389,9 +394,10 @@ jobs:
     with:
       ref: ${{ needs.context.outputs.ref }}
       repository: ${{ needs.context.outputs.repository }}
-      # Build ONLY the target the Android Device Farm test consumes (android-arm64),
-      # not the full 9-variant matrix. Add an ios entry here for iOS device farm later.
-      targets: '[{"platform":"android","arch":"arm64","os":"ubuntu-24.04"}]'
+      # Build ONLY the target(s) the requested Device Farm leg(s) consume, not the full
+      # 9-variant matrix. QVAC-21318: android-arm64 for S25/Pixel/S26, ios-arm64 for the
+      # iPhone leg — only the enabled legs' targets are built.
+      targets: ${{ (inputs.run_matrix_s25 && inputs.run_matrix_ios) && '[{"platform":"android","arch":"arm64","os":"ubuntu-24.04"},{"platform":"ios","arch":"arm64","os":"macos-14"}]' || (inputs.run_matrix_ios && '[{"platform":"ios","arch":"arm64","os":"macos-14"}]') || '[{"platform":"android","arch":"arm64","os":"ubuntu-24.04"}]' }}
       workdir: packages/llm-llamacpp
       artifact-name-prefix: llama-cpp-
       include-vulkan-sdk: true
@@ -441,6 +447,27 @@ jobs:
       qvac_perf_runs: ${{ inputs.matrix_samples }}
       test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
 
+  # ── Matrix mode: iOS (AWS Device Farm) ─────────────────────────────
+  # QVAC-21318: the iOS counterpart of matrix-s25 — runs the SAME kv-sweep harness
+  # on the iPhone(s) in the LLM iOS Device Farm pool (LLM_IOS_DEVICE_POOL_ARN governs
+  # device selection; there is no flagship-model filter for iOS). addon engine only.
+  # Markers land in bare_console.log (Customer_Artifacts), uploaded as
+  # console-logs-llamacpp-llm-iOS and combined below.
+  matrix-ios:
+    needs: [context, prebuild]
+    if: inputs.run_matrix && inputs.run_matrix_ios && inputs.matrix_mode != 'several-sources'
+    uses: ./.github/workflows/integration-mobile-test-llm-llamacpp.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.context.outputs.ref }}
+      repository: ${{ needs.context.outputs.repository }}
+      pre_build_script: benchmarks/vlm-benchmark/stage.cjs
+      fixture_images_uri: s3://tether-ai-dev/vlm-benchmark/
+      platforms: iOS
+      qvac_perf_only: false
+      qvac_perf_runs: ${{ inputs.matrix_samples }}
+      test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
+
   # ── Matrix mode: combine ───────────────────────────────────────────
   # Aggregates [VLMROW]/[VLMSEG]/[VLMMETA] markers from every matrix log
   # (Linux .log + S25 bare_console.log) into one quality+speed report via
@@ -451,6 +478,7 @@ jobs:
       - context
       - matrix-linux
       - matrix-s25
+      - matrix-ios
     if: always() && inputs.run_matrix && needs.context.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -528,6 +556,21 @@ jobs:
           add_android s25 '*Galaxy_S25*logcat_full*' 'Samsung Galaxy S25 Ultra'
           add_android pixel9 '*Pixel_9*logcat_full*' 'Google Pixel 9'
           add_android s26 '*Galaxy_S26*logcat_full*' 'Samsung Galaxy S26'
+          # QVAC-21318: iOS leg — no logcat; the [VLMROW] markers are in the iPhone's
+          # bare_console.log (Customer_Artifacts), under an iOS-named console-logs dir.
+          # Filename-agnostic: pick the marker-bearing file whose path mentions iOS.
+          add_ios () { # <host-label> <pretty-name>
+            local host="$1" pretty="$2" f
+            f=$(grep -rlE '\[VLMROW\]' matrix-logs 2>/dev/null | grep -iE 'ios' | head -1)
+            [ -z "$f" ] && return 0
+            ARGS="$ARGS --in $host $f"
+            {
+              echo "**$host** — $pretty (AWS Device Farm)"
+              echo "- engine: \`@qvac/llm-llamacpp\` addon"
+            } > "prov-$host.md"
+            PROV="$PROV --provenance prov-$host.md"
+          }
+          add_ios ios 'Apple iPhone'
           echo "aggregate inputs:$ARGS"
           echo "provenance:$PROV"
           if [ -z "$ARGS" ]; then
