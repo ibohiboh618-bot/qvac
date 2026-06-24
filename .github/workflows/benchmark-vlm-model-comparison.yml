@@ -561,7 +561,9 @@ jobs:
           # Filename-agnostic: pick the marker-bearing file whose path mentions iOS.
           add_ios () { # <host-label> <pretty-name>
             local host="$1" pretty="$2" f
-            f=$(grep -rlE '\[VLMROW\]' matrix-logs 2>/dev/null | grep -iE 'ios' | head -1)
+            # `|| true`: under `set -e -o pipefail`, grep exits 1 when there are no
+            # iOS logs (iOS leg skipped) — without this the whole combine aborts.
+            f=$(grep -rlE '\[VLMROW\]' matrix-logs 2>/dev/null | grep -iE 'ios' | head -1 || true)
             [ -z "$f" ] && return 0
             ARGS="$ARGS --in $host $f"
             {
