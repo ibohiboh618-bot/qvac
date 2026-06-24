@@ -211,22 +211,6 @@ backend_selection::preferredBackendTypeFromString(const std::string& device) {
       "'cpu'.\n");
 }
 
-GpuBackendPreference
-backend_selection::gpuBackendPreferenceFromString(const std::string& value) {
-  std::string v;
-  v.reserve(value.size());
-  for (const char c : value) {
-    v += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  if (v == "vulkan" || v == "vk") {
-    return GpuBackendPreference::Vulkan;
-  }
-  if (v == "opencl" || v == "ocl" || v == "cl") {
-    return GpuBackendPreference::OpenCl;
-  }
-  return GpuBackendPreference::Auto;
-}
-
 std::optional<MainGpu>
 backend_selection::parseMainGpu(const std::string& mainGpuStr) {
   if (mainGpuStr.empty()) {
@@ -276,8 +260,7 @@ std::optional<MainGpu> backend_selection::tryMainGpuFromMap(
 std::pair<BackendType, std::string> backend_selection::chooseBackend(
     const BackendType preferredBackendType, const BackendInterface& bckI,
     const ModelMetaData* metadata, const std::optional<MainGpu>& mainGpu,
-    std::optional<int>* outAdrenoVersion, const bool isFinetuning,
-    const GpuBackendPreference gpuPref) {
+    std::optional<int>* outAdrenoVersion, const bool isFinetuning) {
 
   std::vector<std::string> gpuBackends;
   std::vector<std::string> igpuBackends;
@@ -378,28 +361,6 @@ std::pair<BackendType, std::string> backend_selection::chooseBackend(
     }
   }
 
-  // QVAC-21257: explicit `gpu-backend` override wins over the default
-  // Adreno/Vulkan selection above. Force one backend by discarding the others
-  // before selection; Auto leaves the lists untouched (default behaviour).
-  if (gpuPref == GpuBackendPreference::Vulkan) {
-    if (!openClBackends.empty()) {
-      bckI.llamaLogCallback(
-          GGML_LOG_LEVEL_INFO,
-          "gpu-backend=vulkan: discarding OpenCL device(s)",
-          nullptr);
-    }
-    openClBackends.clear();
-  } else if (gpuPref == GpuBackendPreference::OpenCl) {
-    if (!gpuBackends.empty() || !igpuBackends.empty()) {
-      bckI.llamaLogCallback(
-          GGML_LOG_LEVEL_INFO,
-          "gpu-backend=opencl: discarding Vulkan device(s)",
-          nullptr);
-    }
-    gpuBackends.clear();
-    igpuBackends.clear();
-  }
-
   if (outAdrenoVersion != nullptr) {
     *outAdrenoVersion = maxAdrenoVersion;
   }
@@ -426,8 +387,7 @@ std::pair<BackendType, std::string> backend_selection::chooseBackend(
 std::pair<BackendType, std::string> backend_selection::chooseBackend(
     const BackendType preferredBackendType, llamaLogCallbackF llamaLogcallback,
     const std::optional<MainGpu>& mainGpu, const ModelMetaData* metadata,
-    std::optional<int>* outAdrenoVersion, const bool isFinetuning,
-    const GpuBackendPreference gpuPref) {
+    std::optional<int>* outAdrenoVersion, const bool isFinetuning) {
   BackendInterface bckI{
       ggml_backend_dev_count,
       ggml_backend_dev_backend_reg,
@@ -443,8 +403,7 @@ std::pair<BackendType, std::string> backend_selection::chooseBackend(
       metadata,
       mainGpu,
       outAdrenoVersion,
-      isFinetuning,
-      gpuPref);
+      isFinetuning);
 }
 
 size_t

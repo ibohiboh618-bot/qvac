@@ -22,15 +22,6 @@ enum BackendType : std::uint8_t { CPU, GPU };
 
 enum class MainGpuType : std::uint8_t { Integrated, Dedicated };
 
-/// Explicit GPU backend override (the `gpu-backend` config key). Auto keeps the
-/// default selection (Adreno -> OpenCL, else Vulkan); Vulkan/OpenCl force that
-/// backend by discarding the others before selection. QVAC-21257.
-enum class GpuBackendPreference : std::uint8_t { Auto, Vulkan, OpenCl };
-
-/// Parse the `gpu-backend` config value ("auto"/"vulkan"/"opencl", case-insensitive).
-/// Unknown/empty -> Auto.
-GpuBackendPreference gpuBackendPreferenceFromString(const std::string& value);
-
 using MainGpu = std::variant<int, MainGpuType>;
 
 BackendType preferredBackendTypeFromString(const std::string& device);
@@ -59,8 +50,7 @@ std::pair<BackendType, std::string> chooseBackend(
     BackendType preferredBackendType, const BackendInterface& bckI,
     const ModelMetaData* metadata = nullptr,
     const std::optional<MainGpu>& mainGpu = std::nullopt,
-    std::optional<int>* outAdrenoVersion = nullptr, bool isFinetuning = false,
-    GpuBackendPreference gpuPref = GpuBackendPreference::Auto);
+    std::optional<int>* outAdrenoVersion = nullptr, bool isFinetuning = false);
 
 /// @brief Choose the backend to use for the model based on GPU device and
 /// available backends. Prefer OpenCL backend for Adreno GPUs, otherwise
@@ -78,8 +68,7 @@ std::pair<BackendType, std::string> chooseBackend(
 std::pair<BackendType, std::string> chooseBackend(
     BackendType preferredBackendType, llamaLogCallbackF llamaLogcallback,
     const std::optional<MainGpu>& mainGpu, const ModelMetaData* metadata,
-    std::optional<int>* outAdrenoVersion = nullptr, bool isFinetuning = false,
-    GpuBackendPreference gpuPref = GpuBackendPreference::Auto);
+    std::optional<int>* outAdrenoVersion = nullptr, bool isFinetuning = false);
 
 /// @brief Count GPU devices available for multi-GPU split mode.
 /// Returns the number of discrete GPUs when any are present; otherwise

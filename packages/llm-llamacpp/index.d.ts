@@ -80,13 +80,6 @@ export interface LlamaConfig {
    * OpenCL the vision op set may be incomplete — measure before enabling.
    */
   'mmproj-use-gpu'?: string
-  /**
-   * Force the GPU compute backend: 'auto' (default — Adreno→OpenCL, else Vulkan),
-   * 'vulkan', or 'opencl'. Only meaningful with device:'gpu'. Use to override the
-   * default Adreno→OpenCL selection (e.g. force Vulkan on Adreno). Unknown values
-   * fall back to 'auto'.
-   */
-  'gpu-backend'?: 'auto' | 'vulkan' | 'opencl'
   /** Writable directory for OpenCL kernel binary cache. Required on Android for fast GPU startup. */
   openclCacheDir?: string
   /**

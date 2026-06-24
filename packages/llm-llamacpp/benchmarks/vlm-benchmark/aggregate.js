@@ -186,21 +186,14 @@ const fmtPct = x => x == null ? '—' : (100 * x).toFixed(1)
 const fmtNum = (x, d = 1) => x == null ? '—' : Number(x).toFixed(d)
 
 function build (rows, vision, meta, provText, title, opts = {}) {
-  // QVAC-21257 compare modes: one model, one axis varies → render via the existing
-  // two-models tables, using the two cells as the base/candidate columns.
-  //   mmproj-compare:  cells 'mmproj-cpu' / 'mmproj-gpu' (projector backend varies)
-  //   backend-compare: cells 'backend-opencl' / 'backend-vulkan' (GPU backend varies)
-  const cellSet = [...new Set(rows.map(r => r.cell))].sort()
+  // QVAC-21257 mmproj-compare: cells are 'mmproj-cpu' / 'mmproj-gpu' (one model, the
+  // projector backend varies). Render via the existing two-models tables, using those
+  // as the base/candidate columns. Detected by --mode mmproj or the cell naming.
+  const cellSet = [...new Set(rows.map(r => r.cell))]
   const isMmproj = opts.mode === 'mmproj' ||
     (cellSet.length > 0 && cellSet.every(c => /^mmproj-/.test(String(c))))
-  const isBackend = opts.mode === 'backend' ||
-    (cellSet.length > 0 && cellSet.every(c => /^backend-/.test(String(c))))
-  let base = opts.base || 'model_1'
-  let candidate = opts.candidate || 'model_2'
-  if (isMmproj) { base = 'mmproj-cpu'; candidate = 'mmproj-gpu' } else if (isBackend) {
-    // base = first cell alphabetically (backend-opencl), candidate = second (backend-vulkan)
-    base = cellSet[0]; candidate = cellSet[1] || cellSet[0]
-  }
+  const base = isMmproj ? 'mmproj-cpu' : (opts.base || 'model_1')
+  const candidate = isMmproj ? 'mmproj-gpu' : (opts.candidate || 'model_2')
   // Drop the first segment per cell as warmup (Vulkan shader-compile / JIT spike on the
   // first encode after each model load) so the mean reflects steady-state encode cost.
   function visStats (key) {
@@ -261,9 +254,7 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     ? 'several sources (engine varies; model fixed)'
     : isMmproj
       ? 'mmproj projector backend (CPU vs GPU; one model, GPU model-backend)'
-      : isBackend
-        ? `GPU compute backend (${base} vs ${candidate}; one model, projector on GPU)`
-        : `two models (${base} vs ${candidate}; engine fixed)`
+      : `two models (${base} vs ${candidate}; engine fixed)`
   L.push(`**Mode:** ${modeLabel}  ·  **Engine:** ${opts.engine || 'addon'}\n`)
   const severalSources = opts.mode === 'several-sources'
   L.push(severalSources
