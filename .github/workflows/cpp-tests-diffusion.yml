@@ -42,7 +42,7 @@ jobs:
             arch: x64
             runner: qvac-ubuntu2404-x64
           - os: windows-2025
-            platform: windows
+            platform: win32
             runner: qvac-win25-x64
             arch: x64
 

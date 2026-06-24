@@ -41,7 +41,7 @@ jobs:
             platform: darwin
             arch: arm64
           - os: windows-2025
-            platform: windows
+            platform: win32
             runner: qvac-win25-x64
             arch: x64
 
