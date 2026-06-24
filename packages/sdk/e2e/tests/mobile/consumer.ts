@@ -18,7 +18,7 @@ import {
   MARIAN_EN_HI_INDIC_200M_Q4_0,
   MARIAN_HI_EN_INDIC_200M_Q4_0,
   TTS_T3_TURBO_EN_CHATTERBOX_Q8_0,
-  TTS_S3GEN_EN_CHATTERBOX,
+  TTS_S3GEN_EN_CHATTERBOX_Q8_0,
   TTS_EN_SUPERTONIC_Q8_0,
   TTS_MULTILINGUAL_SUPERTONIC3_Q4_0,
   PARAKEET_TDT_0_6B_V3_Q8_0,
@@ -259,7 +259,7 @@ resources.define("tts-chatterbox", {
     ttsEngine: "chatterbox",
     language: "en",
     useGPU: true,
-    s3genModelSrc: TTS_S3GEN_EN_CHATTERBOX,
+    s3genModelSrc: TTS_S3GEN_EN_CHATTERBOX_Q8_0,
     streamChunkTokens: 25,
     streamFirstChunkTokens: 10,
     cfmSteps: 1,
@@ -414,8 +414,10 @@ export const executor = createExecutor({
       ], "Parakeet streaming EOU/iterator recovery is flaky on Android"),
     ] : []),
     ...(Platform.OS === "ios" ? [
-      // QVAC-19557: Chatterbox TTS variants OOM on iOS Device Farm under the current memory budget.
-      new SkipExecutor(/^tts-chatterbox-/, "Chatterbox TTS is flaky on iOS under Device Farm memory pressure (OOM)"),
+      // QVAC-19557: re-enabled on iOS — the Chatterbox first-synth peak now
+      // clears the Device Farm memory budget (tts-cpp 2026-06-24 / PR #65
+      // S3Tokenizer host-mirror elimination: on-device first-test peak
+      // ~3184 -> ~2772 MB).
       skipTests([
         "ocr-sign-image",
         "ocr-chart-image",
