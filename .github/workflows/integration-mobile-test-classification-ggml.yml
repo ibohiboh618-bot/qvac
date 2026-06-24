@@ -102,6 +102,7 @@ jobs:
           addon-npm-name: '@qvac/classification-ggml'
           prebuild-artifact-prefix: 'classification-ggml-'
           pat-token: ${{ secrets.PAT_TOKEN }}
+          test-framework-ref: 'fix/skip-vs-crash-distinction'
 
       # The shared composite handles prebuild fan-out, but classification-ggml
       # also needs `weights/*.gguf` copied into `test/mobile/testAssets/<file>.gguf.bin`

@@ -111,6 +111,7 @@ jobs:
           addon-npm-name: '@qvac/tts-ggml'
           prebuild-artifact-prefix: 'tts-ggml-'
           pat-token: ${{ secrets.PAT_TOKEN }}
+          test-framework-ref: 'fix/skip-vs-crash-distinction'
 
       # Benchmark opt-in (run_rtf_benchmarks=true): patch the addon's
       # test/mobile/integration-runtime.cjs to stub `bare-os.getEnv` so the
