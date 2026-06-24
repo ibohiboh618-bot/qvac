@@ -164,6 +164,10 @@ void MtmdLlmContext::initVisionContext() {
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
   mparams.n_threads = params_.cpuparams.n_threads;
+  // QVAC-21257 (Pixel/Mali investigation): run a warmup encode at init so the first
+  // real image doesn't pay Vulkan shader/pipeline compilation cost (mobile GPUs can
+  // spend hundreds of ms compiling SPIR-V on the first dispatch).
+  mparams.warmup = true;
   ctxVision_.reset(mtmd_init_from_file(clipPath, modelCtx_.model, mparams));
   if (ctxVision_.get() == nullptr) {
     std::string errorMsg = string_format(
