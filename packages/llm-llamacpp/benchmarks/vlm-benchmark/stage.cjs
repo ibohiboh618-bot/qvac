@@ -18,8 +18,9 @@ const ASSETS = path.resolve(HERE, '..', '..', 'test', 'mobile', 'testAssets')
 const IMAGES = path.join(HERE, 'images')
 
 // The entry + the modules it requires must sit together in test/integration so the
-// entry's `./harness.cjs` / harness's `./config.cjs` `./fixture.data.cjs` resolve.
-const CODE = ['vlm-matrix.test.js', 'harness.cjs', 'config.cjs', 'fixture.data.cjs']
+// entry's `./harness.cjs` / harness's `./config.cjs` `./fixture.data.cjs`
+// `./stdout-parser` (QVAC-21318: KV-cache-size parse) resolve for the mobile bundler.
+const CODE = ['vlm-matrix.test.js', 'harness.cjs', 'config.cjs', 'fixture.data.cjs', 'stdout-parser.js']
 
 fs.mkdirSync(INTEG, { recursive: true })
 fs.mkdirSync(ASSETS, { recursive: true })
