@@ -190,8 +190,12 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   // projector backend varies). Render via the existing two-models tables, using those
   // as the base/candidate columns. Detected by --mode mmproj or the cell naming.
   const cellSet = [...new Set(rows.map(r => r.cell))]
-  const isMmproj = opts.mode === 'mmproj' ||
-    (cellSet.length > 0 && cellSet.every(c => /^mmproj-/.test(String(c))))
+  // QVAC-21318: KV-cache-quant sweep — detected by rows carrying a kv_type. The
+  // comparison axis is the KV cache type; cells are `<model>·<kv>`.
+  const isKv = rows.some(r => r.kv_type != null)
+  const KV_ORDER = (CONFIG.kvSweep || []).map(k => k.label)
+  const isMmproj = !isKv && (opts.mode === 'mmproj' ||
+    (cellSet.length > 0 && cellSet.every(c => /^mmproj-/.test(String(c)))))
   const base = isMmproj ? 'mmproj-cpu' : (opts.base || 'model_1')
   const candidate = isMmproj ? 'mmproj-gpu' : (opts.candidate || 'model_2')
   // Drop the first segment per cell as warmup (Vulkan shader-compile / JIT spike on the
@@ -245,7 +249,9 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       sl: visSlices(key),
       ttft: mean(okRows.map(r => r.ttft_ms).filter(v => v != null)),
       tps: mean(okRows.map(r => r.decode_tps).filter(v => v != null)),
-      wall: mean(okRows.map(r => r.ms).filter(v => v != null))
+      wall: mean(okRows.map(r => r.ms).filter(v => v != null)),
+      // QVAC-21318: KV-cache memory (MiB) for this cell, from the native log line.
+      kvMem: mean(okRows.map(r => r.kv_mem_mib).filter(v => v != null))
     }
   }
   const pctFaster = (f, q) => (q != null && f != null && f !== 0) ? ((f - q) / f * 100) : null
@@ -253,24 +259,85 @@ function build (rows, vision, meta, provText, title, opts = {}) {
 
   const L = []
   L.push(`## ${title}\n`)
-  const modeLabel = opts.mode === 'several-sources'
-    ? 'several sources (engine varies; model fixed)'
-    : isMmproj
-      ? 'mmproj projector backend (CPU vs GPU; one model, GPU model-backend)'
-      : `two models (${base} vs ${candidate}; engine fixed)`
+  const modeLabel = isKv
+    ? 'KV-cache quant sweep (cache type varies per cell; model fixed per row)'
+    : opts.mode === 'several-sources'
+      ? 'several sources (engine varies; model fixed)'
+      : isMmproj
+        ? 'mmproj projector backend (CPU vs GPU; one model, GPU model-backend)'
+        : `two models (${base} vs ${candidate}; engine fixed)`
   L.push(`**Mode:** ${modeLabel}  ·  **Engine:** ${opts.engine || 'addon'}\n`)
   const severalSources = opts.mode === 'several-sources'
-  L.push(severalSources
-    ? '_one fixed model across inference engines · quality = lmms-eval ' +
-      '(VQA / ANLS / relaxed / MC), equal-weight mean across tasks._\n'
-    : `_comparing two models — base = **${base}**, candidate = **${candidate}** · quality = lmms-eval ` +
-      '(VQA / ANLS / relaxed / MC), equal-weight mean across tasks._\n')
+  L.push(isKv
+    ? '_KV-cache-quant sweep — f16 (baseline) vs q8_0 / q4_0 / mixed k=q8_0·v=q4_0, per model · device · ' +
+      'platform · quality = lmms-eval (VQA / ANLS / relaxed / MC), equal-weight mean across tasks._\n'
+    : severalSources
+      ? '_one fixed model across inference engines · quality = lmms-eval ' +
+        '(VQA / ANLS / relaxed / MC), equal-weight mean across tasks._\n'
+      : `_comparing two models — base = **${base}**, candidate = **${candidate}** · quality = lmms-eval ` +
+        '(VQA / ANLS / relaxed / MC), equal-weight mean across tasks._\n')
 
   if (!keys.length) { L.push('> ⚠️ No [VLMROW] markers found in the provided logs.\n'); return L.join('\n') }
 
   // ── 1 · Highlights — Quality + Speed tables ───────────────────────────────
   L.push('# 1 · Highlights\n')
-  if (severalSources) {
+  if (isKv) {
+    // QVAC-21318: comparison axis is the KV-cache type; one column per kv type, one
+    // row per (platform · model · device). f16 is the quality/memory baseline.
+    const kvs = [...new Set(rows.filter(r => r.kv_type).map(r => r.kv_type))]
+      .sort((a, b) => ((KV_ORDER.indexOf(a) + 1) || 99) - ((KV_ORDER.indexOf(b) + 1) || 99) || a.localeCompare(b))
+    const models = [...new Set(rows.map(r => r.model).filter(Boolean))].sort()
+    const baseKv = kvs.includes('f16') ? 'f16' : kvs[0]
+    const kvStat = (host, model, dv, kv) => groupStats(`${host}|${model}·${kv}|${dv}`)
+    const hdr = '| Platform · model · device | ' + kvs.join(' | ') + ' |'
+    const sep = '|' + '---|'.repeat(kvs.length + 1)
+    const eachGroup = fn => {
+      for (const host of hosts) {
+        for (const model of models) {
+          for (const dv of devs) {
+            const cells = kvs.map(kv => kvStat(host, model, dv, kv))
+            if (cells.every(c => !c)) continue
+            fn(host, model, dv, cells)
+          }
+        }
+      }
+    }
+    L.push(`KV-cache types: **${kvs.join(', ')}** · baseline = **${baseKv}** · per platform · model · device.\n`)
+
+    L.push(`### Quality — overall % per KV type (Δ vs ${baseKv}, pp)\n`)
+    L.push(hdr); L.push(sep)
+    eachGroup((host, model, dv, cells) => {
+      const b = kvStat(host, model, dv, baseKv)
+      const vals = cells.map((g, i) => {
+        if (!g || g.overall == null) return '—'
+        const dpp = (b && b.overall != null && kvs[i] !== baseKv)
+          ? ` (${(g.overall - b.overall) * 100 >= 0 ? '+' : ''}${((g.overall - b.overall) * 100).toFixed(1)})` : ''
+        return fmtPct(g.overall) + dpp
+      })
+      L.push(`| ${host || '—'} · ${model} · ${dv.toUpperCase()} | ` + vals.join(' | ') + ' |')
+    })
+    L.push('')
+
+    L.push('### Decode throughput — tokens/s per KV type (higher = faster)\n')
+    L.push(hdr); L.push(sep)
+    eachGroup((host, model, dv, cells) => {
+      L.push(`| ${host || '—'} · ${model} · ${dv.toUpperCase()} | ` + cells.map(g => g ? fmtNum(g.tps, 1) : '—').join(' | ') + ' |')
+    })
+    L.push('')
+
+    L.push(`### KV-cache memory — MiB per KV type (% of ${baseKv})\n`)
+    L.push(hdr); L.push(sep)
+    eachGroup((host, model, dv, cells) => {
+      const b = kvStat(host, model, dv, baseKv)
+      const vals = cells.map(g => {
+        if (!g || g.kvMem == null) return '—'
+        const pct = (b && b.kvMem) ? ` (${(g.kvMem / b.kvMem * 100).toFixed(0)}%)` : ''
+        return fmtNum(g.kvMem, 2) + pct
+      })
+      L.push(`| ${host || '—'} · ${model} · ${dv.toUpperCase()} | ` + vals.join(' | ') + ' |')
+    })
+    L.push('')
+  } else if (severalSources) {
     // Comparison axis is the engine; one column per source.
     const sources = [...new Set(rows.map(r => r.cell))].sort()
     L.push(`Inference engines on the same model: **${sources.join(', ')}**.\n`)
@@ -359,12 +426,16 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   }
   L.push('')
   L.push('### Speed\n')
-  L.push('| Config | host | n | err | **mmproj enc (ms)** | tiles | TTFT (ms) | decode TPS | wall (ms) |')
-  L.push('|---|---|---|---|---|---|---|---|---|')
+  // QVAC-21318: surface KV-cache memory (MiB) as an extra column in kv-sweep runs.
+  const kvCol = isKv ? ' KV (MiB) |' : ''
+  const kvSep = isKv ? '---|' : ''
+  L.push('| Config | host | n | err | **mmproj enc (ms)** | tiles | TTFT (ms) | decode TPS | wall (ms) |' + kvCol)
+  L.push('|---|---|---|---|---|---|---|---|---|' + kvSep)
   for (const k of keys) {
     const [host, cell, dev] = k.split('|')
     const g = groupStats(k)
-    L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.wall, 0)} |`)
+    const kvCell = isKv ? ` ${fmtNum(g.kvMem, 2)} |` : ''
+    L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.wall, 0)} |` + kvCell)
   }
   L.push('')
   L.push('> **mmproj enc** is the image-chunk encode time. QVAC-21257: it now comes from the addon\'s ' +

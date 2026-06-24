@@ -55,4 +55,36 @@ function parseStdoutMetrics (text) {
   return out
 }
 
-module.exports = { parseStdoutMetrics }
+// QVAC-21318: extract the TOTAL KV-cache size (MiB) from the native llama.cpp logs for
+// the current run. `logs` is the line array captured by attachSpecLogger (or any
+// iterable of log strings). A model can allocate MORE THAN ONE KV cache — e.g. Gemma-4
+// has a full-attention cache plus a separate sliding-window cache, each printing its own
+// `llama_kv_cache: size = … MiB` line — so we SUM them rather than take one. When `cfg`
+// is given, only lines echoing the expected `K (<k>)` / `V (<v>)` quant tags are summed,
+// so a previous run's KV line (the buffered flush when the global logger is reinstalled)
+// is never counted. Exact-duplicate lines (Android logcat double-prints) are summed once.
+// Example line:
+//   llama_kv_cache: size = 12.91 MiB (512 cells, 28 layers, ...), K (q8_0): 7.4 MiB, V (q4_0): 5.5 MiB
+function parseKvCacheMiB (logs, cfg) {
+  const sizeRe = /llama_kv_cache(?:_unified)?:\s*size\s*=\s*([\d.]+)\s*MiB/
+  const kTag = cfg && cfg.k ? `K (${cfg.k}` : null
+  const vTag = cfg && cfg.v ? `V (${cfg.v}` : null
+  const lines = Array.isArray(logs) ? logs : String(logs == null ? '' : logs).split(/\r?\n/)
+  const tagged = []
+  const untagged = []
+  const seen = new Set()
+  for (const line of lines) {
+    const match = line && line.match(sizeRe)
+    if (!match) continue
+    if (seen.has(line)) continue // drop exact-duplicate flushes (logcat double-print)
+    seen.add(line)
+    const mib = parseFloat(match[1])
+    if (kTag && vTag && line.includes(kTag) && line.includes(vTag)) tagged.push(mib)
+    else if (!kTag) untagged.push(mib)
+  }
+  const pick = tagged.length ? tagged : (kTag ? [] : untagged)
+  if (!pick.length) return null
+  return pick.reduce((a, b) => a + b, 0)
+}
+
+module.exports = { parseStdoutMetrics, parseKvCacheMiB }

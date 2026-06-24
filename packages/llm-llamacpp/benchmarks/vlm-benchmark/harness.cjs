@@ -22,6 +22,12 @@ const { ensureModel } = require('../../test/integration/utils')
 const LlmLlamacpp = require('../../index.js')
 const fixture = require('./fixture.data.cjs')
 const config = require('./config.cjs')
+const { parseKvCacheMiB } = require('./stdout-parser')
+// QVAC-21318: capture native llama.cpp logs (the `llama_kv_cache: size = … MiB` line)
+// so kv-sweep can report KV-cache memory per cache type. Same global log hook the
+// quantized-kvcache integration test uses.
+let attachSpecLogger = null
+try { ({ attachSpecLogger } = require('../../test/integration/spec-logger')) } catch (_) {}
 
 // Resolve a fixture image. Images live in a fixture object store (not git): CI syncs
 // them into this dir's images/ before the run. Desktop reads images/ directly; mobile
@@ -64,6 +70,19 @@ const SOURCE = env('QVAC_VLM_ENGINE') || config.engine || 'addon'
 // per-platform default; 'cpu'/'gpu' set the addon's mmproj-use-gpu key. No env
 // passthrough on mobile, so config.mmprojGpu governs the on-device run.
 const MMPROJ_GPU = (env('QVAC_VLM_MMPROJ_GPU') || config.mmprojGpu || 'auto').toLowerCase()
+
+// QVAC-21318: KV-cache-quant sweep. When active, the comparison axis is the KV-cache
+// type (config.kvSweep): each (model × device × kv-type) is one report cell
+// `<model>·<kv>`. Activated by QVAC_VLM_MODE=kv-sweep or QVAC_VLM_KV_SWEEP=1. Takes
+// precedence over mmproj-compare. QVAC_VLM_KV (csv of kv labels) selects a subset.
+const KV_SWEEP = MODE === 'kv-sweep' || env('QVAC_VLM_KV_SWEEP') === '1'
+const KV_TYPES = (() => {
+  const all = config.kvSweep || []
+  const raw = env('QVAC_VLM_KV')
+  if (!raw) return all
+  const want = raw.split(',').map(s => s.trim()).filter(Boolean)
+  return all.filter(kv => want.includes(kv.label))
+})()
 
 // samples/task precedence: explicit env > preset > (mobile 2 / desktop 5). Mobile
 // defaults low to fit the 30-min Device Farm ceiling; qvac_perf_runs lands here.
@@ -228,6 +247,23 @@ const MMPROJ_COMPARE = MMPROJ_GPU === 'both'
 // mmproj-compare: GPU model backend, projector cpu vs gpu → two labelled cells.
 function legsFor (spec) {
   const baseAxis = MODE === 'several-sources' ? SOURCE : spec.label
+  // QVAC-21318 kv-sweep: one leg per (device × KV-cache type); the projector stays on
+  // the addon's per-platform default so the only variable is the KV cache type.
+  if (KV_SWEEP) {
+    const legs = []
+    for (const device of devicesToRun()) {
+      for (const kv of KV_TYPES) {
+        legs.push({
+          device,
+          mmproj: null,
+          kv,
+          cell: `${spec.label}·${kv.label}`, // report column = model + KV type
+          dev: `${device.toUpperCase()}·${kv.label}`
+        })
+      }
+    }
+    return legs
+  }
   if (MMPROJ_COMPARE) {
     return ['cpu', 'gpu'].map(m => ({
       device: 'gpu',
@@ -250,7 +286,7 @@ function runModel (spec) {
     return
   }
   for (const leg of legsFor(spec)) {
-    const { device, mmproj, cell, dev } = leg
+    const { device, mmproj, cell, dev, kv } = leg
     test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: 30 * 60 * 1000 }, async t => {
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
@@ -275,6 +311,9 @@ function runModel (spec) {
           // null leaves the addon's per-platform default untouched. No-op on
           // the cpu device leg (no GPU to offload the projector to).
           ...(mmproj ? { 'mmproj-use-gpu': mmproj === 'gpu' ? 'true' : 'false' } : {}),
+          // QVAC-21318: KV-cache-quant sweep — set the cache types + Flash Attention
+          // for this leg (V-quant requires FA, so it is forced on for every kv cell).
+          ...(kv ? { 'cache-type-k': kv.k, 'cache-type-v': kv.v, 'flash-attn': kv.flashAttn } : {}),
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
@@ -285,8 +324,19 @@ function runModel (spec) {
         logger: console,
         opts: { stats: true }
       })
-      t.teardown(async () => { try { await inference.unload() } catch (_) {} })
+      // QVAC-21318: capture native logs for the KV-cache-size line during load.
+      const kvLog = (kv && attachSpecLogger) ? attachSpecLogger({ forwardToConsole: true }) : null
+      t.teardown(async () => {
+        try { await inference.unload() } catch (_) {}
+        if (kvLog) { try { kvLog.release() } catch (_) {} }
+      })
+      // Drop any lines flushed from a previous leg when the global logger was
+      // reinstalled, so only THIS model's KV-cache lines are summed below.
+      if (kvLog) kvLog.logs.length = 0
       await inference.load()
+      // The `llama_kv_cache: size = … MiB, K (<k>) …, V (<v>) …` line prints during
+      // context creation (load). Parse it now; re-checked after the first run if absent.
+      let kvMemMiB = (kvLog && kv) ? parseKvCacheMiB(kvLog.logs, kv) : null
 
       const items = selectedItems()
       let ok = 0
@@ -298,6 +348,8 @@ function runModel (spec) {
           try {
             const r = await runOne(inference, getMediaPath(item.image), item.prompt)
             const st = r.stats || {}
+            // QVAC-21318: the KV-cache line may only appear once the first graph runs.
+            if (kvLog && kv && kvMemMiB == null) kvMemMiB = parseKvCacheMiB(kvLog.logs, kv)
             emitRow({
               cell,
               source: SOURCE,
@@ -319,11 +371,13 @@ function runModel (spec) {
               // reliable on Android (logcat doesn't carry the native timing line).
               vision_ms: st.VisionEncodeMs != null ? st.VisionEncodeMs : null,
               gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
-              prompt_tokens: st.promptTokens != null ? st.promptTokens : null
+              prompt_tokens: st.promptTokens != null ? st.promptTokens : null,
+              // QVAC-21318: KV-cache-quant sweep fields (null in non-kv-sweep modes).
+              ...(kv ? { kv_type: kv.label, kv_k: kv.k, kv_v: kv.v, fa: kv.flashAttn, kv_mem_mib: kvMemMiB } : {})
             })
             ok++
           } catch (e) {
-            emitRow({ cell, source: SOURCE, model: spec.label, device, rep, task: item.task, id: item.id, metric: item.metric, gold: item.gold, error: String((e && e.message) || e) })
+            emitRow({ cell, source: SOURCE, model: spec.label, device, rep, task: item.task, id: item.id, metric: item.metric, gold: item.gold, ...(kv ? { kv_type: kv.label, kv_k: kv.k, kv_v: kv.v, fa: kv.flashAttn } : {}), error: String((e && e.message) || e) })
           }
         }
       }
@@ -337,6 +391,13 @@ function runModel (spec) {
 // backend; two-models loads MODEL_1 then MODEL_2; several-sources loads the one
 // sourcesModel (other engines run via cli-fixture-runner.cjs into the same log).
 function runAll () {
+  // QVAC-21318 kv-sweep takes precedence: run the KV-cache-type axis across the
+  // dedicated kv-sweep models (qwen3.5 + gemma4).
+  if (KV_SWEEP) {
+    const models = config.kvSweepModels || config.models
+    for (const spec of models) runModel(spec)
+    return
+  }
   if (MMPROJ_COMPARE) { runModel(config.mmprojModel || config.models[1]); return }
   const models = MODE === 'several-sources' ? [config.sourcesModel] : config.models
   for (const spec of models) runModel(spec)

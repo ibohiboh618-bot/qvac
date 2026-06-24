@@ -29,7 +29,8 @@
 const SHA = {
   qwenUnsloth: '6ab461498e2023f6e3c1baea90a8f0fe38ab64d0', // registry: Qwen3.5 main + f16 mmproj
   qwenMrader: '9d48fdbc0d8f133716da87ec1d904e5d2c7175a6', //  registry: Qwen3.5 q8 mmproj
-  gemmaBart: 'b5e99bd964eaacc27ba484bb2eb3e9f6160b9143' //    Gemma main + f16 mmproj
+  gemmaBart: 'b5e99bd964eaacc27ba484bb2eb3e9f6160b9143', //   registry: Gemma-4-E2B q4 main (+ f16/bf16 mmproj)
+  gemmaGgml: 'a1dac71d3ab220618f5a7573a52acdc4baf3ae3b' //    registry: Gemma-4-E2B q8 mmproj
 }
 
 // Apache-2.0 Qwen mmproj blobs are published in the QVAC registry; the pinned HF URL
@@ -68,6 +69,45 @@ const MODEL_2 = {
     { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
 }
 
+// ════════════════════ KV-CACHE-QUANT SWEEP MODELS (QVAC-21318) ════════════════════
+// Two complete VLMs run across the KV-cache-type sweep (kvSweep below). Clean labels
+// (no mmproj-quant suffix) so the report's cell key reads `<model>·<kv>`.
+//   Qwen3.5-0.8B (hybrid attention) — the ideal KV-quant target.
+//   Gemma-4-E2B (Q4_K_M main + Q8 mmproj) — both QVAC-registry-published; the pinned
+//   HF URLs are the registry entries' canonical sources (work on every target).
+const QWEN35_KV = {
+  label: 'qwen3.5',
+  name: 'Qwen3.5-0.8B',
+  ctx_size: '4096',
+  llm: hf('reg-qwen-unsloth-Q8_0.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)}`,
+    'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'Qwen3.5-0.8B-Q8_0.gguf', QWEN_REG),
+  mmproj: hf('reg-qwen-unsloth-mmproj-F16.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)} · mmproj-F16`,
+    'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'mmproj-F16.gguf', QWEN_REG)
+}
+
+const GEMMA4_KV = {
+  label: 'gemma4',
+  name: 'Gemma-4-E2B-it · Q4_K_M + mmproj-Q8',
+  ctx_size: '4096',
+  llm: hf('reg-gemma4-e2b-Q4_K_M.gguf', `bartowski/google_gemma-4-E2B-it-GGUF@${SHA.gemmaBart.slice(0, 10)}`,
+    'bartowski/google_gemma-4-E2B-it-GGUF', SHA.gemmaBart, 'google_gemma-4-E2B-it-Q4_K_M.gguf',
+    { license: 'Gemma', link: 'https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF' }),
+  mmproj: hf('reg-gemma4-e2b-mmproj-Q8_0.gguf', `ggml-org/gemma-4-E2B-it-GGUF@${SHA.gemmaGgml.slice(0, 10)} · mmproj-Q8_0`,
+    'ggml-org/gemma-4-E2B-it-GGUF', SHA.gemmaGgml, 'mmproj-gemma-4-E2B-it-Q8_0.gguf',
+    { license: 'Gemma', link: 'https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF' })
+}
+
+// The KV-cache-type axis for kv-sweep mode. Each entry is one report cell ("kv-<label>"
+// appended to the model). flashAttn is forced ON for symmetric quant + the mixed combo
+// (V-quant requires Flash Attention); the f16 baseline keeps it on too so the only
+// variable is the cache type. The last entry is the asymmetric mixed K/V (k=q8_0/v=q4_0).
+const KV_SWEEP = [
+  { label: 'f16', k: 'f16', v: 'f16', flashAttn: 'on' },
+  { label: 'q8_0', k: 'q8_0', v: 'q8_0', flashAttn: 'on' },
+  { label: 'q4_0', k: 'q4_0', v: 'q4_0', flashAttn: 'on' },
+  { label: 'k8v4', k: 'q8_0', v: 'q4_0', flashAttn: 'on' }
+]
+
 // ════════════════════ THE MODEL FOR SOURCE COMPARISON (several-sources mode) ════════════════════
 // One fixed VLM, run through every engine. Its blob filenames must match the names the
 // workflow's CLI step feeds to fabric-cli/upstream-cli.
@@ -94,6 +134,10 @@ module.exports = {
 
   // two-models compares these two complete VLMs:
   models: [MODEL_1, MODEL_2],
+  // QVAC-21318 kv-sweep mode compares KV-cache types (kvSweep) across these VLMs.
+  // Activated by QVAC_VLM_MODE=kv-sweep or QVAC_VLM_KV_SWEEP=1 (harness.cjs).
+  kvSweepModels: [QWEN35_KV, GEMMA4_KV],
+  kvSweep: KV_SWEEP,
   // several-sources runs this one VLM across the engines below:
   sourcesModel: SOURCES_MODEL,
   engines: ['addon', 'fabric-cli', 'upstream-cli'],
