@@ -67,7 +67,12 @@ on:
         required: false
         default: ""
       android_extra_flagship_models:
-        description: "Opt-in CSV of extra Android device MODEL substrings (e.g. 'Galaxy S26') to also target in dual-flagship mode. Default '' = S25 Ultra + Pixel 9 only."
+        description: "Opt-in CSV of extra Android device MODEL substrings (e.g. 'Galaxy S26') to also target in dual-flagship mode. Default '' = base flagship set only."
+        type: string
+        required: false
+        default: ""
+      android_flagship_models:
+        description: "Opt-in CSV of Android MODEL substrings that REPLACES the default dual-flagship S25 Ultra + Pixel 9 (e.g. 'Pixel 9' for Pixel only). Default '' = S25 Ultra + Pixel 9."
         type: string
         required: false
         default: ""
@@ -279,6 +284,7 @@ jobs:
           test-package-upload-arn: ${{ steps.upload.outputs.test-package-upload-arn }}
           test-specs: ${{ steps.upload.outputs.test-specs }}
           android-extra-flagship-models: ${{ inputs.android_extra_flagship_models }}
+          android-flagship-models: ${{ inputs.android_flagship_models }}
 
       - name: Monitor Device Farm test runs
         id: monitor

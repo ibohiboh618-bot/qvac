@@ -315,6 +315,9 @@ function runModel (spec) {
               ms: r.ms,
               decode_tps: st.TPS != null ? st.TPS : null,
               ttft_ms: st.TTFT != null ? st.TTFT : null,
+              // QVAC-21257: isolated vision-encoder (mmproj) ms from addon stats —
+              // reliable on Android (logcat doesn't carry the native timing line).
+              vision_ms: st.VisionEncodeMs != null ? st.VisionEncodeMs : null,
               gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
               prompt_tokens: st.promptTokens != null ? st.promptTokens : null
             })

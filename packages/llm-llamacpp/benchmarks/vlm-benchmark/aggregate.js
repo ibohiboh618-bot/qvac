@@ -232,13 +232,16 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       const sc = rs.filter(r => r.task === t && !r.error).map(r => score(r.metric, r.pred, r.gold))
       return mean(sc)
     })
+    // QVAC-21257: prefer the per-row vision_ms from addon stats (reliable on
+    // Android) over the stderr-parsed [VLMSEG] encode time; fall back to the latter.
+    const rowVe = mean(okRows.map(r => r.vision_ms).filter(v => v != null))
     return {
       total: rs.length,
       n: okRows.length,
       errs: rs.length - okRows.length,
       perTask,
       overall: mean(perTask.filter(v => v != null)),
-      ve: visMean(key),
+      ve: rowVe != null ? rowVe : visMean(key),
       sl: visSlices(key),
       ttft: mean(okRows.map(r => r.ttft_ms).filter(v => v != null)),
       tps: mean(okRows.map(r => r.decode_tps).filter(v => v != null)),
@@ -364,9 +367,9 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.wall, 0)} |`)
   }
   L.push('')
-  L.push('> **mmproj enc** is parsed from llama.cpp\'s native stderr. On Android (Device Farm) that ' +
-    'stream is not captured in logcat, so it shows `—` there; TTFT on mobile already includes the ' +
-    'vision-encode + prompt-eval time and is the cross-platform proxy.\n')
+  L.push('> **mmproj enc** is the image-chunk encode time. QVAC-21257: it now comes from the addon\'s ' +
+    'RuntimeStats (`vision_ms`), so it is reliable on Android too; it falls back to the stderr-parsed ' +
+    '`image encoded in N ms` (desktop) when stats are absent. TTFT also includes prompt-eval.\n')
   // ── 3 · Test results (Device-Farm-style Metric | Count, per platform) ──────
   L.push('# 3 · Test Results (per platform)\n')
   L.push('| Platform | Metric | Count |')

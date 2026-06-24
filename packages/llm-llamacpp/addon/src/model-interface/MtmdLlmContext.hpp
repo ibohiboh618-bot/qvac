@@ -114,6 +114,11 @@ public:
   [[nodiscard]] llama_pos getCacheTokens() const override;
   void setCacheTokens(llama_pos cacheTokens) override;
 
+  // QVAC-21257: image-chunk (vision-encoder) eval time of the most recent prefill.
+  [[nodiscard]] double getLastVisionEncodeMs() const override {
+    return visionEncodeMs_;
+  }
+
   /**
    * The get first msg tokens method. It returns the first msg tokens.
    *
@@ -238,6 +243,10 @@ private:
   ContextUsage protectedPrefix_;
   llama_pos nDiscarded_ = 0;
   int32_t nSlides_ = 0;
+
+  // QVAC-21257: total image-chunk encode time (ms) of the most recent prefill;
+  // surfaced via getLastVisionEncodeMs() into RuntimeStats.
+  double visionEncodeMs_ = 0.0;
 
   // UTF-8 token buffer for handling incomplete emoji sequences
   qvac_lib_inference_addon_llama::UTF8TokenBuffer utf8Buffer_;

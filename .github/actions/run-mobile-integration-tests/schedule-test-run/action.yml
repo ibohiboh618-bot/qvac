@@ -58,8 +58,16 @@ inputs:
     description: |
       Opt-in (default empty). CSV of additional Android device MODEL substrings to
       target with their own filter-based run in dual-flagship mode (e.g. "Galaxy S26").
-      Each becomes one extra run alongside S25 Ultra + Pixel 9. Empty => no extra runs,
+      Each becomes one extra run alongside the base flagship set. Empty => no extra runs,
       so every other caller is unaffected. Only honored for Android dual-flagship.
+    required: false
+    default: ""
+  android-flagship-models:
+    description: |
+      Opt-in (default empty). CSV of Android device MODEL substrings that REPLACES the
+      default dual-flagship set (S25 Ultra + Pixel 9) — e.g. "Pixel 9" to target Pixel
+      only. Empty => the default S25 Ultra + Pixel 9, so every other caller is unaffected.
+      Only honored for Android dual-flagship.
     required: false
     default: ""
 
@@ -88,6 +96,7 @@ runs:
         SCHEDULING_MODE: ${{ inputs.scheduling-mode }}
         JOB_TIMEOUT_MINUTES: ${{ inputs.job-timeout-minutes }}
         ANDROID_EXTRA_FLAGSHIP_MODELS: ${{ inputs.android-extra-flagship-models }}
+        ANDROID_FLAGSHIP_MODELS: ${{ inputs.android-flagship-models }}
       run: |
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
           RUN_NAME_BASE="Manual-${{ github.run_number }}-${PLATFORM}"
@@ -165,13 +174,29 @@ runs:
           echo "  $RUN_NAME_BASE -> $RUN_ARN"
           RUN_ARNS_JSON=$(echo "$RUN_ARNS_JSON" | jq --arg arn "$RUN_ARN" '. + [$arn]')
         else
-          # Default dual-flagship: same spec, two device targets.
+          # Default dual-flagship: same spec, multiple device targets.
           SPEC_ARN=$(echo "$TEST_SPECS_JSON" | jq -r '.[0].arn')
-          if [ "$PLATFORM" = "Android" ]; then
+          if [ "$PLATFORM" = "Android" ] && [ -n "$ANDROID_FLAGSHIP_MODELS" ]; then
+            # QVAC-21257: override the default S25 Ultra + Pixel 9 set with a caller-supplied
+            # CSV of MODEL substrings (e.g. "Pixel 9" to target Pixel only). One run each.
+            RUN_ARNS_JSON='[]'
+            IFS=',' read -ra FLAGSHIP_MODELS <<< "$ANDROID_FLAGSHIP_MODELS"
+            for raw_model in "${FLAGSHIP_MODELS[@]}"; do
+              model=$(echo "$raw_model" | xargs)
+              [ -z "$model" ] && continue
+              FLAGSHIP_FILTER=$(jq -nc --arg m "$model" '{filters:[{attribute:"MODEL",operator:"CONTAINS",values:[$m]},{attribute:"PLATFORM",operator:"EQUALS",values:["ANDROID"]}],maxDevices:1}')
+              FLAGSHIP_ARN=$(schedule_run_with_filter "${RUN_NAME_BASE}-${model// /_}" "$FLAGSHIP_FILTER" "$SPEC_ARN")
+              echo "  Flagship ($model): $FLAGSHIP_ARN"
+              RUN_ARNS_JSON=$(echo "$RUN_ARNS_JSON" | jq --arg arn "$FLAGSHIP_ARN" '. + [$arn]')
+            done
+          elif [ "$PLATFORM" = "Android" ]; then
             SAMSUNG_FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Samsung"]},{"attribute":"MODEL","operator":"CONTAINS","values":["S25 Ultra"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["ANDROID"]}],"maxDevices":1}'
             PIXEL_FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Google"]},{"attribute":"MODEL","operator":"CONTAINS","values":["Pixel 9"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["ANDROID"]}],"maxDevices":1}'
             RUN_ARN_1=$(schedule_run_with_filter "${RUN_NAME_BASE}-Samsung" "$SAMSUNG_FILTER" "$SPEC_ARN")
             RUN_ARN_2=$(schedule_run_with_filter "${RUN_NAME_BASE}-Pixel"   "$PIXEL_FILTER"   "$SPEC_ARN")
+            echo "  Run 1: $RUN_ARN_1"
+            echo "  Run 2: $RUN_ARN_2"
+            RUN_ARNS_JSON=$(jq -n --arg a "$RUN_ARN_1" --arg b "$RUN_ARN_2" '[$a,$b]')
           else
             if [ -z "$IOS_POOL_ARN" ]; then
               echo "ERROR: dual-flagship iOS requires ios-device-pool-arn" >&2
@@ -180,10 +205,10 @@ runs:
             IPHONE17_FILTER='{"filters":[{"attribute":"MANUFACTURER","operator":"EQUALS","values":["Apple"]},{"attribute":"MODEL","operator":"CONTAINS","values":["iPhone 17"]},{"attribute":"PLATFORM","operator":"EQUALS","values":["IOS"]}],"maxDevices":1}'
             RUN_ARN_1=$(schedule_run_with_pool   "$IOS_POOL_ARN"     "$RUN_NAME_BASE"           "$SPEC_ARN")
             RUN_ARN_2=$(schedule_run_with_filter "${RUN_NAME_BASE}-iPhone17" "$IPHONE17_FILTER" "$SPEC_ARN")
+            echo "  Run 1: $RUN_ARN_1"
+            echo "  Run 2: $RUN_ARN_2"
+            RUN_ARNS_JSON=$(jq -n --arg a "$RUN_ARN_1" --arg b "$RUN_ARN_2" '[$a,$b]')
           fi
-          echo "  Run 1: $RUN_ARN_1"
-          echo "  Run 2: $RUN_ARN_2"
-          RUN_ARNS_JSON=$(jq -n --arg a "$RUN_ARN_1" --arg b "$RUN_ARN_2" '[$a,$b]')
           # QVAC-21257: opt-in extra Android flagship targets (CSV of MODEL substrings,
           # e.g. "Galaxy S26"). Each becomes one more filter-targeted run appended here.
           # Empty (every other caller) => no-op. A substring that matches no Device Farm

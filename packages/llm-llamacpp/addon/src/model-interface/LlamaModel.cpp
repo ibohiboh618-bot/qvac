@@ -883,6 +883,7 @@ LlamaModel::batchRuntimeStatsLocked() const {
       {"contextSlides", stats.contextSlides},
       {"thinkingBlockDiscards", stats.thinkingBlockDiscards},
       {"avgConcurrentSeq", stats.avgConcurrentSeq()},
+      {"VisionEncodeMs", state_->llmContext_->getLastVisionEncodeMs()},
       {"backendDevice", runtimeBackendDevice_}};
 }
 
@@ -918,6 +919,7 @@ LlamaModel::singleRuntimeStatsLocked() const {
       {"thinkingBlockDiscards",
        static_cast<int64_t>(state_->llmContext_->getThinkingBlockDiscards())},
       {"avgConcurrentSeq", 1.0},
+      {"VisionEncodeMs", state_->llmContext_->getLastVisionEncodeMs()},
       {"backendDevice", runtimeBackendDevice_}};
 }
 
