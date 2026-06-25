@@ -83,10 +83,22 @@ function prefillTokensPerSecond (runtimeStats) {
   return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
 }
 
+function _envInt (key, fallback) {
+  let raw = ''
+  if (typeof os.getEnv === 'function') raw = os.getEnv(key) || ''
+  if (!raw && typeof process !== 'undefined' && process.env) raw = process.env[key] || ''
+  const v = parseInt(raw, 10)
+  return Number.isFinite(v) && v > 0 ? v : fallback
+}
+
 // Measured repetitions per config, reported as mean +/- stddev (matching the
-// desktop sweep). Repeating on-device guards against a single shot skewed by
-// mobile thermal throttling.
-const MOBILE_REPEATS = 3
+// desktop sweep, which repeats 5x). Repeating on-device guards against a single
+// shot skewed by mobile thermal throttling. Overridable via QVAC_PERF_RUNS /
+// QVAC_PERF_WARMUP_RUNS, which the Benchmark Performance workflow pushes to the
+// device (qvacPerfConfig.txt -> os.setEnv in integration-runtime.cjs), matching
+// the LLM benchmark runner.
+const PERF_RUNS = _envInt('QVAC_PERF_RUNS', 3)
+const PERF_WARMUP_RUNS = _envInt('QVAC_PERF_WARMUP_RUNS', 1)
 
 function meanOf (values) {
   return values.length ? average(values) : null
@@ -240,11 +252,14 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
         }
 
         try {
-          // Warm up once per loaded backend (discarded, never a measured rep)
-          // to prime GPU kernels/caches so rep 1 isn't a cold-start outlier.
+          // Warm up per loaded backend (discarded, never a measured rep) to
+          // prime GPU kernels/caches so rep 1 isn't a cold-start outlier.
           try {
-            const w = await addon.run(inputsFor(INPUT_MODES[0]))
-            await w.await()
+            for (let warm = 1; warm <= PERF_WARMUP_RUNS; warm++) {
+              const w = await addon.run(inputsFor(INPUT_MODES[0]))
+              await w.await()
+              t.comment(`[${spec.id} q=${quant}] [${device}] warmup ${warm}/${PERF_WARMUP_RUNS} - perf NOT recorded`)
+            }
           } catch (warmErr) {
             t.comment(`[${spec.id} q=${quant}] [${device}] warmup failed: ${warmErr && warmErr.message ? warmErr.message : warmErr}`)
           }
@@ -256,7 +271,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
               const embPerSecValues = []
               let firstEmbeddings = null
               let inputTokens = null
-              for (let rep = 1; rep <= MOBILE_REPEATS; rep++) {
+              for (let rep = 1; rep <= PERF_RUNS; rep++) {
                 const response = await addon.run(inputsFor(inputMode))
                 const raw = await response.await()
                 const stats = response.stats || {}
