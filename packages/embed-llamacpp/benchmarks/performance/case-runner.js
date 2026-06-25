@@ -414,7 +414,26 @@ async function runModelCases ({
           `${configuredBatchSizes.length ? configuredBatchSizes.join(', ') : '(none)'}`
         )
       }
-      const inputs = testCase.inputMode === 'single' ? inputsRaw[0] : inputsRaw
+      // 'single' embeds one sequence; 'array-N' embeds the first N sequences in
+      // one call (batched-throughput sweep). inputs.json provides enough
+      // sequences per batch size (see MAX_ARRAY_SEQUENCES).
+      let inputs
+      if (testCase.inputMode === 'single') {
+        inputs = inputsRaw[0]
+      } else {
+        const n = Number(testCase.inputMode.slice('array-'.length))
+        if (!Number.isInteger(n) || n <= 0) {
+          throw new Error(`Unrecognised input mode "${testCase.inputMode}" for case ${testCase.caseId}`)
+        }
+        if (inputsRaw.length < n) {
+          throw new Error(
+            `Invalid inputs.json for case ${testCase.caseId}: input mode ${testCase.inputMode} needs ` +
+            `${n} sequences at batch size ${testCase.runtimeConfig.batchSize}, but only ${inputsRaw.length} ` +
+            'are provided. Regenerate with `npm run generate:inputs`.'
+          )
+        }
+        inputs = inputsRaw.slice(0, n)
+      }
       executionResult = await runCaseWithRepeats({
         AddonCtor,
         modelDir: modelDef.modelDir,

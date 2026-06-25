@@ -3,9 +3,10 @@
   "private": true,
   "description": "Performance and parameter sweep runners for embed addon",
   "scripts": {
+    "generate:inputs": "node ./generate-inputs.js",
     "prepare:models:addon": "node ./prepare-models.js --target addon",
     "prepare:models:all": "node ./prepare-models.js --target all",
-    "run:param-sweep": "node ./prepare-models.js --target addon && bare ./embed-parameter-sweep.js"
+    "run:param-sweep": "node ./generate-inputs.js && node ./prepare-models.js --target addon && bare ./embed-parameter-sweep.js"
   },
   "dependencies": {
     "@qvac/dl-filesystem": "latest",
