@@ -255,12 +255,6 @@ jobs:
           if [ -n "${MODELS:-}" ]; then ARGS+=(--models "$MODELS"); fi
           node ./prepare-models.js "${ARGS[@]}"
 
-      - name: Generate sweep inputs
-        working-directory: packages/embed-llamacpp/benchmarks/performance
-        # Regenerate inputs.json from _sweep-grid.js so it can never drift from
-        # the swept batch sizes / array sequence counts.
-        run: node ./generate-inputs.js
-
       - name: Run parameter sweep
         working-directory: packages/embed-llamacpp/benchmarks/performance
         env:
