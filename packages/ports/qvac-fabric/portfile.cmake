@@ -2,12 +2,12 @@ vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
   REPO tetherto/qvac-fabric-llm.cpp
   # PHASE A VALIDATION OVERLAY — pinned to the qvac-fabric branch
-  # feat/opencl-vision-encoder-qwen3vl-s25 (v9341.0.0 + the OpenCL vision
-  # encoder fixes) ahead of publishing 9341.1.0 to the registry. Replace with
-  # `REF v${VERSION}` + the tag SHA512 in the registry PR (Phase B1), and delete
-  # this overlay from the consumers in the landing PR (Phase B2).
-  REF 49fb6263bd4226a58145d1f5e4e67a983b29a34d
-  SHA512 c51f2ecb79aa5e43bd9dd5576354938fbab85074bc2cb500ce45226cbfd01ffe1118ad7e34b4129b9fe2f52ce25eb6b103b511141b696756fb62210cf5437526
+  # feat/opencl-vision-encoder-qwen3vl-s25 (temp-9341 integration branch + the
+  # OpenCL vision encoder fixes) ahead of publishing 9341.1.0 to the registry.
+  # Replace with `REF v${VERSION}` + the tag SHA512 in the registry PR (Phase
+  # B1), and delete this overlay from the consumers in the landing PR (Phase B2).
+  REF f963db0afde8d8e9511cab7e9392d6c509a573dd
+  SHA512 d90398dfb82545390918fb9906086f2290381110d50999b42b5e5df026de02e7551572512a97e5a938651c90faa39d5abb3fb10949cdf3ddbf52a25c08523185
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
