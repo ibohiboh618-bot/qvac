@@ -212,17 +212,66 @@ void LlamaModel::tuneConfigMap(
     }
   }
 
-  // Quantized KV-cache types are fragile on OpenCL: standard q-cache types can
-  // fail later during cache shifts, while TBQ/PQ kernels are not implemented.
-  // Surface a clean error here instead of letting llama.cpp commit KV-cache
-  // tensors to a backend that can't run the required ops.
+  // Adreno 800+ Vulkan: quantized KV-cache with Flash Attention crashes (the
+  // FA CM2 shader's dequant path hits an Adreno driver bug). Guard here so
+  // callers get a clean error instead of a native abort.
+  {
+    constexpr int kAdrenoKvQuantThreshold = 800;
+    const bool isVulkanAdreno =
+        adrenoVersion.has_value() &&
+        adrenoVersion.value() >= kAdrenoKvQuantThreshold && !isOpenCl &&
+        !isMetal;
+    if (isVulkanAdreno) {
+      auto flashIt = configFilemap.find("flash-attn");
+      const bool flashAttnOn =
+          flashIt != configFilemap.end() && flashIt->second == "on";
+      if (flashAttnOn) {
+        auto isQuantizedKvType = [](const std::string& v) {
+          return v == "q4_0" || v == "q4_1" || v == "q5_0" || v == "q5_1" ||
+                 v == "q8_0" || v == "iq4_nl" || v == "tbq3_0" ||
+                 v == "tbq4_0" || v == "pq3_0" || v == "pq4_0";
+        };
+        auto checkAdrenoKv = [&](const char* hyphenKey,
+                                 const char* underscoreKey,
+                                 const char* side) {
+          auto it = configFilemap.find(hyphenKey);
+          if (it == configFilemap.end())
+            it = configFilemap.find(underscoreKey);
+          if (it == configFilemap.end())
+            return;
+          if (!isQuantizedKvType(it->second))
+            return;
+          throw qvac_errors::StatusError(
+              qvac_errors::general_error::InvalidArgument,
+              string_format(
+                  "[LlamaModel] cache-type-%s=%s: quantized KV-cache with "
+                  "Flash Attention is not supported on Adreno 800+ (Vulkan). "
+                  "Use flash-attn=off, set cache-type-%s to f16/f32/bf16, or "
+                  "disable GPU acceleration.\n",
+                  side,
+                  it->second.c_str(),
+                  side));
+        };
+        checkAdrenoKv("cache-type-k", "cache_type_k", "k");
+        checkAdrenoKv("cache-type-v", "cache_type_v", "v");
+      }
+    }
+  }
+
+  // OpenCL: the fabric FA kernels support q4_0 and q8_0 KV (symmetric or
+  // K-only quant with V=f16). Other quantized types (q4_1, q5_0, q5_1,
+  // iq4_nl) and TBQ/PQ have no FA kernel and must be rejected.
+  // Metal: standard quant types are supported; only TBQ/PQ is rejected.
   if (isOpenCl || isMetal) {
     auto isTurboQuantKvType = [](const std::string& v) {
       return v == "tbq3_0" || v == "tbq4_0" || v == "pq3_0" || v == "pq4_0";
     };
-    auto isQuantizedKvType = [&](const std::string& v) {
-      return isTurboQuantKvType(v) || v == "q4_0" || v == "q4_1" ||
-             v == "q5_0" || v == "q5_1" || v == "q8_0" || v == "iq4_nl";
+    auto isOpenClSupportedKvType = [](const std::string& v) {
+      return v == "q4_0" || v == "q8_0";
+    };
+    auto isUnsupportedOnOpenCl = [&](const std::string& v) {
+      return isTurboQuantKvType(v) || v == "q4_1" || v == "q5_0" ||
+             v == "q5_1" || v == "iq4_nl";
     };
     auto checkCacheType = [&](const char* hyphenKey,
                               const char* underscoreKey,
@@ -233,7 +282,9 @@ void LlamaModel::tuneConfigMap(
       if (it == configFilemap.end())
         return;
       if (isOpenCl) {
-        if (!isQuantizedKvType(it->second))
+        if (isOpenClSupportedKvType(it->second))
+          return;
+        if (!isUnsupportedOnOpenCl(it->second))
           return;
       } else if (!isTurboQuantKvType(it->second)) {
         return;
@@ -243,7 +294,7 @@ void LlamaModel::tuneConfigMap(
                                  ? "TurboQuant/PolarQuant"
                                  : "quantized";
       const char* alternatives =
-          isOpenCl ? "f32/f16/bf16"
+          isOpenCl ? "f32/f16/bf16/q4_0/q8_0"
                    : "f32/f16/bf16/q4_0/q4_1/q5_0/q5_1/q8_0/iq4_nl";
       throw qvac_errors::StatusError(
           qvac_errors::general_error::InvalidArgument,

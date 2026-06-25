@@ -235,9 +235,47 @@ TEST_F(TuneConfigMapTest, NotOpenCl_NonBitnet_FlashAttnDefaultsOn) {
   EXPECT_EQ(configFilemap_["flash-attn"], "on");
 }
 
-TEST_F(TuneConfigMapTest, OpenCl_RejectsStandardQuantizedKCache) {
+TEST_F(TuneConfigMapTest, OpenCl_AllowsQ8_0KCache) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_AllowsQ4_0VCache) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-v"] = "q4_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_AllowsQ8_0Symmetric) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+  configFilemap_["cache-type-v"] = "q8_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_AllowsQ4_0Symmetric) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q4_0";
+  configFilemap_["cache-type-v"] = "q4_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_RejectsQ4_1KCache) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q4_1";
 
   EXPECT_THROW(
       LlamaModel::tuneConfigMap(
@@ -245,9 +283,39 @@ TEST_F(TuneConfigMapTest, OpenCl_RejectsStandardQuantizedKCache) {
       qvac_errors::StatusError);
 }
 
-TEST_F(TuneConfigMapTest, OpenCl_RejectsStandardQuantizedVCacheUnderscore) {
+TEST_F(TuneConfigMapTest, OpenCl_RejectsQ5_0VCache) {
   MockModelMetaData meta(false, "llama");
-  configFilemap_["cache_type_v"] = "q4_0";
+  configFilemap_["cache-type-v"] = "q5_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_RejectsIQ4NLKCache) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "iq4_nl";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_RejectsTbqKCache) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "tbq4_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_RejectsPqVCacheUnderscore) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache_type_v"] = "pq4_0";
 
   EXPECT_THROW(
       LlamaModel::tuneConfigMap(
@@ -670,4 +738,152 @@ TEST_F(TuneConfigMapTest, NotFinetuning_CacheTypesUnchanged) {
 
   EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
   EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+// ---- Adreno 800+ Vulkan: quantized KV + Flash Attention guard ----
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q8KCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q4VCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-v"] = "q4_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q4_1KCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q4_1";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_IQ4NLVCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-v"] = "iq4_nl";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_TbqKCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "tbq4_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_PqVCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-v"] = "pq4_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(
+    TuneConfigMapTest,
+    Adreno830_Vulkan_UnderscoreKeys_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache_type_k"] = "q8_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno800_Vulkan_Q8KCache_FlashAttnOn_Throws) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, 800),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_FlashAttnOff_QuantizedKV_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["flash-attn"] = "off";
+  configFilemap_["cache-type-k"] = "q8_0";
+  configFilemap_["cache-type-v"] = "q4_0";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_F16KV_FlashAttnOn_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "f16";
+  configFilemap_["cache-type-v"] = "f16";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_F32KV_FlashAttnOn_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "f32";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_BF16KV_FlashAttnOn_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "bf16";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_NoCacheType_FlashAttnOn_Allowed) {
+  MockModelMetaData meta(false, "llama");
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
+}
+
+TEST_F(TuneConfigMapTest, Adreno799_Vulkan_QuantizedKV_FlashAttnOn_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 799));
+}
+
+TEST_F(TuneConfigMapTest, NoAdreno_Vulkan_QuantizedKV_FlashAttnOn_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+  configFilemap_["cache-type-v"] = "q4_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(configFilemap_, meta, std::nullopt));
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_OpenCl_Q8_0KV_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, 830, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, Adreno830_OpenCl_UnsupportedQuant_Rejected) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q5_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, 830, FtOverrides{}, /*isOpenCl=*/true),
+      qvac_errors::StatusError);
 }
