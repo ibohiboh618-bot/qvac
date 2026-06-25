@@ -9,9 +9,11 @@
 //   - one `## <device>` section, each with a `### <model>` table: Config |
 //     ppTPS | latency (ms) | embeddings/sec | cosine-similarity vs baseline
 //   - a Coverage section comparing measured configs against the expected grid
-//   - a "## Charts" mermaid section (ppTPS per config at a representative point)
-//     plus a self-contained HTML chart artifact (--html) with ppTPS, similarity
-//     and latency charts
+//   - a "## Charts" mermaid section (base-case ppTPS per model: each model's
+//     baseline-config row) plus a self-contained HTML chart artifact (--html)
+//     with the base-case-per-model headline, prefill-throughput-vs-batch-size and
+//     batched-throughput-vs-sequence-count scaling charts (one series per model),
+//     and cosine-similarity-vs-F16 and latency charts
 //   - run-meta stamping (--addon-version is overridden by a stamped run-meta)
 //
 // Embedding is a single forward pass (prefill only): there is no decode phase,
@@ -382,14 +384,14 @@ function shardLabel (key) {
   return `q=${quant} [${device}] [bs=${batchSize}] [fa=${flashAttn}] [input=${inputMode}]`
 }
 
-// Held axes for the headline / HTML charts. Each bar is one measured
-// configuration (no averaging across quants, batch sizes or flash-attn). ppTPS
-// is the headline metric; similarity and latency are additional HTML charts.
+// Representative held point for the HTML scaling charts: the rows are pinned to
+// a single point on every axis the chart is NOT varying, so each bar is one
+// measured config (no averaging). ppTPS is the headline metric (the per-model
+// base case); the scaling charts vary batch size or sequence count.
 const CHART_BACKEND = 'gpu'
 const CHART_BATCH = '512'
-const CHART_FLASH = 'off'
-const CHART_INPUT = 'array'
-const CHART_QUANT_HELD = 'Q8_0'
+const CHART_FLASH = 'on'
+const CHART_INPUT = 'single'
 
 function atConfig (rows, { backend, batchSize, flashAttn, inputMode, quant }) {
   return rows.filter((r) =>
@@ -400,6 +402,14 @@ function atConfig (rows, { backend, batchSize, flashAttn, inputMode, quant }) {
     (inputMode == null || r.inputMode === inputMode) &&
     (quant == null || r.quant === quant)
   )
+}
+
+// The sequence count a swept input mode embeds in one call: 'single' is 1,
+// 'array-N' is N. Drives the batched-throughput (embeddings/sec) chart's X axis.
+function sequenceCount (inputMode) {
+  if (inputMode === 'single') return 1
+  const m = /^array-(\d+)$/.exec(inputMode || '')
+  return m ? Number(m[1]) : null
 }
 
 function mermaidBar (title, ylabel, labels, values) {
@@ -415,17 +425,30 @@ function mermaidBar (title, ylabel, labels, values) {
   ]
 }
 
-// Headline at-a-glance chart: ppTPS per model at ONE fixed config. xychart-beta
-// is single-series and cannot draw error bars, so the per-model breakdowns by
-// quantization / batch size with stddev whiskers live in the HTML artifact.
-function mermaidSection (rows, chartsUrl) {
-  const held = { backend: CHART_BACKEND, batchSize: CHART_BATCH, flashAttn: CHART_FLASH, inputMode: CHART_INPUT, quant: CHART_QUANT_HELD }
-  const pts = atConfig(rows, held).filter((r) => r.ppTps !== null)
-  if (pts.length < 1) return []
+// The per-model base case: the baseline row (default config: cpu / fa=off /
+// bs=256 / single / highest-fidelity quant) carries the reference ppTPS each
+// other config's similarity is measured against. The baseline runs one row per
+// input mode; the headline uses the 'single' one (the default-config base case),
+// falling back to any baseline row for the model if 'single' is absent.
+function baseCaseByModel (rows) {
   const byModel = new Map()
-  for (const r of pts) if (!byModel.has(r.model)) byModel.set(r.model, r.ppTps)
-  const models = [...byModel.keys()].sort((a, b) => byModel.get(b) - byModel.get(a))
-  const cfg = `${CHART_QUANT_HELD}, ${CHART_BACKEND.toUpperCase()}, bs=${CHART_BATCH}, fa=${CHART_FLASH}, ${CHART_INPUT} input`
+  for (const r of rows) {
+    if (!r.isBaseline || r.crashed || r.ppTps === null) continue
+    const prev = byModel.get(r.model)
+    if (!prev || (prev.inputMode !== 'single' && r.inputMode === 'single')) byModel.set(r.model, r)
+  }
+  return byModel
+}
+
+// Headline at-a-glance chart: the base case (baseline-config ppTPS) per model,
+// one bar per model. xychart-beta is single-series, so the batch-size and
+// sequence-count scaling charts (one series per model) live in the HTML artifact.
+function mermaidSection (rows, chartsUrl) {
+  const byModel = baseCaseByModel(rows)
+  if (byModel.size < 1) return []
+  const models = [...byModel.keys()].sort((a, b) => byModel.get(b).ppTps - byModel.get(a).ppTps)
+  const cfg = 'cpu / fa=off / bs=256 / single'
+  const title = `Base-case prefill throughput per model (ppTPS, baseline config: ${cfg})`
   // The download URL only exists after the artifact is uploaded, so the workflow
   // passes it in post-upload; a local render leaves the artifact name as plain text.
   const artifact = chartsUrl
@@ -434,12 +457,12 @@ function mermaidSection (rows, chartsUrl) {
   return [
     '## Charts',
     '',
-    `> At-a-glance prefill throughput (ppTPS) by model at one fixed config: **${cfg}**. ` +
-    'Per-model charts broken down by quantization and batch size, plus the cosine-similarity ' +
-    `and latency charts, are in the ${artifact} — download and open \`embed-benchmark-charts.html\` inside. ` +
-    'The full grid is in the tables below.',
+    `> Base-case prefill throughput (ppTPS) per model at the baseline config **${cfg}**. ` +
+    'The prefill-throughput-vs-batch-size and batched-throughput-vs-sequence-count scaling charts ' +
+    `(one series per model), plus the cosine-similarity and latency charts, are in the ${artifact} ` +
+    '— download and open `embed-benchmark-charts.html` inside. The full grid is in the tables below.',
     '',
-    ...mermaidBar(`ppTPS by model (${cfg})`, 'ppTPS', models, models.map((m) => byModel.get(m))),
+    ...mermaidBar(title, 'ppTPS', models, models.map((m) => byModel.get(m).ppTps)),
     ''
   ]
 }
@@ -598,7 +621,8 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   )
   lines.push('')
   lines.push(
-    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array>]`. ' +
+    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array-N>]`, ' +
+    'where `single` embeds one sequence and `array-N` embeds N sequences in one call. ' +
     'Each mobile shard is one (model, quant, batch size, flash-attn) cell and sweeps device x input mode.'
   )
   lines.push('')
@@ -665,7 +689,8 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
   )
   lines.push('')
   lines.push(
-    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array>]`. ' +
+    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array-N>]`, ' +
+    'where `single` embeds one sequence and `array-N` embeds N sequences in one call. ' +
     'A `(partial: N/M repeats)` note means only N of M repeats succeeded, so that row\'s stats are over ' +
     'fewer samples. Where input length is uniform across configs it is shown in the header above.'
   )
@@ -769,35 +794,86 @@ function svgBarChart (title, unit, cats, series, maxOverride) {
   return `<figure style="margin:0 0 26px"><figcaption style="font-weight:600;margin:0 0 4px">${title} <span style="font-weight:400;color:#6b7280">(${unit})</span></figcaption>${out.join('')}</figure>`
 }
 
+// One bar per model on a single shared category: the base case per model. Built
+// as one series whose cells are each model's baseline ppTPS, so svgBarChart
+// renders one bar per model side by side.
+function baseCaseSeries (rows) {
+  const byModel = baseCaseByModel(rows)
+  const models = [...byModel.keys()].sort((a, b) => byModel.get(b).ppTps - byModel.get(a).ppTps)
+  return {
+    cats: models,
+    series: [{
+      name: 'base case',
+      color: CHART_COLORS[0],
+      cells: models.map((m) => ({ mean: byModel.get(m).ppTps, std: null }))
+    }]
+  }
+}
+
 function renderHtml (rows, meta, addonVersionArg) {
   const addonVersion = meta.addonVersion || addonVersionArg || ''
   // Charts are desktop-only (the sweep axes); mobile rows carry no chart axes.
-  const measured = rows.filter((r) => !r.mobile && !r.isBaseline && !r.crashed)
+  const desktopRows = rows.filter((r) => !r.mobile)
+  const measured = desktopRows.filter((r) => !r.isBaseline && !r.crashed)
   const models = [...new Set(measured.map((r) => r.model))].sort()
   const legend = models.map((mName, i) => `<span style="display:inline-flex;align-items:center;margin:0 14px 6px 0"><span style="width:12px;height:12px;background:${CHART_COLORS[i % CHART_COLORS.length]};display:inline-block;margin-right:5px;border-radius:2px"></span>${mName}</span>`).join('')
-  const QO = PARAMETER_SWEEP.quantization.slice()
   const BO = PARAMETER_SWEEP.batchSize.map((b) => String(b))
-  const byQuant = (r) => r.quant
+  const SO = INPUT_MODES.map((m) => String(sequenceCount(m))).filter((s) => s !== 'null')
   const byBatch = (r) => r.batchSize
-  // [title, unit, byKey, order, metric, stdKey, held]. Each chart varies one axis
-  // and holds the rest at a fixed point, so each bar is one measured config.
-  const defs = [
-    ['ppTPS by quantization', 'ppTPS, tokens/sec', byQuant, QO, 'ppTps', 'ppTpsStd', { batchSize: CHART_BATCH }],
-    ['ppTPS by batch size', 'ppTPS, tokens/sec', byBatch, BO, 'ppTps', 'ppTpsStd', { quant: CHART_QUANT_HELD }],
-    ['cosine-similarity by quantization', 'cosine similarity', byQuant, QO, 'similarity', 'noStd', { batchSize: CHART_BATCH }],
-    ['latency by quantization', 'latency, ms (lower is better)', byQuant, QO, 'latency', 'latencyStd', { batchSize: CHART_BATCH }]
-  ]
-  const desktopRows = rows.filter((r) => !r.mobile)
+  const bySeq = (r) => { const n = sequenceCount(r.inputMode); return n === null ? null : String(n) }
+
   let charts = ''
-  for (const [title, unit, byKey, order, metric, stdKey, extra] of defs) {
-    const subset = atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, inputMode: CHART_INPUT, ...extra })
-    const { cats, series } = chartSeries(subset, byKey, order, metric, stdKey)
-    if (!cats.length) continue
-    charts += svgBarChart(title, unit, cats, series)
+
+  // 1. Headline: base case (baseline-config ppTPS) per model, one bar per model.
+  const base = baseCaseSeries(desktopRows)
+  if (base.cats.length) {
+    charts += svgBarChart(
+      'Base-case prefill throughput per model (baseline config: cpu / fa=off / bs=256 / single)',
+      'ppTPS, prefill tokens/sec', base.cats, base.series
+    )
   }
+
+  // F16 is the reference quant; pick the held quant per model: F16 if any F16 row
+  // exists for the model in the subset, else the model's base-case quant, so a
+  // model lacking an F16 row at the held point still gets a series.
+  function pinQuant (subset) {
+    const baseQuant = baseCaseByModel(desktopRows)
+    return subset.filter((r) => {
+      const hasF16 = subset.some((x) => x.model === r.model && x.quant === 'F16')
+      if (hasF16) return r.quant === 'F16'
+      const bc = baseQuant.get(r.model)
+      return bc ? r.quant === bc.quant : false
+    })
+  }
+
+  // 2. Prefill throughput vs batch size: X = batch size, one series per model,
+  // Y = ppTPS. Held gpu / fa=on / single, quant F16 (fallback baseline quant).
+  {
+    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, inputMode: CHART_INPUT }))
+    const { cats, series } = chartSeries(subset, byBatch, BO, 'ppTps', 'ppTpsStd')
+    if (cats.length) charts += svgBarChart('Prefill throughput vs batch size', 'ppTPS, prefill tokens/sec', cats, series)
+  }
+
+  // 3. Batched throughput vs sequence count: X = sequence count (1 / 5 / 10 / 20),
+  // one series per model, Y = embeddings/sec. Held gpu / fa=on / bs=512, quant F16.
+  {
+    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, batchSize: CHART_BATCH }))
+    const { cats, series } = chartSeries(subset, bySeq, SO, 'embPerSec', 'embPerSecStd')
+    if (cats.length) charts += svgBarChart('Batched throughput vs sequence count', 'embeddings/sec', cats, series)
+  }
+
+  // 4. Cosine-similarity vs F16 and latency, per batch size, one series per model.
+  {
+    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, inputMode: CHART_INPUT }))
+    const sim = chartSeries(subset, byBatch, BO, 'similarity', 'noStd')
+    if (sim.cats.length) charts += svgBarChart('Cosine-similarity vs F16 baseline by batch size', 'cosine similarity', sim.cats, sim.series, 1)
+    const lat = chartSeries(subset, byBatch, BO, 'latency', 'latencyStd')
+    if (lat.cats.length) charts += svgBarChart('Prefill latency by batch size', 'latency (ms), lower is better', lat.cats, lat.series)
+  }
+
   const inputTokens = uniformInputTokens(desktopRows)
   const metaBits = [addonVersion && `Addon <code>${addonVersion}</code>`, `Device ${meta.device}`, inputTokens && `Input ${inputTokens} tok`].filter(Boolean).join(' &middot; ')
-  const caption = `Each bar is one measured configuration on <b>${CHART_BACKEND.toUpperCase()}, flash-attn ${CHART_FLASH}, ${CHART_INPUT} input</b>. The quantization charts hold batch size at ${CHART_BATCH}; the batch-size chart holds the quant at ${CHART_QUANT_HELD}. Configs are never averaged together. Whiskers are &plusmn;1 stddev over the repeats. cosine-similarity is each config's embeddings vs the baseline (cpu, highest-fidelity quant). A missing bar means that configuration crashed, was not run, or had no measurable metric for this point. The full grid is in the report tables.`
+  const caption = `Embedding is a single prefill pass: <b>ppTPS</b> = prefill tokens/sec, <b>embeddings/sec</b> = sequences embedded per second, <b>latency (ms)</b> = prefill time, <b>cosine-similarity</b> = each config's embeddings vs the F16 baseline. The headline is the base case (baseline config cpu / fa=off / bs=256 / single) per model. The scaling charts hold the other axes at <b>${CHART_BACKEND.toUpperCase()}, flash-attn ${CHART_FLASH}</b> (batch-size charts at single input; the sequence-count chart at batch size ${CHART_BATCH}) and quant <b>F16</b> (falling back to a model's base-case quant if its F16 row is absent at the held point). A missing bar means that configuration crashed, was not run, or had no measurable metric for this point. The full grid is in the report tables.`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Embed Benchmark Charts</title></head><body style="max-width:920px;margin:24px auto;padding:0 16px;font-family:system-ui,Arial;color:#111827"><h1 style="font-size:20px;margin-bottom:2px">Embed Benchmark Charts</h1><p style="color:#6b7280;margin-top:0">${metaBits}</p><p style="color:#374151">${caption}</p><div style="margin:8px 0 20px">${legend}</div>${charts || '<p>No data to chart.</p>'}</body></html>`
 }
 
