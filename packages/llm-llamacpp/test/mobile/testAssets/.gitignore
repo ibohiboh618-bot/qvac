@@ -2,6 +2,16 @@
 *.gguf
 *.bin
 
+# Ignore image fixtures: these are staged here at CI time from the fixture
+# image store (s3://tether-ai-dev/vlm-benchmark/ -> benchmarks/vlm-benchmark/
+# images/ -> here, via benchmarks/vlm-benchmark/stage.cjs). They must not be
+# committed (they duplicate packages/llm-llamacpp/media/ and bloat the repo).
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+
 # Keep this directory in git
 !.gitignore
 
