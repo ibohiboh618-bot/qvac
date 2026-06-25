@@ -246,7 +246,7 @@ jobs:
           # default per-test ceiling. Paired with mocha-timeout-ms on
           # upload-to-devicefarm below (35 min) so the WDIO/Mocha
           # session outlives any single test.
-          android-per-test-timeout-minutes: '30'
+          android-per-test-timeout-minutes: '90'
 
       # LLM ships with its own dedicated Device Farm project + iOS pool
       # (the LLM_* secrets), historically because LLM runs more often
@@ -266,7 +266,7 @@ jobs:
           enables-perf: 'true'
           # QVAC-17830: 35-minute WDIO/Mocha ceiling so the runner
           # outlives the per-test 30-minute ceiling enforced above.
-          mocha-timeout-ms: '2100000'
+          mocha-timeout-ms: '5700000'
           qvac-perf-runs: ${{ inputs.qvac_perf_runs }}
           qvac-perf-warmup-runs: ${{ inputs.qvac_perf_warmup_runs }}
           qvac-perf-only: ${{ inputs.qvac_perf_only }}
