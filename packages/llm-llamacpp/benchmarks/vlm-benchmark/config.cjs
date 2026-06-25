@@ -68,6 +68,21 @@ const MODEL_2 = {
     { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
 }
 
+// QVAC-21257: second VLM for the mmproj CPU-vs-GPU comparison — Gemma-4-E2B-it
+// (bartowski GGUF, Q4_K_M main + bf16 mmproj). Set `mmprojModel` below to this to
+// benchmark Gemma's vision encoder instead of Qwen.
+const GEMMA_MODEL = {
+  label: 'gemma4-e2b',
+  name: 'Gemma-4-E2B-it · mmproj-bf16',
+  ctx_size: '4096',
+  llm: hf('google_gemma-4-E2B-it-Q4_K_M.gguf', 'bartowski/google_gemma-4-E2B-it-GGUF · Q4_K_M',
+    'bartowski/google_gemma-4-E2B-it-GGUF', 'main', 'google_gemma-4-E2B-it-Q4_K_M.gguf',
+    { license: 'Gemma', link: 'https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF' }),
+  mmproj: hf('mmproj-google_gemma-4-E2B-it-bf16.gguf', 'bartowski/google_gemma-4-E2B-it-GGUF · mmproj-bf16',
+    'bartowski/google_gemma-4-E2B-it-GGUF', 'main', 'mmproj-google_gemma-4-E2B-it-bf16.gguf',
+    { license: 'Gemma', link: 'https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF' })
+}
+
 // ════════════════════ THE MODEL FOR SOURCE COMPARISON (several-sources mode) ════════════════════
 // One fixed VLM, run through every engine. Its blob filenames must match the names the
 // workflow's CLI step feeds to fabric-cli/upstream-cli.
@@ -114,7 +129,7 @@ module.exports = {
   // Farm projector cpu-vs-gpu benchmark (QVAC-21257).
   mmprojGpu: 'both',
   // Single VLM used by mmproj-compare (mmprojGpu='both'); reuses MODEL_2's blobs.
-  mmprojModel: MODEL_2,
+  mmprojModel: GEMMA_MODEL,
 
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of
