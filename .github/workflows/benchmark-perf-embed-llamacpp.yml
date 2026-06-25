@@ -388,6 +388,11 @@ jobs:
           run-id: ${{ inputs.artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: combined-reports
+          # 8.0.1 verifies artifact digests and defaults to failing on a
+          # mismatch; the digest spuriously mismatches on intact report
+          # artifacts, which left combined-reports empty and the render step
+          # reported "no benchmark reports found". warn downloads them anyway.
+          digest-mismatch: warn
         continue-on-error: true
 
       - name: Download mobile perf-report artifacts
@@ -397,6 +402,11 @@ jobs:
           run-id: ${{ inputs.artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: combined-reports
+          # 8.0.1 verifies artifact digests and defaults to failing on a
+          # mismatch; the digest spuriously mismatches on intact report
+          # artifacts, which left combined-reports empty and the render step
+          # reported "no benchmark reports found". warn downloads them anyway.
+          digest-mismatch: warn
         continue-on-error: true
 
       # run-meta.json (addon version + the mobile shard list this run targeted),
@@ -408,6 +418,11 @@ jobs:
           run-id: ${{ inputs.artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: combined-reports
+          # 8.0.1 verifies artifact digests and defaults to failing on a
+          # mismatch; the digest spuriously mismatches on intact report
+          # artifacts, which left combined-reports empty and the render step
+          # reported "no benchmark reports found". warn downloads them anyway.
+          digest-mismatch: warn
         continue-on-error: true
 
       - name: Render benchmark report
