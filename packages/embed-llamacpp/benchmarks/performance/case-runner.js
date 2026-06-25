@@ -215,6 +215,15 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
     await model.load()
     loadMs = elapsedMs(loadStart)
 
+    // Warmup run (discarded) so the first measured repeat isn't skewed by
+    // cold-start graph build / GPU kernel warmup. Without it the first run is a
+    // large outlier that makes the ppTPS / latency mean ± stddev meaningless.
+    // Mirrors the LLM desktop sweep and the mobile runner's warmup.
+    try {
+      const warmup = await model.run(inputs)
+      await warmup.await()
+    } catch (_) { /* measured runs below surface any real error */ }
+
     for (let repeat = 1; repeat <= repeats; repeat++) {
       try {
         const runStart = process.hrtime()
