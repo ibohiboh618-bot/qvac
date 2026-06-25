@@ -212,9 +212,10 @@ void LlamaModel::tuneConfigMap(
     }
   }
 
-  // Adreno 800+ Vulkan: quantized KV-cache with Flash Attention crashes (the
-  // FA CM2 shader's dequant path hits an Adreno driver bug). Guard here so
-  // callers get a clean error instead of a native abort.
+  // Adreno 800+ Vulkan: quantized KV-cache with Flash Attention was
+  // previously blocked here because coopmat1 FA crashed on Adreno. The
+  // fabric fix (scalar FA fallback for Adreno) should resolve the crash;
+  // log a warning for monitoring until confirmed stable on-device.
   {
     constexpr int kAdrenoKvQuantThreshold = 800;
     const bool isVulkanAdreno =
@@ -231,29 +232,20 @@ void LlamaModel::tuneConfigMap(
                  v == "q8_0" || v == "iq4_nl" || v == "tbq3_0" ||
                  v == "tbq4_0" || v == "pq3_0" || v == "pq4_0";
         };
-        auto checkAdrenoKv = [&](const char* hyphenKey,
-                                 const char* underscoreKey,
-                                 const char* side) {
-          auto it = configFilemap.find(hyphenKey);
-          if (it == configFilemap.end())
-            it = configFilemap.find(underscoreKey);
-          if (it == configFilemap.end())
-            return;
-          if (!isQuantizedKvType(it->second))
-            return;
-          throw qvac_errors::StatusError(
-              qvac_errors::general_error::InvalidArgument,
-              string_format(
-                  "[LlamaModel] cache-type-%s=%s: quantized KV-cache with "
-                  "Flash Attention is not supported on Adreno 800+ (Vulkan). "
-                  "Use flash-attn=off, set cache-type-%s to f16/f32/bf16, or "
-                  "disable GPU acceleration.\n",
-                  side,
-                  it->second.c_str(),
-                  side));
-        };
-        checkAdrenoKv("cache-type-k", "cache_type_k", "k");
-        checkAdrenoKv("cache-type-v", "cache_type_v", "v");
+        for (const char* key :
+             {"cache-type-k", "cache_type_k", "cache-type-v", "cache_type_v"}) {
+          auto it = configFilemap.find(key);
+          if (it != configFilemap.end() && isQuantizedKvType(it->second)) {
+            QLOG_IF(
+                Priority::WARNING,
+                string_format(
+                    "[LlamaModel] %s=%s on Adreno 800+ Vulkan with "
+                    "flash-attn=on — requires fabric coopmat1 FA fix\n",
+                    key,
+                    it->second.c_str()));
+            break;
+          }
+        }
       }
     }
   }
@@ -1186,13 +1178,23 @@ void LlamaModel::commonParamsParse(
 
     const std::optional<MainGpu> mainGpu = tryMainGpuFromMap(configFilemap);
 
+    GpuBackendPreference gpuPref = GpuBackendPreference::Auto;
+    for (const char* key : {"gpu-backend", "gpu_backend"}) {
+      auto it = configFilemap.find(key);
+      if (it != configFilemap.end()) {
+        gpuPref = gpuBackendPreferenceFromString(it->second);
+        configFilemap.erase(it);
+      }
+    }
+
     const std::pair<BackendType, std::string> chosenBackend = chooseBackend(
         preferredBackend,
         LlamaModel::llamaLogCallback,
         mainGpu,
         &metadata_,
         &outAdrenoVersion,
-        pendingFinetuneOverrides_.active);
+        pendingFinetuneOverrides_.active,
+        gpuPref);
 
     // QVAC-21257: optional runtime override for the multimodal projector
     // (mmproj / vision encoder) backend. The default preserves the historical

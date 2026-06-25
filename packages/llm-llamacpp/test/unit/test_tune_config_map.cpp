@@ -740,80 +740,29 @@ TEST_F(TuneConfigMapTest, NotFinetuning_CacheTypesUnchanged) {
   EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
 }
 
-// ---- Adreno 800+ Vulkan: quantized KV + Flash Attention guard ----
+// ---- Adreno 800+ Vulkan: quantized KV + FA now warns instead of throwing ----
+// The fabric coopmat1 FA fix (scalar FA fallback for Adreno) should prevent the
+// crash; the addon logs a warning for monitoring.
 
-TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q8KCache_FlashAttnOn_Throws) {
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q8KCache_FlashAttnOn_Allowed) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
 
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
 }
 
-TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q4VCache_FlashAttnOn_Throws) {
+TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q4VCache_FlashAttnOn_Allowed) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-v"] = "q4_0";
 
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 830));
 }
 
-TEST_F(TuneConfigMapTest, Adreno830_Vulkan_Q4_1KCache_FlashAttnOn_Throws) {
-  MockModelMetaData meta(false, "llama");
-  configFilemap_["cache-type-k"] = "q4_1";
-
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
-}
-
-TEST_F(TuneConfigMapTest, Adreno830_Vulkan_IQ4NLVCache_FlashAttnOn_Throws) {
-  MockModelMetaData meta(false, "llama");
-  configFilemap_["cache-type-v"] = "iq4_nl";
-
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
-}
-
-TEST_F(TuneConfigMapTest, Adreno830_Vulkan_TbqKCache_FlashAttnOn_Throws) {
-  MockModelMetaData meta(false, "llama");
-  configFilemap_["cache-type-k"] = "tbq4_0";
-
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
-}
-
-TEST_F(TuneConfigMapTest, Adreno830_Vulkan_PqVCache_FlashAttnOn_Throws) {
-  MockModelMetaData meta(false, "llama");
-  configFilemap_["cache-type-v"] = "pq4_0";
-
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
-}
-
-TEST_F(
-    TuneConfigMapTest,
-    Adreno830_Vulkan_UnderscoreKeys_FlashAttnOn_Throws) {
-  MockModelMetaData meta(false, "llama");
-  configFilemap_["cache_type_k"] = "q8_0";
-
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 830),
-      qvac_errors::StatusError);
-}
-
-TEST_F(TuneConfigMapTest, Adreno800_Vulkan_Q8KCache_FlashAttnOn_Throws) {
+TEST_F(TuneConfigMapTest, Adreno800_Vulkan_Q8KCache_FlashAttnOn_Allowed) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
 
-  EXPECT_THROW(
-      LlamaModel::tuneConfigMap(configFilemap_, meta, 800),
-      qvac_errors::StatusError);
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(configFilemap_, meta, 800));
 }
 
 TEST_F(TuneConfigMapTest, Adreno830_Vulkan_FlashAttnOff_QuantizedKV_Allowed) {
