@@ -15,4 +15,5 @@ if (enabled) {
   require('../benchmark/streaming-benchmark.test.js')
 } else {
   console.log('[streaming-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
+  if (typeof global !== 'undefined') global.__QVAC_TEST_SKIPPED = true
 }
