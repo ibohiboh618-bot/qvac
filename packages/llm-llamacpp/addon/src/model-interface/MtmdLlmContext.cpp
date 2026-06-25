@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstdlib>
 
 #include <common/log.h>
 #include <gguf.h>
@@ -164,14 +163,12 @@ void MtmdLlmContext::initVisionContext() {
   mparams.backend_device =
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
-  // Flash attention on the vision tower is kept on by default (llama's
-  // FA-auto). The Adreno OpenCL flash_attn_f32 kernel previously corrupted the
-  // SigLIP encode due to a missing shared-memory tile barrier (fixed in the
-  // qvac-fabric overlay patch), so FA-on is now both fast and correct on
-  // OpenCL. QVAC_VISION_NO_FLASH_ATTN=1 forces standard attention for A/B.
-  if (std::getenv("QVAC_VISION_NO_FLASH_ATTN") != nullptr) {
-    mparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
-  }
+  // Vision-tower flash attention is left at llama's default (enabled). On Adreno
+  // OpenCL this is correct thanks to the qvac-fabric fix to the flash-attention
+  // dispatch, which previously inferred causal masking from a null mask and so
+  // made the bidirectional SigLIP / Qwen3-VL encoder attend causally (corrupting
+  // the image embedding). A null mask is now treated as bidirectional, so the
+  // encode is both fast and accurate.
   mparams.n_threads = params_.cpuparams.n_threads;
   mparams.image_tile_mode = params_.image_tile_mode;
   // Forward the per-image token budget to the vision encoder. These were
