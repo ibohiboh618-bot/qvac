@@ -260,6 +260,13 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
           onRepeatComplete({ repeat, repeats })
         }
       }
+
+      // Small settle delay between repeats (model stays loaded) so consecutive
+      // measured runs don't contend and skew the mean ± stddev. Mirrors the LLM
+      // sweep's inter-repeat delay.
+      if (repeat < repeats) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
     }
   } catch (err) {
     primaryError = err
@@ -448,6 +455,17 @@ async function runModelCases ({
       failureMessage
     })
     caseResults.push(caseResult)
+
+    // Fail fast when the baseline case cannot initialize the model. Continuing
+    // the full grid in this state only floods logs with the same fatal error.
+    if (failureMessage && testCase.isBaseline &&
+        /UnableToLoadModel|Failed to initialize model|failed to load model|failed to create context/i.test(failureMessage)) {
+      throw new Error(
+        `Baseline case failed to initialize model "${testCase.modelName}". ` +
+        'Please re-prepare models and verify disk/free space before running the sweep again. ' +
+        `Underlying error: ${failureMessage}`
+      )
+    }
   }
 
   return {

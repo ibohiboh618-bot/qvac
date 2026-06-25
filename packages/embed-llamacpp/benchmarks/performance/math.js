@@ -7,7 +7,8 @@ function elapsedMs (hrStart) {
   return sec * 1000 + nano / 1e6
 }
 
-function round (num, digits = 4) {
+function round (num, digits) {
+  if (typeof num !== 'number' || Number.isNaN(num)) return null
   const scale = Math.pow(10, digits)
   return Math.round(num * scale) / scale
 }

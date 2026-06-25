@@ -13,6 +13,13 @@ function tsFileStamp () {
   return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`
 }
 
+// Baseline rows render every config column as 'default'; otherwise show the
+// runtime value (stringified) or blank when unset.
+function cfgCell (isBaseline, value) {
+  if (isBaseline) return 'default'
+  return value != null ? String(value) : ''
+}
+
 function toMarkdown (report) {
   const lines = []
   lines.push('# Embed Parameter Sweep Benchmark Report')
@@ -28,20 +35,20 @@ function toMarkdown (report) {
     lines.push('|---|---|---:|---|---|---|---|---:|---:|---:|---:|---:|---|')
     for (const item of model.cases) {
       const metrics = item.metrics || {}
-      const runtimeConfig = item.runtimeConfig
+      const runtimeConfig = item.runtimeConfig || {}
       const cos = item.similarity ? item.similarity.avg : ''
-      const quantizationCell = item.isBaseline ? 'default' : item.quantization
-      const deviceCell = item.isBaseline ? 'default' : String(runtimeConfig.device)
-      const batchSizeCell = item.isBaseline ? 'default' : String(runtimeConfig.batchSize)
+      const quantizationCell = cfgCell(item.isBaseline, item.quantization)
+      const deviceCell = cfgCell(item.isBaseline, runtimeConfig.device)
+      const batchSizeCell = cfgCell(item.isBaseline, runtimeConfig.batchSize)
       const inputCell = item.inputMode || 'single'
       const noMmapCell = item.isBaseline
         ? 'default'
         : (runtimeConfig.noMmap ? 'on' : 'off')
-      const flashAttnCell = item.isBaseline
-        ? 'default'
-        : String(runtimeConfig.flashAttn)
-      const statusCell = item.status
-      const errorCell = item.error ? truncateText(item.error.message, 120) : ''
+      const flashAttnCell = cfgCell(item.isBaseline, runtimeConfig.flashAttn)
+      const statusCell = item.status ?? ''
+      const errorCell = item.error && item.error.message
+        ? truncateText(item.error.message, 120)
+        : ''
       lines.push(
         `| ${quantizationCell} | ${deviceCell} | ${batchSizeCell} | ${inputCell} | ${noMmapCell} | ${flashAttnCell}` +
         ` | ${statusCell} | ${metrics.loadMs ?? ''}` +
@@ -53,6 +60,7 @@ function toMarkdown (report) {
     }
     lines.push('')
   }
+  lines.push('')
   return `${lines.join('\n')}\n`
 }
 

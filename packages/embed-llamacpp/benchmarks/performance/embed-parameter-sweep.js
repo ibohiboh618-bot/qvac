@@ -53,17 +53,41 @@ function resolveAddonCtor (addonSource) {
   }
 }
 
+function stripSurroundingQuotes (value) {
+  const s = String(value)
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1)
+  }
+  return s
+}
+
+function normalizeArgValue (value) {
+  if (value === true || value == null) return value
+  let normalized = String(value).trim()
+  if (normalized.startsWith('=')) {
+    normalized = normalized.slice(1).trim()
+  }
+  normalized = stripSurroundingQuotes(normalized).trim()
+  return normalized
+}
+
 function parseArgs (argv) {
   const parsed = {}
   for (let i = 2; i < argv.length; i++) {
     const token = argv[i]
     if (!token.startsWith('--')) continue
+    const inlineEqIndex = token.indexOf('=')
+    if (inlineEqIndex !== -1) {
+      const key = token.slice(2, inlineEqIndex)
+      parsed[key] = normalizeArgValue(token.slice(inlineEqIndex + 1))
+      continue
+    }
     const key = token.slice(2)
     const next = argv[i + 1]
     if (!next || next.startsWith('--')) {
       parsed[key] = true
     } else {
-      parsed[key] = next
+      parsed[key] = normalizeArgValue(next)
       i++
     }
   }
@@ -149,21 +173,49 @@ async function main () {
   }
 
   report.finishedAt = new Date().toISOString()
+
+  isShuttingDown = true
+
   const stamp = tsFileStamp()
   const jsonPath = path.join(resultsDir, `embed-parameter-sweep-${stamp}.json`)
   const jsonlPath = path.join(resultsDir, `embed-parameter-sweep-${stamp}.jsonl`)
   const mdPath = path.join(resultsDir, `embed-parameter-sweep-${stamp}.md`)
-  fs.writeFileSync(jsonPath, JSON.stringify(toReportJson(report), null, 2))
-  fs.writeFileSync(jsonlPath, toJsonLines(report))
-  fs.writeFileSync(mdPath, toMarkdown(report))
-  debugLogger.log('\nDone.')
-  debugLogger.log(`JSON: ${jsonPath}`)
-  debugLogger.log(`JSONL: ${jsonlPath}`)
-  debugLogger.log(`MD:   ${mdPath}`)
+  try {
+    fs.writeFileSync(jsonPath, JSON.stringify(toReportJson(report), null, 2))
+    fs.writeFileSync(jsonlPath, toJsonLines(report))
+    fs.writeFileSync(mdPath, toMarkdown(report))
+    debugLogger.log('\nDone.')
+    debugLogger.log(`JSON: ${jsonPath}`)
+    debugLogger.log(`JSONL: ${jsonlPath}`)
+    debugLogger.log(`MD:   ${mdPath}`)
+  } catch (writeError) {
+    console.error('Failed to write report files:', writeError)
+  }
 }
 
+let isShuttingDown = false
+
+process.on('uncaughtException', (error) => {
+  if (isShuttingDown) {
+    return
+  }
+  console.error('Uncaught exception in parameter sweep:')
+  console.error(error && error.stack ? error.stack : String(error))
+  process.exit(130)
+})
+
+process.on('unhandledRejection', (reason) => {
+  if (isShuttingDown) {
+    return
+  }
+  console.error('Unhandled rejection in parameter sweep:')
+  console.error(reason && reason.stack ? reason.stack : String(reason))
+  process.exit(130)
+})
+
 main().catch((error) => {
+  isShuttingDown = true
   console.error('Parameter sweep failed:')
-  console.error(error.stack || String(error))
-  process.exit(1)
+  console.error(error && error.stack ? error.stack : String(error))
+  process.exit(130)
 })
