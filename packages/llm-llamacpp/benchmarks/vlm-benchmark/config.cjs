@@ -133,7 +133,6 @@ module.exports = {
   // used. QVAC-21318: default is kv-sweep on this branch so the Device Farm legs run the
   // KV-cache-quant matrix (cache type varies per cell) without per-device env.
   mode: 'kv-sweep',
-  gpuBackend: 'vulkan',
 
   // two-models compares these two complete VLMs:
   models: [MODEL_1, MODEL_2],
@@ -170,7 +169,7 @@ module.exports = {
   //   QVAC_VLM_SAMPLES→samplesPerTask · QVAC_VLM_REPEATS→repeats
   //   QVAC_VLM_DEVICES→devices (csv) · QVAC_VLM_TASKS→tasks (csv)
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
-  defaultPreset: 'smoke',
+  defaultPreset: 'base',
 
   presets: {
     // smoke — 1 task, 1 image, 1 repeat: a single inference per config (wiring check).
