@@ -6,8 +6,8 @@
 // Reads embed sweep JSON from --dir (recursively) and renders ONE markdown
 // report:
 //   - header with addon version, input token size, repeats-per-config, device
-//   - one table per model: Config | ppTPS | latency (ms) | embeddings/sec |
-//     cosine-similarity vs baseline
+//   - one `## <device>` section, each with a `### <model>` table: Config |
+//     ppTPS | latency (ms) | embeddings/sec | cosine-similarity vs baseline
 //   - a Coverage section comparing measured configs against the expected grid
 //   - a "## Charts" mermaid section (ppTPS per config at a representative point)
 //     plus a self-contained HTML chart artifact (--html) with ppTPS, similarity
@@ -157,11 +157,12 @@ function rowsFromFile (file, device, meta) {
       const m = r.metrics || {}
       const crashed = (r.status && String(r.status).toLowerCase() === 'crashed') ||
         (num(m.pp_tps) === null && num(m.latency_ms) === null && num(m.emb_per_sec) === null)
+      const config = r.test || '(unknown)'
       rows.push({
         device: mobileDevice,
         mobile: true,
-        model: null,
-        config: r.test || '(unknown)',
+        model: modelOf(config),
+        config,
         quant: null,
         backend: null,
         batchSize: null,
@@ -247,6 +248,14 @@ function configLabel ({ model, quant, device, batchSize, flashAttn, inputMode, i
   if (inputMode) parts.push(`[input=${inputMode}]`)
   if (isBaseline) parts.push('[baseline]')
   return parts.join(' ')
+}
+
+// Bare model name from a "[<model> q=<quant>] ..." config label, used to group
+// mobile rows (which carry no modelId field) under a model sub-heading. Returns
+// '(unknown)' when the label is not in the expected shape.
+function modelOf (config) {
+  const m = /^\[([^\]]+?)\s+q=/.exec(config)
+  return m ? m[1] : '(unknown)'
 }
 
 function fmt (v, decimals = 2) {
@@ -517,8 +526,48 @@ function mobileCoverageLines (rows, devices, expectedShards) {
   return lines
 }
 
-// Mobile report: one table per device with the same columns as the desktop
-// per-model tables (ppTPS | latency (ms) | embeddings/sec | cosine-similarity),
+// A device's rows rendered as one `### <model>` sub-section per model, each with
+// the metric table (ppTPS | latency | embeddings/sec | cosine-similarity).
+// Rows within a model are baseline-first then config-sorted. Used by both the
+// desktop and mobile sections so every device groups model-first.
+function deviceModelTables (rows) {
+  const byModel = new Map()
+  for (const r of rows) {
+    if (!byModel.has(r.model)) byModel.set(r.model, [])
+    byModel.get(r.model).push(r)
+  }
+  const models = [...byModel.keys()].sort()
+  const lines = []
+  for (const model of models) {
+    const items = byModel.get(model).slice().sort((a, b) => {
+      if (a.isBaseline !== b.isBaseline) return a.isBaseline ? -1 : 1
+      return a.config.localeCompare(b.config)
+    })
+    lines.push(`### ${model}`)
+    lines.push('')
+    lines.push('| Config | ppTPS | latency (ms) | embeddings/sec | cosine-similarity |')
+    lines.push('| --- | ---: | ---: | ---: | ---: |')
+    for (const r of items) {
+      if (r.crashed) {
+        lines.push(`| ${r.config} | Crashed | Crashed | Crashed | - |`)
+      } else {
+        const note = r.partial && r.repeatsSucceeded != null && r.repeatsAttempted != null
+          ? ` _(partial: ${r.repeatsSucceeded}/${r.repeatsAttempted} repeats)_`
+          : ''
+        lines.push(
+          `| ${r.config}${note} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ` +
+          `${fmtMS(r.latency, r.latencyStd, r.sampleCount)} | ` +
+          `${fmtMS(r.embPerSec, r.embPerSecStd, r.sampleCount)} | ${fmtSim(r.similarity)} |`
+        )
+      }
+    }
+    lines.push('')
+  }
+  return lines
+}
+
+// Mobile report: per device, one `### <model>` table with the same columns as
+// the desktop tables (ppTPS | latency (ms) | embeddings/sec | cosine-similarity),
 // plus mobile coverage scored against the (model x quant x batchSize x
 // flashAttn) shard matrix.
 function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark Results') {
@@ -557,23 +606,9 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   for (const l of mobileCoverageLines(rows, devices, meta.expectedShards)) lines.push(l)
 
   for (const device of devices) {
-    const items = byDevice.get(device).slice().sort((a, b) => a.config.localeCompare(b.config))
     lines.push(`## ${device}`)
     lines.push('')
-    lines.push('| Config | ppTPS | latency (ms) | embeddings/sec | cosine-similarity |')
-    lines.push('| --- | ---: | ---: | ---: | ---: |')
-    for (const r of items) {
-      if (r.crashed) {
-        lines.push(`| ${r.config} | Crashed | Crashed | Crashed | - |`)
-      } else {
-        lines.push(
-          `| ${r.config} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ` +
-          `${fmtMS(r.latency, r.latencyStd, r.sampleCount)} | ` +
-          `${fmtMS(r.embPerSec, r.embPerSecStd, r.sampleCount)} | ${fmtSim(r.similarity)} |`
-        )
-      }
-    }
-    lines.push('')
+    for (const l of deviceModelTables(byDevice.get(device))) lines.push(l)
   }
 
   lines.push('## Best configuration per device')
@@ -593,10 +628,11 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
 }
 
 function render (rows, meta, addonVersionArg, chartsUrl) {
-  // Mobile perf-report rows are device-keyed; the desktop sweep is model-keyed
-  // with repeats. Render each from its OWN rows so a combined run (both present)
-  // shows a "— Desktop" and a "— Mobile" section, and a single-kind run shows
-  // just that one. (A desktop-only run keeps the bare "# Embed Benchmark Results".)
+  // Both desktop and mobile group device-first then model; the desktop sweep
+  // carries repeats while mobile is one perf-report per device. Render each from
+  // its OWN rows so a combined run (both present) shows a "— Desktop" and a
+  // "— Mobile" section, and a single-kind run shows just that one. (A
+  // desktop-only run keeps the bare "# Embed Benchmark Results".)
   const desktopRows = rows.filter((r) => !r.mobile)
   const mobileRows = rows.filter((r) => r.mobile)
   if (!desktopRows.length) return renderMobile(mobileRows, meta, addonVersionArg)
@@ -639,49 +675,32 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
 
   for (const l of mermaidSection(desktopRows, chartsUrl)) lines.push(l)
 
-  const byModel = new Map()
+  // Desktop is a single device (meta.device); group device-first then model so
+  // the section nests `## <device>` › `### <model>` like the mobile section.
+  const byDevice = new Map()
   for (const r of desktopRows) {
-    if (!byModel.has(r.model)) byModel.set(r.model, [])
-    byModel.get(r.model).push(r)
+    if (!byDevice.has(r.device)) byDevice.set(r.device, [])
+    byDevice.get(r.device).push(r)
+  }
+  const devices = [...byDevice.keys()].sort()
+
+  for (const device of devices) {
+    lines.push(`## ${device}`)
+    lines.push('')
+    for (const l of deviceModelTables(byDevice.get(device))) lines.push(l)
   }
 
-  for (const model of models) {
-    const items = byModel.get(model).slice().sort((a, b) => {
-      if (a.isBaseline !== b.isBaseline) return a.isBaseline ? -1 : 1
-      return a.config.localeCompare(b.config)
-    })
-    lines.push(`## ${model}`)
-    lines.push('')
-    lines.push('| Config | ppTPS | latency (ms) | embeddings/sec | cosine-similarity |')
-    lines.push('| --- | ---: | ---: | ---: | ---: |')
-    for (const r of items) {
-      if (r.crashed) {
-        lines.push(`| ${r.config} | Crashed | Crashed | Crashed | - |`)
-      } else {
-        const note = r.partial && r.repeatsSucceeded !== null && r.repeatsAttempted !== null
-          ? ` _(partial: ${r.repeatsSucceeded}/${r.repeatsAttempted} repeats)_`
-          : ''
-        lines.push(
-          `| ${r.config}${note} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ` +
-          `${fmtMS(r.latency, r.latencyStd, r.sampleCount)} | ` +
-          `${fmtMS(r.embPerSec, r.embPerSecStd, r.sampleCount)} | ${fmtSim(r.similarity)} |`
-        )
-      }
-    }
-    lines.push('')
-  }
-
-  lines.push('## Best configuration per model')
+  lines.push('## Best configuration per device')
   lines.push('')
-  lines.push('| Model | Highest ppTPS | Highest embeddings/sec |')
+  lines.push('| Device | Highest ppTPS | Highest embeddings/sec |')
   lines.push('| --- | --- | --- |')
-  for (const model of models) {
-    const ok = byModel.get(model).filter((r) => !r.crashed && !r.isBaseline)
+  for (const device of devices) {
+    const ok = byDevice.get(device).filter((r) => !r.crashed && !r.isBaseline)
     const bestPp = ok.filter((r) => r.ppTps !== null).sort((a, b) => b.ppTps - a.ppTps)[0]
     const bestEmb = ok.filter((r) => r.embPerSec !== null).sort((a, b) => b.embPerSec - a.embPerSec)[0]
     const ppCell = bestPp ? `${bestPp.config} — ${fmt(bestPp.ppTps)}` : '-'
     const embCell = bestEmb ? `${bestEmb.config} — ${fmt(bestEmb.embPerSec)}` : '-'
-    lines.push(`| ${model} | ${ppCell} | ${embCell} |`)
+    lines.push(`| ${device} | ${ppCell} | ${embCell} |`)
   }
   lines.push('')
 
