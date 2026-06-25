@@ -526,9 +526,6 @@ bool MtmdLlmContext::evalMessageWithTools(
       stopGeneration_.store(false);
       return false;
     }
-    const bool isImageChunk =
-        mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE;
-    const int64_t chunkT0 = isImageChunk ? ggml_time_ms() : 0;
     int32_t res = mtmd_helper_eval_chunk_single(
         ctxVision_.get(),
         modelCtx_.lctx,
@@ -538,18 +535,6 @@ bool MtmdLlmContext::evalMessageWithTools(
         params_.n_batch,
         chunkLogitsLast,
         &nPastLocal);
-    if (isImageChunk) {
-      // Vision encode + image-token projection for this chunk. Logged via the
-      // addon logger so it reaches logcat (mtmd's own "slice encoded in N ms"
-      // uses common/log.h, which is not routed there). Used to A/B the SigLIP
-      // encoder on CPU vs the Adreno OpenCL backend.
-      QLOG_IF(
-          Priority::INFO,
-          "[VISION_ENCODE_MS] " +
-              std::to_string(ggml_time_ms() - chunkT0) +
-              " (tokens=" +
-              std::to_string(mtmd_input_chunk_get_n_tokens(chunk)) + ")");
-    }
     if (res != 0) {
       std::string errorMsg =
           "[MtmdLlm] failed to eval chunk " + std::to_string(i);
