@@ -1,21 +1,18 @@
 # tts-cpp — LOCAL OVERLAY PORT (Chatterbox Mali-GPU verify; DO NOT MERGE).
 #
-# Replaces the registry tts-cpp port so the tts-ggml prebuild carries THREE
-# changes vs master, all for the Bug-2 Mali-GPU verify (DO NOT MERGE):
-#   1. allow_arm_mali=true for Chatterbox T3 (main.cpp) + S3Gen
-#      (chatterbox_tts.cpp) — ADMITS Chatterbox onto ARM Mali/Immortalis Vulkan.
-#   2. S3GEN_DIAG=1 — per-stage (mu_T/mel/f0/wav) per-block rms/min/max +
-#      bit-pattern NaN/Inf trace to localize the token-32 S3Gen collapse.
-#   3. S3GEN_FIX=cfm_unfused — swap the CFM flash_attn_ext for soft_max+matmul
-#      (the FA-on-Mali fix-swing). Both env-gated; default off = stock behaviour.
-# Everything else is current master. ggml-speech is consumed UNCHANGED from the
-# registry (origin/speech). NB: in the S3Gen graph only HiFT is scheduler-routed
-# and conv_transpose_1d runs on CPU there; the encoder/CFM (the mel producers)
-# run on the Mali GPU, which is where Bug 2 lives.
+# ROUND 2: pins the ACTUAL Bug-2 fix branch + a verify harness. The PR fix
+# (PR #67, branch QVAC-20557-chbx-mali-fix) is master + an is_arm_mali gate that
+# auto-routes the CFM attention off the (Mali-miscomputing) f32 flash_attn_ext to
+# the unfused soft_max+matmul on Mali only. This overlay pins
+# QVAC-20557-chbx-mali-fix-verify = that fix + the S3GEN_DIAG per-stage trace, so
+# this device round confirms the GATE auto-fires (no env): expect is_mali=1,
+# cfm_unfused=1, f0 bad=0. TTS_CPP_CHBX_CFM_FA=1 forces the broken fused path for
+# the A/B control. The S3GEN_DIAG harness is verify-only and is NOT in the fix PR.
+# ggml-speech is consumed UNCHANGED from the registry (origin/speech).
 #
 # Pinned at tetherto/qvac-ext-lib-whisper.cpp branch
-# QVAC-20557-chbx-mali-gpu-verify-0624 (off master). REF/SHA512 are filled by
-# ~/workstuff/overlay-bump.sh after the branch is pushed.
+# QVAC-20557-chbx-mali-fix-verify (off the PR-#67 fix branch). REF/SHA512 are
+# filled by ~/workstuff/overlay-bump.sh after the branch is pushed.
 #
 # TEMPORARY: this overlay (and its overlay-ports entry in
 # vcpkg-configuration.json) is throwaway verify scaffolding — never merge.
@@ -26,8 +23,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 93dcfdadf13b7b92db661e1728986331d15feea4
-    SHA512 0a6da017486f78292432ae85aca995313fe4f5606661de63cb2b2e69ad3a57db2b4bcac0374c73a485a4d2b90f1f983dc31a126c6e0d8a6e1b0392412a48e044
+    REF 07e9fc3a0df17cde780aa0305c586d74d18623be
+    SHA512 b52e35f9449abc5ed6d5d63cd9f3769876c363ae5badd4e7f20aa2b64034042cf397616d5ec6ed761547726a4fa617aab1129544c85809ae863c9b3ddc7628ba
     HEAD_REF master
 )
 

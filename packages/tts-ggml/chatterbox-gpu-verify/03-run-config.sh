@@ -17,7 +17,7 @@ echo "== RUN $LABEL : variant=$VARIANT T3=$T3 S3Gen=$S3 (hard timeout ${TIMEOUT}
 # captured into console.txt. 5-min hard timeout = no hang.
 # S3GEN_DIAG / S3GEN_FIX are passed through from the caller's env (05-run-bug2-round1.sh)
 # in the launch-env prefix so native std::getenv sees them (set-once-before-load).
-"${ADB[@]}" shell "cd $DEVICE_DIR && LD_LIBRARY_PATH=$DEVICE_DIR MODEL_DIR=$DEVICE_DIR/models BACKENDS_DIR=$DEVICE_DIR/prebuilds REF_WAV=$DEVICE_DIR/test/reference-audio/jfk.wav CHBX_VARIANT=$VARIANT T3_BACKEND=$T3 S3GEN_BACKEND=$S3 S3GEN_DIAG=${S3GEN_DIAG:-} S3GEN_FIX=${S3GEN_FIX:-} OUT_WAV=$DEVICE_DIR/out/$LABEL.wav RESULT_OUT=$DEVICE_DIR/out/$LABEL.result.json timeout $TIMEOUT ./bare chatterbox-gpu-verify/run.js" > "$OUT_DIR/$LABEL.console.txt" 2>&1 || echo "   (run non-zero / timed out -- see $LABEL.console.txt)"
+"${ADB[@]}" shell "cd $DEVICE_DIR && LD_LIBRARY_PATH=$DEVICE_DIR MODEL_DIR=$DEVICE_DIR/models BACKENDS_DIR=$DEVICE_DIR/prebuilds REF_WAV=$DEVICE_DIR/test/reference-audio/jfk.wav CHBX_VARIANT=$VARIANT T3_BACKEND=$T3 S3GEN_BACKEND=$S3 S3GEN_DIAG=${S3GEN_DIAG:-} S3GEN_FIX=${S3GEN_FIX:-} TTS_CPP_CHBX_CFM_FA=${TTS_CPP_CHBX_CFM_FA:-} CORR_TEXT='${CORR_TEXT:-}' OUT_WAV=$DEVICE_DIR/out/$LABEL.wav RESULT_OUT=$DEVICE_DIR/out/$LABEL.result.json timeout $TIMEOUT ./bare chatterbox-gpu-verify/run.js" > "$OUT_DIR/$LABEL.console.txt" 2>&1 || echo "   (run non-zero / timed out -- see $LABEL.console.txt)"
 # 1) AUDIO FIRST
 "${ADB[@]}" pull "$DEVICE_DIR/out/$LABEL.wav" "$OUT_DIR/$LABEL.wav" || echo "   NO WAV"
 # 2) result.json (backendDevice / RTF / passed)

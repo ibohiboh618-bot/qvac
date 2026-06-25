@@ -1,68 +1,52 @@
-# Chatterbox Mali-GPU verify — Bug 2, ROUND 1 (2026-06-24)
+# Chatterbox Mali-GPU fix — ROUND 2 (confirm the auto-gate) — 2026-06-25
 
-**Read this first. It supersedes `INSTRUCTIONS.md` and the previous round's notes.**
-The build/deploy *scripts* still apply; the run step is now a single script (`05-run-bug2-round1.sh`).
-
-## What we're chasing (Bug 2 — different from the old 12 kHz CPU tone)
-With Chatterbox forced onto the **Mali (Vulkan) GPU**, the audio is clean for the first ~1.3 s and then
-**collapses at a fixed point** into a buzzy/“morse” comb for the rest of the clip. It is **clean on
-Adreno (OpenCL), on Qualcomm CPU, and on desktop** — so it's a **Mali-Vulkan-specific S3Gen miscompute**.
-The garbage starts in the **mel** (produced by the encoder + CFM on the GPU); HiFT is downstream.
-
-**Prime suspect:** the CFM estimator's `flash_attn_ext` (the only flash-attn in the graph) miscomputing
-on the Mali f32 FA kernel. This round localizes it AND tries a fix in one device session.
+**Read this first.** Round 1 found it: Chatterbox's CFM `flash_attn_ext` miscomputes on Mali Vulkan
+(subtly-wrong mel → the f0 predictor blows up to NaN → broken audio), and swapping that attention to an
+unfused soft_max+matmul fixed it. Round 2 confirms the **shipping fix**: an `is_arm_mali` gate that
+applies that swap **automatically on Mali, with no env flags** (PR #67).
 
 ## What this build carries (overlay `ports/tts-cpp`, DO-NOT-MERGE)
-Three env-gated changes vs source-of-truth master (all default-off = stock behaviour):
-1. `allow_arm_mali=true` — admits Chatterbox onto the Mali Vulkan GPU.
-2. `S3GEN_DIAG=1` — prints a per-stage (`mu_T` → `mel` → `f0` → `wav`) per-block rms/min/max +
-   NaN/Inf trace to **`<label>.console.txt`**. This is how we localize the first diverging stage.
-3. `S3GEN_FIX=cfm_unfused` — swaps the CFM flash-attn for the encoder's soft_max+matmul (Mali-correct)
-   formulation. The **fix-swing**: if the FA kernel is the bug, this run should be clean.
+The **PR #67 fix** (master + the `is_arm_mali`-gated unfused CFM attention, B=1 and B=2) **plus** the
+`S3GEN_DIAG` per-stage trace (verify-only; not in the PR). On Mali the gate fires automatically; off
+Mali nothing changes. `TTS_CPP_CHBX_CFM_FA=1` forces the old (broken-on-Mali) fused path for an A/B.
 
-## The round — 3 runs, ONE build (turbo, T3 pinned to CPU, seed 42)
-| label           | S3Gen backend | extra env              | purpose                                  |
-|-----------------|---------------|------------------------|------------------------------------------|
-| `r1-base`       | **Mali GPU**  | `S3GEN_DIAG=1`         | reproduce the break + localize the stage |
-| `r1-cfmunfused` | **Mali GPU**  | `+ S3GEN_FIX=cfm_unfused` | **fix-swing** — does the break vanish? |
-| `r1-cpuref`     | CPU           | `S3GEN_DIAG=1`         | known-good per-stage trace to compare    |
+## The round — 4 runs, ONE build (turbo T3 pinned to CPU, seed 42)
+| label        | what                                   | expected                                                |
+|--------------|----------------------------------------|---------------------------------------------------------|
+| `r2-gated`   | Mali GPU, no env (the shipping path)   | **clean audio**; config `is_mali=1 cfm_unfused=1`, `f0 bad=0` |
+| `r2-forcefa` | Mali GPU, `TTS_CPP_CHBX_CFM_FA=1`      | **broken** (A/B control): `cfm_unfused=0`, f0 explodes   |
+| `r2-text2`   | Mali GPU, no env, a longer sentence    | clean (robustness on a different shape)                  |
+| `r2-mtl`     | Mali GPU, **mtl** variant, no env      | clean (exercises the B=2 attention path)                 |
 
-`05-run-bug2-round1.sh` runs all three and sets the env for you — no need to set anything by hand.
-
-## Prerequisites (host that builds)
-- Android NDK, `bare`, `bare-make`, vcpkg toolchain (same as any tts-ggml arm64-android build).
-- vcpkg must be able to fetch a private GitHub repo (the overlay pulls `tetherto/qvac-ext-lib-whisper.cpp`
-  by commit — same `GH_TOKEN` / GitHub auth as registry builds).
-- An authorized Mali/Pixel device on `adb`. `npm install` already run in `packages/tts-ggml`.
+`06-run-bug2-round2.sh` runs all four and sets the env for you.
 
 ## Steps (run from `packages/tts-ggml`)
 ```bash
-# 1. models (turbo Chatterbox only this round)
-node scripts/download-tts-ggml-models.js --group chatterbox
+# 1. models — turbo for r2-gated/forcefa/text2; mtl too if you want r2-mtl
+node scripts/download-tts-ggml-models.js --group chatterbox,chatterbox-mtl
 
-# 2. build the arm64-android prebuild (picks up ports/ overlay automatically)
+# 2. build (picks up the ports/ overlay automatically)
 bash chatterbox-gpu-verify/01-build-android.sh
 
-# 3. deploy to the device
+# 3. deploy
 BARE_CLI=/path/to/android-arm64/bare \
 LIBCXX_SO=$ANDROID_NDK/toolchains/llvm/prebuilt/<host>/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so \
 bash chatterbox-gpu-verify/02-deploy.sh
 
-# 4. run the 3-run round (writes ./chbx-results/r1-*.{wav,result.json,console.txt,gpudiag.txt})
-OUT_DIR=./chbx-results bash chatterbox-gpu-verify/05-run-bug2-round1.sh
+# 4. run the round (writes ./chbx-results/r2-*.{wav,result.json,console.txt})
+OUT_DIR=./chbx-results bash chatterbox-gpu-verify/06-run-bug2-round2.sh
 ```
+(If you don't have the mtl GGUFs, `r2-mtl` will just warn-and-skip — the other three are the core.)
 
 ## What to send back
-From `./chbx-results/`, for **each** of `r1-base`, `r1-cfmunfused`, `r1-cpuref`:
-- **`<label>.console.txt`** ← most important (holds the `[s3gen-diag]` per-stage/per-block trace)
+From `./chbx-results/`, for each of `r2-gated`, `r2-forcefa`, `r2-text2`, `r2-mtl`:
+- **`<label>.console.txt`** (holds the `[s3gen-diag] config ...` line + the `f0` trace)
 - `<label>.wav`
 - `<label>.result.json`
 
-…plus a one-line by-ear verdict per WAV (**clean** / **breaks partway** / **crashed**). We'll do the
-numeric analysis from the `.console.txt` traces. (No need to interpret them yourself.)
+Plus a one-line by-ear verdict per WAV (**clean** / **broken** / **crashed**).
 
-## Quick sanity (optional, helps us trust the run)
-- In each `r1-base` / `r1-cpuref` `console.txt` there should be a line `[s3gen-diag] config ... backend_cpu=…`.
-  `r1-base` should show `backend_cpu=0` (ran on GPU); `r1-cpuref` `backend_cpu=1`. If `r1-base` shows
-  `backend_cpu=1`, the GPU backend `.so` wasn't found — flag it (the BACKENDS_DIR/prebuilds path), that run
-  is not a GPU test.
+## The single result that matters
+**`r2-gated` clean with `is_mali=1 cfm_unfused=1` and `f0 bad=0`** = the auto-gate works on the real
+device → PR #67 ships. `r2-forcefa` broken on the same binary is the proof that the gate (not something
+else) is what fixes it.
