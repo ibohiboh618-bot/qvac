@@ -6,8 +6,8 @@ vcpkg_from_github(
   # OpenCL vision encoder fixes) ahead of publishing 9341.1.0 to the registry.
   # Replace with `REF v${VERSION}` + the tag SHA512 in the registry PR (Phase
   # B1), and delete this overlay from the consumers in the landing PR (Phase B2).
-  REF 6b0f16918babc35d8e4c575f3fea09f090120212
-  SHA512 b6976148ea45118106bb673f927a8f5dda1da0d504af23f39e8322d56d32ca2726ae0c24573bdc718a78e91fdf04a1f3549fa4c4bdb29fd8e75a4274ef26feb6
+  REF 8b02fa4d7796736ceca8494184f67b722a34013e
+  SHA512 f3e2bbf1caaf273b095c3e77c8450fb79c5a5015ab89f96ec66e38e4766f6467af0d90f870e5fb53c3b3e899949314f30870a7bf94817762fbc34a03418f3045
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
