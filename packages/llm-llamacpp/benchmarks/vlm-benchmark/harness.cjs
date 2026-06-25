@@ -314,6 +314,7 @@ function runModel (spec) {
           // QVAC-21318: KV-cache-quant sweep — set the cache types + Flash Attention
           // for this leg (V-quant requires FA, so it is forced on for every kv cell).
           ...(kv ? { 'cache-type-k': kv.k, 'cache-type-v': kv.v, 'flash-attn': kv.flashAttn } : {}),
+          ...(config.gpuBackend ? { 'gpu-backend': config.gpuBackend } : {}),
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,

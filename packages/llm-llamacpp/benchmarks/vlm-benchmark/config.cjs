@@ -133,6 +133,7 @@ module.exports = {
   // used. QVAC-21318: default is kv-sweep on this branch so the Device Farm legs run the
   // KV-cache-quant matrix (cache type varies per cell) without per-device env.
   mode: 'kv-sweep',
+  gpuBackend: 'vulkan',
 
   // two-models compares these two complete VLMs:
   models: [MODEL_1, MODEL_2],
