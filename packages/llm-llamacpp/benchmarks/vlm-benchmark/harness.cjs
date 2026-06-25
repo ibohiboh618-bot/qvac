@@ -293,7 +293,10 @@ function runModel (spec) {
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
-          n_predict: '128',
+          // QVAC-21372: configurable so the prefill-premise/hybrid run can use a small
+          // decode budget (TTFT/prefill is the A1 headline) and finish all 6 legs within
+          // the Device Farm session window. Defaults to 128 when config.nPredict is unset.
+          n_predict: String(config.nPredict || 128),
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
           'reasoning-budget': '0' // disable Qwen3.5 thinking -> clean direct answers
         },

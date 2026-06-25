@@ -121,6 +121,11 @@ module.exports = {
   // built from the fork branch carrying the hook (vcpkg overlay port).
   hybridPrefill: true,
 
+  // QVAC-21372: small decode budget for the mobile premise+hybrid run. The A1 headline is
+  // TTFT/prefill (pre-decode), so a short decode keeps a decode-TPS estimate while letting
+  // all 6 legs (2 models × cpu/gpu/gpu-hybrid) finish within the Device Farm session.
+  nPredict: 16,
+
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of
   // the mode. Used verbatim on mobile, and the desktop default when QVAC_VLM_PRESET is
@@ -128,7 +133,10 @@ module.exports = {
   //   QVAC_VLM_SAMPLES→samplesPerTask · QVAC_VLM_REPEATS→repeats
   //   QVAC_VLM_DEVICES→devices (csv) · QVAC_VLM_TASKS→tasks (csv)
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
-  defaultPreset: 'base',
+  // QVAC-21372: mobile runs the A1 premise+hybrid (6 legs/device). Gemma4-E2B on a phone
+  // CPU is very slow, so the full `base` set times out the Device Farm session before all
+  // legs finish. Use the lighter `mobilea1` preset on mobile so every leg completes.
+  defaultPreset: 'mobilea1',
 
   presets: {
     // smoke — 1 task, 1 image, 1 repeat: a single inference per config (wiring check).
@@ -136,6 +144,9 @@ module.exports = {
     // base — DEFAULT eval: 5 tasks × 3 samples × 1 repeat.
     base: { tasks: TASKS, samplesPerTask: 3, repeats: 1, devices: null },
     // full — 5 tasks × 5 samples × 1 repeat (the complete fixture).
-    full: { tasks: TASKS, samplesPerTask: 5, repeats: 1, devices: null }
+    full: { tasks: TASKS, samplesPerTask: 5, repeats: 1, devices: null },
+    // mobilea1 (QVAC-21372) — 3 tasks × 1 sample so all 6 legs (2 models × cpu/gpu/
+    // gpu-hybrid) finish within the Device Farm session on slow phone CPU legs.
+    mobilea1: { tasks: ['textvqa', 'docvqa', 'ai2d'], samplesPerTask: 1, repeats: 1, devices: null }
   }
 }
