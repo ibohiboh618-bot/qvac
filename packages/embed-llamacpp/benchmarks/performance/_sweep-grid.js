@@ -24,4 +24,14 @@ const MAX_ARRAY_SEQUENCES = Math.max(...ARRAY_SEQUENCE_COUNTS)
 // batch size, sliced to N for each array mode.
 const INPUT_MODES = ['single', ...ARRAY_SEQUENCE_COUNTS.map((n) => `array-${n}`)]
 
-module.exports = { PARAMETER_SWEEP, INPUT_MODES, ARRAY_SEQUENCE_COUNTS, MAX_ARRAY_SEQUENCES }
+// Effective context (max sequence length) per model. A batch size above this
+// overflows the model, so those configs are skipped from the sweep and the
+// coverage denominator. embeddingGemma-300m is 2048; Qwen3 embedding models are
+// 32k, so they take every swept batch size (default = no cap).
+const MODEL_MAX_CONTEXT = { embeddingGemma: 2048 }
+
+function maxBatchForModel (modelId) {
+  return MODEL_MAX_CONTEXT[modelId] || Infinity
+}
+
+module.exports = { PARAMETER_SWEEP, INPUT_MODES, ARRAY_SEQUENCE_COUNTS, MAX_ARRAY_SEQUENCES, MODEL_MAX_CONTEXT, maxBatchForModel }

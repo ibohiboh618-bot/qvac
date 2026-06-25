@@ -13,16 +13,20 @@ const fs = require('fs')
 const path = require('path')
 const { PARAMETER_SWEEP, MAX_ARRAY_SEQUENCES } = require('./_sweep-grid')
 
-// Established for this filler against the embedding tokenizer: the existing
-// inputs.json sized 256/512/1024/2048-token sequences at 1081/2165/4331/8663
-// chars, i.e. ~4.23 chars per token. Padding to that ratio reproduces the same
-// per-batch token lengths and extrapolates 4096 cleanly.
-const CHARS_PER_TOKEN = 4.23
+// This filler tokenizes at ~4.2 chars/token against the embedding tokenizer. Each
+// sequence must stay strictly UNDER its batch size — the addon's
+// validateBatchLimitsOrThrow rejects an input line whose token count (including
+// the tokenizer's BOS/EOS) reaches the batch size. So generate to a target a
+// margin below the batch size, with a slightly conservative chars/token, so no
+// sequence can overflow.
+const CHARS_PER_TOKEN = 4.1
+const TOKEN_SAFETY_MARGIN = 16
 const HEAD = 'Some input. '
 const UNIT = 'Some more input. '
 
-function fillerForTokens (tokens) {
-  const targetChars = Math.round(tokens * CHARS_PER_TOKEN)
+function fillerForBatch (batchSize) {
+  const targetTokens = Math.max(1, batchSize - TOKEN_SAFETY_MARGIN)
+  const targetChars = Math.round(targetTokens * CHARS_PER_TOKEN)
   let s = HEAD
   while (s.length < targetChars) s += UNIT
   return s.slice(0, targetChars)
@@ -31,7 +35,7 @@ function fillerForTokens (tokens) {
 function main () {
   const out = {}
   for (const batchSize of PARAMETER_SWEEP.batchSize) {
-    const sentence = fillerForTokens(batchSize)
+    const sentence = fillerForBatch(batchSize)
     out[String(batchSize)] = Array.from({ length: MAX_ARRAY_SEQUENCES }, () => sentence)
   }
   const dest = path.resolve(__dirname, 'inputs.json')

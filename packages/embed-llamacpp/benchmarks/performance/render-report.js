@@ -32,7 +32,7 @@ const path = require('path')
 // truth shared with the bare sweep. _sweep-grid is plain literals (no bare-fs),
 // so it loads here under Node too — keeping the renderer's coverage grid from
 // drifting out of step with what the sweep actually runs.
-const { PARAMETER_SWEEP, INPUT_MODES } = require('./_sweep-grid')
+const { PARAMETER_SWEEP, INPUT_MODES, maxBatchForModel } = require('./_sweep-grid')
 // Mobile shard matrix (model x quant x batchSize x flashAttn cells) for the
 // mobile coverage check, so
 // the renderer scores a mobile run against the same source of truth the shard
@@ -308,10 +308,12 @@ function modelQuants (model, manifestQuants) {
 }
 
 function expectedConfigKeys (model, quants) {
+  const maxBatch = maxBatchForModel(model)
   const keys = []
   for (const quant of quants) {
     for (const device of PARAMETER_SWEEP.device) {
       for (const batchSize of PARAMETER_SWEEP.batchSize) {
+        if (batchSize > maxBatch) continue
         for (const flashAttn of PARAMETER_SWEEP.flashAttn) {
           for (const inputMode of INPUT_MODES) {
             keys.push(`${model}|${quant}|${device}|${batchSize}|${flashAttn}|${inputMode}`)

@@ -11,7 +11,7 @@ const {
   average,
   stddev
 } = require('./math')
-const { INPUT_MODES } = require('./_sweep-grid')
+const { INPUT_MODES, maxBatchForModel } = require('./_sweep-grid')
 
 function createAddonRuntimeLogger (debugEnabled) {
   if (!debugEnabled) {
@@ -107,12 +107,15 @@ function buildCases (modelDef, sweep) {
     })
   }
 
+  // Skip batch sizes the model can't hold (e.g. embeddingGemma's 2048 context),
+  // which would otherwise overflow and crash every such config.
+  const maxBatch = maxBatchForModel(modelDef.id)
   const combos = cartesianProduct([
     supportedQuants,
     sweep.device,
     sweep.batchSize,
     sweep.flashAttn
-  ])
+  ]).filter(([, , batchSize]) => batchSize <= maxBatch)
 
   for (const [quantization, device, batchSize, flashAttn] of combos) {
     for (const inputMode of INPUT_MODES) {
