@@ -236,12 +236,22 @@ function legsFor (spec) {
       dev: `GPU·mmproj=${m}`
     }))
   }
-  return devicesToRun().map(device => ({
+  const mmproj = (MMPROJ_GPU === 'cpu' || MMPROJ_GPU === 'gpu') ? MMPROJ_GPU : null
+  const legs = devicesToRun().map(device => ({
     device,
-    mmproj: (MMPROJ_GPU === 'cpu' || MMPROJ_GPU === 'gpu') ? MMPROJ_GPU : null,
+    mmproj,
     cell: baseAxis,
     dev: device.toUpperCase()
   }))
+  // QVAC-21372: A1 single-load hybrid leg — GPU-resident weights with prefill routed to
+  // the CPU/BLAS backend (the fork's QVAC_PREFILL_CPU hook, toggled per-leg in runModel).
+  // Same model device-backend as the plain GPU leg (gpu_layers=98); a distinct `-hybrid`
+  // cell so the report renders it next to the GPU baseline instead of colliding with it.
+  // Only when GPU is in play and the committed config opts in (Device Farm forwards no env).
+  if (config.hybridPrefill && legs.some(l => l.device === 'gpu')) {
+    legs.push({ device: 'gpu', mmproj, cell: `${baseAxis}-hybrid`, dev: 'GPU·hybrid', prefillCpu: true })
+  }
+  return legs
 }
 
 function runModel (spec) {
@@ -250,8 +260,13 @@ function runModel (spec) {
     return
   }
   for (const leg of legsFor(spec)) {
-    const { device, mmproj, cell, dev } = leg
+    const { device, mmproj, cell, dev, prefillCpu } = leg
     test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: 30 * 60 * 1000 }, async t => {
+      // QVAC-21372: toggle the engine's A1 hybrid-prefill hook for THIS leg only. bare-os
+      // setEnv calls C setenv, so the fork's common_context_params_to_llama (run during
+      // load() below) sees it via getenv. Set explicitly each leg ('0' off / '1' on) so
+      // order between legs can't leak the hybrid state; clear on teardown.
+      if (typeof os.setEnv === 'function') os.setEnv('QVAC_PREFILL_CPU', prefillCpu ? '1' : '0')
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
       // model-origin provenance (stderr, parsed host-side into the report)
@@ -285,7 +300,10 @@ function runModel (spec) {
         logger: console,
         opts: { stats: true }
       })
-      t.teardown(async () => { try { await inference.unload() } catch (_) {} })
+      t.teardown(async () => {
+        try { if (typeof os.unsetEnv === 'function') os.unsetEnv('QVAC_PREFILL_CPU') } catch (_) {}
+        try { await inference.unload() } catch (_) {}
+      })
       await inference.load()
 
       const items = selectedItems()

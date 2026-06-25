@@ -107,11 +107,19 @@ module.exports = {
   //   'both' — mmproj-compare: run ONE model (mmprojModel) on the GPU model-backend
   //            with the projector on CPU vs GPU as the two report columns.
   // Desktop overrides this with QVAC_VLM_MMPROJ_GPU; on mobile (no env passthrough)
-  // this default governs the on-device run. Set to 'both' for the Android Device
-  // Farm projector cpu-vs-gpu benchmark (QVAC-21257).
-  mmprojGpu: 'both',
+  // this default governs the on-device run.
+  // QVAC-21372: 'auto' (NOT 'both') so the mobile run stays in two-models mode and runs
+  // BOTH models with the LLM on CPU and GPU (the A1 prefill premise) rather than the
+  // QVAC-21257 mmproj-placement comparison.
+  mmprojGpu: 'auto',
   // Single VLM used by mmproj-compare (mmprojGpu='both'); reuses MODEL_2's blobs.
   mmprojModel: MODEL_2,
+
+  // QVAC-21372: add a third "<model>-hybrid" leg per model on the GPU model-backend with
+  // the engine's single-load hybrid-prefill hook on (QVAC_PREFILL_CPU=1, set per-leg in
+  // harness.cjs). Compares GPU-baseline vs prefill-routed-to-CPU. Requires a prebuild
+  // built from the fork branch carrying the hook (vcpkg overlay port).
+  hybridPrefill: true,
 
   // ════════════════════════ PRESET — how much is run ════════════════════════
   // A preset is purely the run size (tasks × samples × repeats); it is independent of
