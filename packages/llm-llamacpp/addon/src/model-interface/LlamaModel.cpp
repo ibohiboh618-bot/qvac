@@ -5,7 +5,6 @@
 #include <charconv>
 #include <cinttypes>
 #include <cstddef>
-#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <shared_mutex>
@@ -1170,33 +1169,20 @@ void LlamaModel::commonParamsParse(
 
     if (chosenBackend.first == BackendType::GPU) {
       params.mmproj_backend = chosenBackend.second;
-      const bool backendIsOpenCl =
-          chosenBackend.second.find("opencl") != std::string::npos;
 #ifdef __ANDROID__
-      // Run the vision encoder (mmproj/clip) on the GPU when the chosen mobile
-      // backend is OpenCL. The Adreno OpenCL backend (qvac-fabric >= 9341)
-      // implements every op the SigLIP / Qwen3-VL vision graph emits (vision
-      // M-RoPE, conv_2d, im2col, soft_max, norm, mul_mat, gelu, concat), and
-      // SigLIP was validated on Adreno 830 OpenCL at cos-sim >= 0.98 vs CPU.
-      // Other Android GPU backends (e.g. Vulkan, which regresses SigLIP
-      // accuracy on Adreno) keep the historical CPU path.
-      bool mmprojGpu = backendIsOpenCl;
+      // The vision encoder (mmproj/clip) follows the model's device selection:
+      // with device 'gpu', run it on the GPU only when the chosen Android
+      // backend is OpenCL (Adreno). The Adreno OpenCL backend (qvac-fabric >=
+      // 9341) implements every op the SigLIP / Qwen3-VL vision graph emits
+      // (vision M-RoPE, conv_2d, im2col, soft_max, norm, mul_mat, gelu, concat)
+      // and was validated on Adreno 830 at cos-sim >= 0.98 vs CPU. Other Android
+      // GPU backends (e.g. Vulkan, which regresses SigLIP accuracy on Adreno)
+      // keep the CPU path. (device 'cpu' takes the CPU branch below.)
+      params.mmproj_use_gpu =
+          chosenBackend.second.find("opencl") != std::string::npos;
 #else
-      bool mmprojGpu = true;
+      params.mmproj_use_gpu = true;
 #endif
-      // Explicit override for A/B benchmarking. Config key `mmproj-gpu`
-      // (true/false/1/0) takes precedence; QVAC_MMPROJ_GPU is a desktop
-      // fallback (Android apps do not inherit shell env). The key is consumed
-      // here so it is not forwarded to llama.cpp as a CLI argument.
-      if (auto it = configFilemap.find("mmproj-gpu");
-          it != configFilemap.end()) {
-        const std::string& v = it->second;
-        mmprojGpu = (v == "1" || v == "true" || v == "TRUE" || v == "on");
-        configFilemap.erase(it);
-      } else if (const char* env = std::getenv("QVAC_MMPROJ_GPU")) {
-        mmprojGpu = (env[0] == '1' || env[0] == 't' || env[0] == 'T');
-      }
-      params.mmproj_use_gpu = mmprojGpu;
       params.split_mode = splitMode;
       runtimeBackendDevice_ = 1;
 
