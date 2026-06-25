@@ -5,7 +5,11 @@
 // Plain literals only — no bare-fs/fs imports — so it loads in both runtimes.
 const PARAMETER_SWEEP = {
   quantization: ['Q4_0', 'Q4_K_M', 'Q8_0', 'F16'],
-  device: ['cpu', 'gpu'],
+  // Desktop is GPU-only, matching the LLM benchmark (its getDefaultSweepDevices
+  // returns ['gpu'] off Android). CPU embedding of the large batch/array configs
+  // is impractical (a 4096 x array-20 prefill is ~82k tokens at a few hundred
+  // tok/s) and isn't a real desktop use case; CPU is covered on the mobile path.
+  device: ['gpu'],
   batchSize: [256, 512, 1024, 2048, 4096],
   flashAttn: ['off', 'on']
 }
