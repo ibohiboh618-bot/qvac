@@ -11,31 +11,50 @@ jobs:
   label-community-pr:
     runs-on: ubuntu-latest
     steps:
-      - name: Get app token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: tetherto
-
-      - name: Apply label if external contributor
+      - name: Apply community-contribution label if external contributor
         uses: actions/github-script@v7
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
         with:
-          github-token: ${{ steps.app-token.outputs.token }}
           script: |
+            const crypto = require('crypto');
+
+            // Build a JWT to authenticate as the GitHub App
+            const now = Math.floor(Date.now() / 1000);
+            const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+            const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 600, iss: process.env.APP_ID })).toString('base64url');
+            const sign = crypto.createSign('RSA-SHA256');
+            sign.update(`${header}.${payload}`);
+            const jwt = `${header}.${payload}.${sign.sign(process.env.APP_PRIVATE_KEY, 'base64url')}`;
+
+            const ghHeaders = (token) => ({
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28'
+            });
+
+            // Exchange the JWT for an installation access token scoped to this repo
+            const installRes = await fetch(
+              `https://api.github.com/repos/${context.repo.owner}/${context.repo.repo}/installation`,
+              { headers: ghHeaders(jwt) }
+            );
+            const { id: installationId } = await installRes.json();
+
+            const tokenRes = await fetch(
+              `https://api.github.com/app/installations/${installationId}/access_tokens`,
+              { method: 'POST', headers: ghHeaders(jwt) }
+            );
+            const { token } = await tokenRes.json();
+
+            // Check org membership using the installation token (needs read:org scope)
             const author = context.payload.pull_request.user.login;
-            let isMember = false;
-            try {
-              await github.rest.orgs.checkMembershipForUser({
-                org: 'tetherto',
-                username: author
-              });
-              isMember = true;
-            } catch (e) {
-              if (e.status !== 404) throw e;
-            }
-            if (!isMember) {
+            const memberRes = await fetch(
+              `https://api.github.com/orgs/tetherto/members/${author}`,
+              { headers: ghHeaders(token) }
+            );
+
+            if (memberRes.status === 404) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
