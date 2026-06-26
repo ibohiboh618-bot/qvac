@@ -27,7 +27,9 @@ if (enabled) {
   require('../benchmark/rtf-benchmark.test.js')
 } else {
   console.log('[rtf-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
-  globalThis.__QVAC_TEST_SKIPPED = true
+  // bare-pack isolates globalThis/global per module, but console is shared.
+  console.__QVAC_SKIP_FLAG = true
+  if (typeof globalThis !== 'undefined') globalThis.__QVAC_TEST_SKIPPED = true
   exports.__QVAC_SKIPPED = true
   module.exports = { __QVAC_SKIPPED: true }
 }
