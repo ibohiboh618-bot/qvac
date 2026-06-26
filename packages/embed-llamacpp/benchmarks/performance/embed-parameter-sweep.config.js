@@ -12,10 +12,12 @@ const DEFAULT_REPEATS = 5
 
 // Shared runtime defaults every swept case inherits before the case's own
 // (device, batchSize, flashAttn) and derived ctx_size are layered on. The sweep
-// is GPU-only; noMmap and ngl are held at their defaults.
+// is GPU-only; the embed addon selects its backend from the `device` key and does
+// not read gpu_layers, so the model is offloaded to the GPU by device selection
+// (confirmed by the Vulkan load log). No ngl/gpu_layers is set here, since it
+// would be a dead, ignored key.
 const BENCH_DEFAULT_RUNTIME = {
-  noMmap: false,
-  ngl: 0
+  noMmap: false
 }
 
 // Optional per-model runtime overrides. Only add entries when a model needs

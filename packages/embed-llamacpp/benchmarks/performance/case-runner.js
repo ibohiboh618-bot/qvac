@@ -62,16 +62,18 @@ function fillerForTokens (targetTokens) {
 // Per-case input, derived from the batch size and the model's trained context:
 //   ctx          = min(batchSize, trainedCtx) — the runtime context for the case
 //   sentenceLen  = ctx — the longest sentence the model can process
-//   nSentences   = round(batchSize / sentenceLen), at least 1 — so the array of
+//   nSentences   = floor(batchSize / sentenceLen), at least 1 — so the array of
 //                  sentences fills the batch (1 when batch <= ctx; 2 for a
 //                  4096-batch / 2048-ctx model; 4 at 8192-batch / 2048-ctx)
-// Each filler sentence is sized a safe margin UNDER sentenceLen tokens, so no
-// sentence reaches the context/batch limit regardless of model — no per-model
-// cap, no crash.
+// floor (not round) guarantees nSentences * sentenceLen <= batchSize for any
+// batch/ctx pair (e.g. a non-power-of-2 batch or an odd trained context), so the
+// packed sentences can never overflow the batch. Each filler sentence is sized a
+// safe margin UNDER sentenceLen tokens, so no single sentence reaches the
+// context/batch limit either.
 function deriveCaseInput (batchSize, trainedCtx) {
   const ctx = Math.min(batchSize, trainedCtx)
   const sentenceLen = ctx
-  const nSentences = Math.max(1, Math.round(batchSize / sentenceLen))
+  const nSentences = Math.max(1, Math.floor(batchSize / sentenceLen))
   const sentence = fillerForTokens(sentenceLen - TOKEN_SAFETY_MARGIN)
   const inputs = nSentences === 1 ? sentence : Array.from({ length: nSentences }, () => sentence)
   return { ctx, sentenceLen, nSentences, inputs }
