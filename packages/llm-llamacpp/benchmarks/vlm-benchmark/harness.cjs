@@ -217,6 +217,29 @@ function emitRow (obj) {
   console.log('[VLMROW]' + JSON.stringify(obj) + '[/VLMROW]')
 }
 
+// QVAC-21257: best-effort per-cell peak process memory from /proc (Linux/Android only).
+// Captures the FA-disable explicit-attention memory trade-off: the GPU projector cell
+// materialises QK^T, so its VmHWM should exceed the flash-attn (shipping) build's.
+// VmHWM is a process-lifetime high-water mark — legsFor() runs the CPU cell before the
+// GPU cell, so within a run the GPU cell's VmHWM reflects the GPU peak. Absolute values
+// include the whole bare process; the meaningful figure is the cross-build/cross-cell delta.
+function emitMem (cell, device) {
+  try {
+    const raw = fs.readFileSync('/proc/self/status')
+    const txt = typeof raw === 'string' ? raw : new TextDecoder().decode(new Uint8Array(raw))
+    const hwm = (txt.match(/VmHWM:\s*(\d+)\s*kB/) || [])[1]
+    const rss = (txt.match(/VmRSS:\s*(\d+)\s*kB/) || [])[1]
+    if (hwm || rss) {
+      console.log('[VLMMEM]' + JSON.stringify({
+        cell,
+        device,
+        vmhwm_kb: hwm ? parseInt(hwm, 10) : null,
+        vmrss_kb: rss ? parseInt(rss, 10) : null
+      }) + '[/VLMMEM]')
+    }
+  } catch (_) {}
+}
+
 // QVAC-21257: mmproj-compare mode. When the projector backend axis is 'both'
 // the comparison is mmproj-on-CPU vs mmproj-on-GPU for ONE model on the GPU
 // model-backend leg — two cells ('mmproj-cpu' / 'mmproj-gpu') the report renders
@@ -327,6 +350,7 @@ function runModel (spec) {
           }
         }
       }
+      emitMem(cell, device)
       t.ok(ok > 0, `${spec.label} [${dev}] produced ${ok}/${items.length} predictions`)
     })
   }

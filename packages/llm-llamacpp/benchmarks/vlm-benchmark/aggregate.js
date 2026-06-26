@@ -135,6 +135,7 @@ const VISION_RE = /image (?:slice )?encoded in\s+(\d+(?:\.\d+)?)\s*ms/i
 const ROW_RE = /\[VLMROW\](.*?)\[\/VLMROW\]/
 const SEG_RE = /\[VLMSEG\](.*?)\[\/VLMSEG\]/
 const META_RE = /\[VLMMETA\](.*?)\[\/VLMMETA\]/
+const MEM_RE = /\[VLMMEM\](.*?)\[\/VLMMEM\]/
 
 // Per-cell vision-encode comes from [VLMSEG] segments (stderr, same stream as the
 // `image slice encoded` lines) — alignment-proof. Per-row quality/TTFT/TPS come from
@@ -143,6 +144,7 @@ function parseLog (inputs) {
   const rows = []
   const vision = {} // host|cell|device -> { segMs: [perSegmentSummedMs], segTiles: [perSegmentEncodeCount] }
   const meta = {} // cell -> { main_origin, mmproj_origin, ... }
+  const memory = {} // host|cell|device -> { vmhwm_kb, vmrss_kb } (QVAC-21257 peak process memory)
   // Android logcat captures each printed line twice (live + flushed bare buffer),
   // so the same [VLMROW] appears more than once. Dedup exact rows per host.
   const seenRows = new Set()
@@ -154,6 +156,11 @@ function parseLog (inputs) {
     for (const line of txt.split(/\r?\n/)) {
       const mm = line.match(META_RE)
       if (mm) { try { const m = JSON.parse(mm[1]); meta[m.cell] = m } catch (_) {} continue }
+      const memm = line.match(MEM_RE)
+      if (memm) {
+        try { const m = JSON.parse(memm[1]); memory[`${host}|${m.cell}|${m.device}`] = m } catch (_) {}
+        continue
+      }
       const sm = line.match(SEG_RE)
       if (sm) {
         try {
@@ -179,13 +186,13 @@ function parseLog (inputs) {
       }
     }
   }
-  return { rows, vision, meta }
+  return { rows, vision, meta, memory }
 }
 const mean = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null
 const fmtPct = x => x == null ? '—' : (100 * x).toFixed(1)
 const fmtNum = (x, d = 1) => x == null ? '—' : Number(x).toFixed(d)
 
-function build (rows, vision, meta, provText, title, opts = {}) {
+function build (rows, vision, meta, provText, title, opts = {}, memory = {}) {
   // QVAC-21257 mmproj-compare: cells are 'mmproj-cpu' / 'mmproj-gpu' (one model, the
   // projector backend varies). Render via the existing two-models tables, using those
   // as the base/candidate columns. Detected by --mode mmproj or the cell naming.
@@ -245,8 +252,22 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       sl: visSlices(key),
       ttft: mean(okRows.map(r => r.ttft_ms).filter(v => v != null)),
       tps: mean(okRows.map(r => r.decode_tps).filter(v => v != null)),
-      wall: mean(okRows.map(r => r.ms).filter(v => v != null))
+      wall: mean(okRows.map(r => r.ms).filter(v => v != null)),
+      // QVAC-21257: peak process memory (kB) for this cell, from the [VLMMEM] marker.
+      mem: memory[key] || null
     }
+  }
+  // QVAC-21257: split a group's rows into small/large image buckets by pixel area
+  // (median area across all rows = the split point) and report mean vision-encode per
+  // bucket — surfaces the parity-vs-resolution curve without any extra inferences.
+  const areasAll = rows.filter(r => !r.error && r.img_w && r.img_h).map(r => r.img_w * r.img_h).sort((a, b) => a - b)
+  const areaSplit = areasAll.length ? areasAll[Math.floor(areasAll.length / 2)] : null
+  function bucketStats (key) {
+    const rs = (byKey[key] || []).filter(r => !r.error && r.vision_ms != null && r.img_w && r.img_h)
+    if (!rs.length || areaSplit == null) return { small: null, large: null }
+    const small = rs.filter(r => r.img_w * r.img_h < areaSplit).map(r => r.vision_ms)
+    const large = rs.filter(r => r.img_w * r.img_h >= areaSplit).map(r => r.vision_ms)
+    return { small: mean(small), large: mean(large) }
   }
   const pctFaster = (f, q) => (q != null && f != null && f !== 0) ? ((f - q) / f * 100) : null
   const fmtDelta = p => p == null ? '—' : (p >= 0 ? '+' : '') + p.toFixed(1) + '%'
@@ -359,14 +380,33 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   }
   L.push('')
   L.push('### Speed\n')
-  L.push('| Config | host | n | err | **mmproj enc (ms)** | tiles | TTFT (ms) | decode TPS | wall (ms) |')
-  L.push('|---|---|---|---|---|---|---|---|---|')
+  L.push('| Config | host | n | err | **mmproj enc (ms)** | tiles | TTFT (ms) | decode TPS | wall (ms) | peak RSS (MB) |')
+  L.push('|---|---|---|---|---|---|---|---|---|---|')
   for (const k of keys) {
     const [host, cell, dev] = k.split('|')
     const g = groupStats(k)
-    L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.wall, 0)} |`)
+    const rssMb = (g.mem && g.mem.vmhwm_kb != null) ? g.mem.vmhwm_kb / 1024 : null
+    L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.wall, 0)} | ${fmtNum(rssMb, 0)} |`)
   }
   L.push('')
+  L.push('> **peak RSS** is the cell\'s peak process memory (VmHWM from /proc, whole bare process). ' +
+    'QVAC-21257: the GPU projector cell materialises QK^T (flash-attn disabled), so its peak should ' +
+    'exceed the shipping (flash-attn) build — the cross-build GPU-cell delta is the memory trade-off.\n')
+  // QVAC-21257: mmproj-encode by image-size bucket (parity-vs-resolution curve).
+  if (areaSplit != null) {
+    L.push('### Speed by image size — mmproj enc (ms), small vs large\n')
+    L.push(`_split at median image area (${areaSplit.toLocaleString()} px); GPU vs CPU parity is ` +
+      'resolution-dependent (closer at high resolution)._\n')
+    L.push('| Config | host | small enc (ms) | large enc (ms) |')
+    L.push('|---|---|---|---|')
+    for (const k of keys) {
+      const [host, cell, dev] = k.split('|')
+      const b = bucketStats(k)
+      if (b.small == null && b.large == null) continue
+      L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${fmtNum(b.small, 1)} | ${fmtNum(b.large, 1)} |`)
+    }
+    L.push('')
+  }
   L.push('> **mmproj enc** is the image-chunk encode time. QVAC-21257: it now comes from the addon\'s ' +
     'RuntimeStats (`vision_ms`), so it is reliable on Android too; it falls back to the stderr-parsed ' +
     '`image encoded in N ms` (desktop) when stats are absent. TTFT also includes prompt-eval.\n')
@@ -413,9 +453,9 @@ if (require.main === module) {
   const args = parseArgs(process.argv)
   // Labelled inputs (--in host file) plus any bare positional files (host '').
   const allInputs = args.inputs.concat(args.files.map(f => ({ label: '', file: f })))
-  const { rows, vision, meta } = parseLog(allInputs)
+  const { rows, vision, meta, memory } = parseLog(allInputs)
   const provText = args.prov.map(p => { try { return fs.readFileSync(p, 'utf-8') } catch (_) { return '' } }).join('\n')
-  const md = build(rows, vision, meta, provText, args.title, { mode: args.mode, engine: args.engine, base: args.base, candidate: args.candidate })
+  const md = build(rows, vision, meta, provText, args.title, { mode: args.mode, engine: args.engine, base: args.base, candidate: args.candidate }, memory)
   process.stdout.write(md + '\n')
   if (args.outFile) fs.writeFileSync(args.outFile, md + '\n')
 }
