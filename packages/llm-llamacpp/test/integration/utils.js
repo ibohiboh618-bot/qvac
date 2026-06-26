@@ -6,8 +6,15 @@ const os = require('bare-os')
 const process = require('bare-process')
 
 const TRANSIENT_ERROR_CODES = new Set([
-  'EAI_NODATA', 'EAI_AGAIN', 'ENOTFOUND', 'ETIMEDOUT',
-  'ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ESIZE'
+  // DNS / name resolution
+  'EAI_NODATA', 'EAI_AGAIN', 'EAI_FAIL', 'ENOTFOUND',
+  // connectivity — these dominate mobile Device Farm flakiness: a transient
+  // network drop surfaces as ENETUNREACH/EHOSTUNREACH and MUST be retried
+  // (previously these were treated as fatal, so a sub-second blip failed the
+  // whole run with no retry).
+  'ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED',
+  // mid-transfer / timeout
+  'ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ESIZE'
 ])
 
 const cleanedIntegrationCacheFiles = new Set()
@@ -39,6 +46,29 @@ function isTransientError (err) {
 
 function urlHost (url) {
   try { return new URL(url).host } catch (_) { return url }
+}
+
+// Hard outer deadline for a single download attempt. downloadFileOnce already
+// has connect/idle timers, but a blocking name resolution (getaddrinfo) can
+// stall before they're meaningful — leaving the request hung with no error and
+// no retry until the 30-minute test-level timeout kills the whole shard. This
+// guarantees a stuck attempt rejects with a transient ETIMEDOUT so the retry
+// loop can move on.
+async function withDeadline (promise, deadlineMs, host) {
+  let timer
+  const deadline = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(
+        new Error(`Download attempt exceeded ${deadlineMs}ms deadline from ${host}`),
+        { code: 'ETIMEDOUT' }
+      ))
+    }, deadlineMs)
+  })
+  try {
+    return await Promise.race([promise, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function downloadFileOnce (url, dest, opts = {}) {
@@ -133,7 +163,17 @@ async function downloadFileOnce (url, dest, opts = {}) {
 }
 
 async function downloadFileWithRetries (urls, dest, opts = {}) {
-  const { retries = 3, minBytes = 1, ...downloadOpts } = opts
+  // Defaults tuned for mobile Device Farm: connectivity gaps here can last tens
+  // of seconds, so 4 attempts over ~7s gave up far too early. 7 attempts with a
+  // backoff cap of 20s spans a ~1-2 min window, riding out real blips. Each
+  // attempt is bounded by attemptDeadlineMs so a hung DNS/connect can't stall.
+  const {
+    retries = 6,
+    minBytes = 1,
+    backoffCapMs = 20_000,
+    attemptDeadlineMs = 90_000,
+    ...downloadOpts
+  } = opts
   const urlList = Array.isArray(urls) ? urls : [urls]
   const partPath = dest + '.part'
 
@@ -141,7 +181,7 @@ async function downloadFileWithRetries (urls, dest, opts = {}) {
     const url = urlList[attempt % urlList.length]
     const host = urlHost(url)
     try {
-      await downloadFileOnce(url, partPath, downloadOpts)
+      await withDeadline(downloadFileOnce(url, partPath, downloadOpts), attemptDeadlineMs, host)
 
       const stat = fs.statSync(partPath)
       if (stat.size < minBytes) {
@@ -160,7 +200,7 @@ async function downloadFileWithRetries (urls, dest, opts = {}) {
         throw err
       }
 
-      const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 30_000)
+      const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, backoffCapMs)
       console.log(`[download] Attempt ${attempt + 1}/${retries + 1} failed (${err.code || err.statusCode}) from ${host}, retrying in ${Math.round(delay)}ms...`)
       await new Promise(resolve => setTimeout(resolve, delay))
     }
