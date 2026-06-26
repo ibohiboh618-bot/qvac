@@ -5,38 +5,36 @@
 //
 // Reads embed sweep JSON from --dir (recursively) and renders ONE markdown
 // report:
-//   - header with addon version, input token size, repeats-per-config, device
-//   - one `## <device>` section, each with a `### <model>` table: Config |
-//     ppTPS | latency (ms) | embeddings/sec | cosine-similarity vs baseline
+//   - header with addon version, repeats-per-config, device
+//   - one `## <device>` section, each with a `### <model>` table:
+//     Config | ppTPS | latency (ms)
 //   - a Coverage section comparing measured configs against the expected grid
-//   - a "## Charts" mermaid section (base-case ppTPS per model: each model's
-//     baseline-config row) plus a self-contained HTML chart artifact (--html)
-//     with the base-case-per-model headline, prefill-throughput-vs-batch-size and
-//     batched-throughput-vs-sequence-count scaling charts (one series per model),
-//     and cosine-similarity-vs-F16 and latency charts
+//   - a "## Charts" mermaid section (base-case ppTPS per model: each model at the
+//     smallest batch size / fa=off / best quant) plus a self-contained HTML chart
+//     artifact (--html) with the base-case-per-model headline and a
+//     ppTPS-vs-batch-size scaling chart (one series per model) plus a
+//     latency-vs-batch-size chart
 //   - run-meta stamping (--addon-version is overridden by a stamped run-meta)
 //
 // Embedding is a single forward pass (prefill only): there is no decode phase,
-// so there is NO TTFT, NO decode TPS and NO generated-tokens column. The input
-// token size is stated in the report header, not per row.
+// so there is NO TTFT, NO decode TPS and NO generated-tokens column. This is a
+// pure throughput benchmark — only ppTPS and latency are reported.
 //
 // Input schema (desktop embed sweep):
 //   { models:[{ modelId, cases:[{ quantization, runtimeConfig:{device,batchSize,
-//     flashAttn}, metrics:{ppTpsMean,ppTpsStd,latencyMsMean,latencyMsStd,
-//     embPerSecMean,embPerSecStd,inputTokens}, similarity:{avg,min,max},
-//     status, isBaseline }]}], repeats, ... }
+//     flashAttn,ctx}, metrics:{ppTpsMean,ppTpsStd,latencyMsMean,latencyMsStd,
+//     inputTokens}, status }]}], repeats, ... }
 
 const fs = require('fs')
 const path = require('path')
-// Sweep axes (coverage denominator) + input modes are the single source of
-// truth shared with the bare sweep. _sweep-grid is plain literals (no bare-fs),
-// so it loads here under Node too — keeping the renderer's coverage grid from
-// drifting out of step with what the sweep actually runs.
-const { PARAMETER_SWEEP, INPUT_MODES, maxBatchForModel } = require('./_sweep-grid')
+// Sweep axes (coverage denominator) are the single source of truth shared with
+// the bare sweep. _sweep-grid is plain literals (no bare-fs), so it loads here
+// under Node too — keeping the renderer's coverage grid from drifting out of
+// step with what the sweep actually runs.
+const { PARAMETER_SWEEP } = require('./_sweep-grid')
 // Mobile shard matrix (model x quant x batchSize x flashAttn cells) for the
-// mobile coverage check, so
-// the renderer scores a mobile run against the same source of truth the shard
-// generator and the workflow test_groups derive from.
+// mobile coverage check, so the renderer scores a mobile run against the same
+// source of truth the shard generator and the workflow test_groups derive from.
 const { matrix, mobileShardKey } = require('../../test/integration/_benchmark-matrix')
 
 function parseArgs (argv) {
@@ -122,10 +120,8 @@ function collapseMobileRows (rows) {
 }
 
 // Normalise a report file into rows:
-//   { model, config, ppTps, ppTpsStd, latency, latencyStd, embPerSec,
-//     embPerSecStd, similarity, isBaseline, crashed, sampleCount }
-// Also fills meta fields when found. The baseline row is kept (it anchors the
-// per-model table and shows similarity 1.0).
+//   { model, config, ppTps, ppTpsStd, latency, latencyStd, crashed, sampleCount }
+// Also fills meta fields when found.
 function rowsFromFile (file, device, meta) {
   let doc
   try { doc = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return [] }
@@ -148,17 +144,17 @@ function rowsFromFile (file, device, meta) {
   if (doc && typeof doc.device === 'string' && !Array.isArray(doc.models)) return rows
 
   // Mobile perf-report schema: { device:{name}, results:[{test, status,
-  // metrics:{pp_tps, pp_tps_std, latency_ms, latency_ms_std, emb_per_sec,
-  // emb_per_sec_std, cosine_similarity, input_tokens, sample_count}}] }. One row
-  // per config per device; the on-device runner emits a Crashed placeholder
-  // before each config and a real row after, so a (device, config) may appear
-  // twice and the real row supersedes the placeholder in collapseMobileRows.
+  // metrics:{pp_tps, pp_tps_std, latency_ms, latency_ms_std, input_tokens,
+  // sample_count}}] }. One row per config per device; the on-device runner emits
+  // a Crashed placeholder before each config and a real row after, so a (device,
+  // config) may appear twice and the real row supersedes the placeholder in
+  // collapseMobileRows.
   if (doc && doc.device && typeof doc.device === 'object' && Array.isArray(doc.results)) {
     const mobileDevice = (doc.device.name || 'unknown').trim()
     for (const r of doc.results) {
       const m = r.metrics || {}
       const crashed = (r.status && String(r.status).toLowerCase() === 'crashed') ||
-        (num(m.pp_tps) === null && num(m.latency_ms) === null && num(m.emb_per_sec) === null)
+        (num(m.pp_tps) === null && num(m.latency_ms) === null)
       const config = r.test || '(unknown)'
       rows.push({
         device: mobileDevice,
@@ -169,15 +165,10 @@ function rowsFromFile (file, device, meta) {
         backend: null,
         batchSize: null,
         flashAttn: null,
-        inputMode: null,
-        isBaseline: false,
         ppTps: num(m.pp_tps),
         ppTpsStd: num(m.pp_tps_std),
         latency: num(m.latency_ms),
         latencyStd: num(m.latency_ms_std),
-        embPerSec: num(m.emb_per_sec),
-        embPerSecStd: num(m.emb_per_sec_std),
-        similarity: num(m.cosine_similarity),
         crashed: !!crashed,
         partial: r.status === 'partial-failure',
         inputTokens: int(m.input_tokens),
@@ -210,23 +201,16 @@ function rowsFromFile (file, device, meta) {
           quant: c.quantization,
           device: rc.device,
           batchSize: rc.batchSize,
-          flashAttn: rc.flashAttn,
-          inputMode: c.inputMode,
-          isBaseline: c.isBaseline
+          flashAttn: rc.flashAttn
         }),
         quant: c.quantization,
         backend: rc.device || null,
         batchSize: rc.batchSize != null ? String(rc.batchSize) : null,
         flashAttn: rc.flashAttn != null ? String(rc.flashAttn) : null,
-        inputMode: c.inputMode || null,
-        isBaseline: !!c.isBaseline,
         ppTps: num(m.ppTpsMean),
         ppTpsStd: num(m.ppTpsStd),
         latency: num(m.latencyMsMean),
         latencyStd: num(m.latencyMsStd),
-        embPerSec: num(m.embPerSecMean),
-        embPerSecStd: num(m.embPerSecStd),
-        similarity: c.similarity && num(c.similarity.avg) !== null ? num(c.similarity.avg) : null,
         crashed: !!crashed,
         partial: c.status === 'partial-failure',
         repeatsAttempted: int(c.repeatsAttempted),
@@ -239,16 +223,12 @@ function rowsFromFile (file, device, meta) {
   return rows
 }
 
-// "[model q=Q8_0] [gpu] [bs=512] [fa=on] [input=array]". The baseline row's
-// device/bs/fa are the reference config the similarity column is measured
-// against, so they are shown rather than collapsed to "default".
-function configLabel ({ model, quant, device, batchSize, flashAttn, inputMode, isBaseline }) {
+// "[model q=Q8_0] [gpu] [bs=512] [fa=on]".
+function configLabel ({ model, quant, device, batchSize, flashAttn }) {
   const parts = [`[${model} q=${quant}]`]
   if (device) parts.push(`[${device}]`)
   if (batchSize != null) parts.push(`[bs=${batchSize}]`)
   if (flashAttn != null) parts.push(`[fa=${flashAttn}]`)
-  if (inputMode) parts.push(`[input=${inputMode}]`)
-  if (isBaseline) parts.push('[baseline]')
   return parts.join(' ')
 }
 
@@ -272,13 +252,6 @@ function fmtMS (meanV, stdV, sampleCount, decimals = 2) {
     return `${fmt(meanV, decimals)} ± ${fmt(stdV, decimals)}`
   }
   return fmt(meanV, decimals)
-}
-
-// Cosine similarity is dimensionless and reads best at 4 decimals; the baseline
-// row is exactly 1.0 by construction.
-function fmtSim (v) {
-  if (v === null || v === undefined) return '-'
-  return (Math.round(v * 1e4) / 1e4).toFixed(4)
 }
 
 // A model only runs the quants it actually ships, so the per-model coverage
@@ -308,16 +281,12 @@ function modelQuants (model, manifestQuants) {
 }
 
 function expectedConfigKeys (model, quants) {
-  const maxBatch = maxBatchForModel(model)
   const keys = []
   for (const quant of quants) {
     for (const device of PARAMETER_SWEEP.device) {
       for (const batchSize of PARAMETER_SWEEP.batchSize) {
-        if (batchSize > maxBatch) continue
         for (const flashAttn of PARAMETER_SWEEP.flashAttn) {
-          for (const inputMode of INPUT_MODES) {
-            keys.push(`${model}|${quant}|${device}|${batchSize}|${flashAttn}|${inputMode}`)
-          }
+          keys.push(`${model}|${quant}|${device}|${batchSize}|${flashAttn}`)
         }
       }
     }
@@ -326,7 +295,7 @@ function expectedConfigKeys (model, quants) {
 }
 
 function rowConfigKey (r) {
-  return `${r.model}|${r.quant}|${r.backend}|${r.batchSize}|${r.flashAttn}|${r.inputMode}`
+  return `${r.model}|${r.quant}|${r.backend}|${r.batchSize}|${r.flashAttn}`
 }
 
 // Per-model coverage of the expected sweep grid. A config that ran but crashed
@@ -337,10 +306,11 @@ function coverageLines (rows, models) {
   const lines = ['## Coverage', '']
   lines.push(
     'Expected grid per model: (supported quants) x ' +
-    `${PARAMETER_SWEEP.device.length} devices x ${PARAMETER_SWEEP.batchSize.length} batch sizes x ` +
-    `${PARAMETER_SWEEP.flashAttn.length} flash-attn x ${INPUT_MODES.length} input modes, plus 1 baseline ` +
-    `reference. Supported quants are the sweep set (${PARAMETER_SWEEP.quantization.join(', ')}) ` +
-    "intersected with each model's manifest builds, so the denominator differs per model."
+    `${PARAMETER_SWEEP.device.length} device x ${PARAMETER_SWEEP.batchSize.length} batch sizes x ` +
+    `${PARAMETER_SWEEP.flashAttn.length} flash-attn. Supported quants are the sweep set ` +
+    `(${PARAMETER_SWEEP.quantization.join(', ')}) intersected with each model's manifest builds, ` +
+    'so the denominator differs per model. Every model reports every batch size — the per-case ' +
+    'input is sized to the model\'s trained context, so there is no per-model cap.'
   )
   if (!mq) {
     lines.push('')
@@ -350,13 +320,11 @@ function coverageLines (rows, models) {
     )
   }
   lines.push('')
-  lines.push('| Model | Grid configs reported | Baseline |')
-  lines.push('| --- | ---: | :---: |')
+  lines.push('| Model | Grid configs reported |')
+  lines.push('| --- | ---: |')
 
   const seenByModel = new Map(models.map((m) => [m, new Set()]))
-  const baselineByModel = new Map(models.map((m) => [m, false]))
   for (const r of rows) {
-    if (r.isBaseline) { baselineByModel.set(r.model, true); continue }
     const set = seenByModel.get(r.model)
     if (set) set.add(rowConfigKey(r))
   }
@@ -364,7 +332,7 @@ function coverageLines (rows, models) {
   for (const model of models) {
     const expected = new Set(expectedConfigKeys(model, modelQuants(model, mq)))
     const seen = [...seenByModel.get(model)].filter((k) => expected.has(k))
-    lines.push(`| ${model} | ${seen.length} / ${expected.size} | ${baselineByModel.get(model) ? 'yes' : 'MISSING'} |`)
+    lines.push(`| ${model} | ${seen.length} / ${expected.size} |`)
   }
   lines.push('')
 
@@ -382,36 +350,29 @@ function coverageLines (rows, models) {
 }
 
 function shardLabel (key) {
-  const [, quant, device, batchSize, flashAttn, inputMode] = key.split('|')
-  return `q=${quant} [${device}] [bs=${batchSize}] [fa=${flashAttn}] [input=${inputMode}]`
+  const [, quant, device, batchSize, flashAttn] = key.split('|')
+  return `q=${quant} [${device}] [bs=${batchSize}] [fa=${flashAttn}]`
 }
 
 // Representative held point for the HTML scaling charts: the rows are pinned to
 // a single point on every axis the chart is NOT varying, so each bar is one
 // measured config (no averaging). ppTPS is the headline metric (the per-model
-// base case); the scaling charts vary batch size or sequence count.
+// base case); the scaling charts vary batch size.
 const CHART_BACKEND = 'gpu'
-const CHART_BATCH = '512'
 const CHART_FLASH = 'on'
-const CHART_INPUT = 'single'
 
-function atConfig (rows, { backend, batchSize, flashAttn, inputMode, quant }) {
+// Base config: the smallest batch size, fa=off — the per-model headline point.
+const BASE_BATCH = String(PARAMETER_SWEEP.batchSize[0])
+const BASE_FLASH = 'off'
+
+function atConfig (rows, { backend, batchSize, flashAttn, quant }) {
   return rows.filter((r) =>
-    !r.isBaseline && !r.crashed &&
+    !r.crashed &&
     (backend == null || r.backend === backend) &&
     (batchSize == null || r.batchSize === batchSize) &&
     (flashAttn == null || r.flashAttn === flashAttn) &&
-    (inputMode == null || r.inputMode === inputMode) &&
     (quant == null || r.quant === quant)
   )
-}
-
-// The sequence count a swept input mode embeds in one call: 'single' is 1,
-// 'array-N' is N. Drives the batched-throughput (embeddings/sec) chart's X axis.
-function sequenceCount (inputMode) {
-  if (inputMode === 'single') return 1
-  const m = /^array-(\d+)$/.exec(inputMode || '')
-  return m ? Number(m[1]) : null
 }
 
 function mermaidBar (title, ylabel, labels, values) {
@@ -427,30 +388,42 @@ function mermaidBar (title, ylabel, labels, values) {
   ]
 }
 
-// The per-model base case: the baseline row (default config: cpu / fa=off /
-// bs=256 / single / highest-fidelity quant) carries the reference ppTPS each
-// other config's similarity is measured against. The baseline runs one row per
-// input mode; the headline uses the 'single' one (the default-config base case),
-// falling back to any baseline row for the model if 'single' is absent.
+// Highest-fidelity available build, used to pick the per-model headline quant:
+// F16 where the model ships it, else the best available quant. Mirrors the
+// fidelity order the sweep uses for quant ranking.
+const FIDELITY_ORDER = ['F16', 'Q8_0', 'Q6_K', 'Q4_K_M', 'Q4_1', 'Q4_0']
+
+// The per-model base case: the smallest batch size (BASE_BATCH), fa=off, at the
+// model's best available quant. One bar per model in the headline chart.
 function baseCaseByModel (rows) {
   const byModel = new Map()
+  const candidatesByModel = new Map()
   for (const r of rows) {
-    if (!r.isBaseline || r.crashed || r.ppTps === null) continue
-    const prev = byModel.get(r.model)
-    if (!prev || (prev.inputMode !== 'single' && r.inputMode === 'single')) byModel.set(r.model, r)
+    if (r.crashed || r.ppTps === null) continue
+    if (r.batchSize !== BASE_BATCH || r.flashAttn !== BASE_FLASH) continue
+    if (!candidatesByModel.has(r.model)) candidatesByModel.set(r.model, [])
+    candidatesByModel.get(r.model).push(r)
+  }
+  for (const [model, cands] of candidatesByModel) {
+    let best = null
+    for (const quant of FIDELITY_ORDER) {
+      best = cands.find((r) => r.quant === quant)
+      if (best) break
+    }
+    if (!best) best = cands[0]
+    if (best) byModel.set(model, best)
   }
   return byModel
 }
 
-// Headline at-a-glance chart: the base case (baseline-config ppTPS) per model,
-// one bar per model. xychart-beta is single-series, so the batch-size and
-// sequence-count scaling charts (one series per model) live in the HTML artifact.
+// Headline at-a-glance chart: the base case (smallest batch / fa=off / best
+// quant) ppTPS per model, one bar per model. xychart-beta is single-series, so
+// the batch-size scaling chart (one series per model) lives in the HTML artifact.
 function mermaidSection (rows, chartsUrl) {
   const byModel = baseCaseByModel(rows)
   if (byModel.size < 1) return []
   const models = [...byModel.keys()].sort((a, b) => byModel.get(b).ppTps - byModel.get(a).ppTps)
-  const cfg = 'cpu / fa=off / bs=256 / single'
-  const title = `Base-case prefill throughput per model (ppTPS, baseline config: ${cfg})`
+  const title = `Base-case prefill throughput per model (ppTPS, bs=${BASE_BATCH} / fa=${BASE_FLASH})`
   // The download URL only exists after the artifact is uploaded, so the workflow
   // passes it in post-upload; a local render leaves the artifact name as plain text.
   const artifact = chartsUrl
@@ -459,10 +432,10 @@ function mermaidSection (rows, chartsUrl) {
   return [
     '## Charts',
     '',
-    `> Base-case prefill throughput (ppTPS) per model at the baseline config **${cfg}**. ` +
-    'The prefill-throughput-vs-batch-size and batched-throughput-vs-sequence-count scaling charts ' +
-    `(one series per model), plus the cosine-similarity and latency charts, are in the ${artifact} ` +
-    '— download and open `embed-benchmark-charts.html` inside. The full grid is in the tables below.',
+    `> Base-case prefill throughput (ppTPS) per model at the base config **bs=${BASE_BATCH} / fa=${BASE_FLASH}** ` +
+    '(best available quant per model). The prefill-throughput-vs-batch-size and latency-vs-batch-size scaling ' +
+    `charts (one series per model) are in the ${artifact} — download and open ` +
+    '`embed-benchmark-charts.html` inside. The full grid is in the tables below.',
     '',
     ...mermaidBar(title, 'ppTPS', models, models.map((m) => byModel.get(m).ppTps)),
     ''
@@ -470,8 +443,8 @@ function mermaidSection (rows, chartsUrl) {
 }
 
 // One token count is shown only if every measured config used the same input
-// length. Single vs array input modes (and batch sizes) generally differ, so
-// otherwise it is omitted rather than picking one case's value misleadingly.
+// length. Batch sizes differ, so otherwise it is omitted rather than picking one
+// case's value misleadingly.
 function uniformInputTokens (rows) {
   const vals = [...new Set(rows.filter((r) => !r.crashed && r.inputTokens != null).map((r) => r.inputTokens))]
   return vals.length === 1 ? vals[0] : null
@@ -497,10 +470,10 @@ function shardKeyLabel (key) {
 }
 
 // Per-device coverage of the mobile shard matrix (model x quant x batchSize x
-// flashAttn cells). Every
-// shard that runs emits at least a Crashed placeholder for each config, so a
-// shard with no row at all never ran or its data was lost (e.g. a dropped batch
-// artifact). Surfacing this keeps a partial run from rendering as complete.
+// flashAttn cells). Every shard that runs emits at least a Crashed placeholder
+// for each config, so a shard with no row at all never ran or its data was lost
+// (e.g. a dropped batch artifact). Surfacing this keeps a partial run from
+// rendering as complete.
 function mobileCoverageLines (rows, devices, expectedShards) {
   // Prefer the shard list stamped into the run's run-meta (so a re-render scores
   // against the matrix THAT run targeted); fall back to the live matrix.
@@ -552,9 +525,9 @@ function mobileCoverageLines (rows, devices, expectedShards) {
 }
 
 // A device's rows rendered as one `### <model>` sub-section per model, each with
-// the metric table (ppTPS | latency | embeddings/sec | cosine-similarity).
-// Rows within a model are baseline-first then config-sorted. Used by both the
-// desktop and mobile sections so every device groups model-first.
+// the metric table (Config | ppTPS | latency (ms)). Rows within a model are
+// config-sorted. Used by both the desktop and mobile sections so every device
+// groups model-first.
 function deviceModelTables (rows) {
   const byModel = new Map()
   for (const r of rows) {
@@ -564,25 +537,21 @@ function deviceModelTables (rows) {
   const models = [...byModel.keys()].sort()
   const lines = []
   for (const model of models) {
-    const items = byModel.get(model).slice().sort((a, b) => {
-      if (a.isBaseline !== b.isBaseline) return a.isBaseline ? -1 : 1
-      return a.config.localeCompare(b.config)
-    })
+    const items = byModel.get(model).slice().sort((a, b) => a.config.localeCompare(b.config))
     lines.push(`### ${model}`)
     lines.push('')
-    lines.push('| Config | ppTPS | latency (ms) | embeddings/sec | cosine-similarity |')
-    lines.push('| --- | ---: | ---: | ---: | ---: |')
+    lines.push('| Config | ppTPS | latency (ms) |')
+    lines.push('| --- | ---: | ---: |')
     for (const r of items) {
       if (r.crashed) {
-        lines.push(`| ${r.config} | Crashed | Crashed | Crashed | - |`)
+        lines.push(`| ${r.config} | Crashed | Crashed |`)
       } else {
         const note = r.partial && r.repeatsSucceeded != null && r.repeatsAttempted != null
           ? ` _(partial: ${r.repeatsSucceeded}/${r.repeatsAttempted} repeats)_`
           : ''
         lines.push(
           `| ${r.config}${note} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ` +
-          `${fmtMS(r.latency, r.latencyStd, r.sampleCount)} | ` +
-          `${fmtMS(r.embPerSec, r.embPerSecStd, r.sampleCount)} | ${fmtSim(r.similarity)} |`
+          `${fmtMS(r.latency, r.latencyStd, r.sampleCount)} |`
         )
       }
     }
@@ -592,9 +561,8 @@ function deviceModelTables (rows) {
 }
 
 // Mobile report: per device, one `### <model>` table with the same columns as
-// the desktop tables (ppTPS | latency (ms) | embeddings/sec | cosine-similarity),
-// plus mobile coverage scored against the (model x quant x batchSize x
-// flashAttn) shard matrix.
+// the desktop tables (Config | ppTPS | latency (ms)), plus mobile coverage
+// scored against the (model x quant x batchSize x flashAttn) shard matrix.
 function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark Results') {
   const addonVersion = meta.addonVersion || addonVersionArg || null
   const byDevice = new Map()
@@ -616,15 +584,13 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   }
   lines.push(
     'Metrics are addon `runtimeStats` (embedding = single prefill pass, no decode): ' +
-    'ppTPS = prefill tokens/sec, latency = prefill time (ms), embeddings/sec = sequences ' +
-    'embedded per second, cosine-similarity = avg cosine similarity of each config\'s ' +
-    'embeddings vs the per-input-mode baseline (the first successful config), which reads ' +
-    '1.0 by construction. `Crashed` = configuration crashed or produced no output.'
+    'ppTPS = prefill tokens/sec, latency = prefill time (ms). ' +
+    '`Crashed` = configuration crashed or produced no output.'
   )
   lines.push('')
   lines.push(
-    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array-N>]`, ' +
-    'where `single` embeds one sequence and `array-N` embeds N sequences in one call. ' +
+    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array>]`, ' +
+    'where `single` embeds one sequence and `array` embeds several in one call. ' +
     'Each mobile shard is one (model, quant, batch size, flash-attn) cell and sweeps device x input mode.'
   )
   lines.push('')
@@ -639,15 +605,13 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
 
   lines.push('## Best configuration per device')
   lines.push('')
-  lines.push('| Device | Highest ppTPS | Highest embeddings/sec |')
-  lines.push('| --- | --- | --- |')
+  lines.push('| Device | Highest ppTPS |')
+  lines.push('| --- | --- |')
   for (const device of devices) {
     const ok = byDevice.get(device).filter((r) => !r.crashed)
     const bestPp = ok.filter((r) => r.ppTps !== null).sort((a, b) => b.ppTps - a.ppTps)[0]
-    const bestEmb = ok.filter((r) => r.embPerSec !== null).sort((a, b) => b.embPerSec - a.embPerSec)[0]
     const ppCell = bestPp ? `${bestPp.config} — ${fmt(bestPp.ppTps)}` : '-'
-    const embCell = bestEmb ? `${bestEmb.config} — ${fmt(bestEmb.embPerSec)}` : '-'
-    lines.push(`| ${device} | ${ppCell} | ${embCell} |`)
+    lines.push(`| ${device} | ${ppCell} |`)
   }
   lines.push('')
   return lines.join('\n') + '\n'
@@ -684,15 +648,13 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
 
   lines.push(
     'Metrics are addon `runtimeStats` (embedding = single prefill pass, no decode): ' +
-    'ppTPS = prefill tokens/sec, latency = prefill time (ms), embeddings/sec = sequences ' +
-    'embedded per second, cosine-similarity = avg cosine similarity of each config\'s ' +
-    'embeddings vs the baseline\'s. The baseline (highest-fidelity quant, cpu, bs256, ' +
-    'flash-off) reads 1.0 by construction. `Crashed` = configuration crashed or produced no output.'
+    'ppTPS = prefill tokens/sec, latency = prefill time (ms). This is a pure throughput ' +
+    'benchmark. `Crashed` = configuration crashed or produced no output.'
   )
   lines.push('')
   lines.push(
-    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array-N>]`, ' +
-    'where `single` embeds one sequence and `array-N` embeds N sequences in one call. ' +
+    'Config labels read `[model q=<quant>] [gpu] [bs=<batch>] [fa=<on|off>]`. The per-case input is ' +
+    "sized to the model's trained context, so every model reports every batch size. " +
     'A `(partial: N/M repeats)` note means only N of M repeats succeeded, so that row\'s stats are over ' +
     'fewer samples. Where input length is uniform across configs it is shown in the header above.'
   )
@@ -719,15 +681,13 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
 
   lines.push('## Best configuration per device')
   lines.push('')
-  lines.push('| Device | Highest ppTPS | Highest embeddings/sec |')
-  lines.push('| --- | --- | --- |')
+  lines.push('| Device | Highest ppTPS |')
+  lines.push('| --- | --- |')
   for (const device of devices) {
-    const ok = byDevice.get(device).filter((r) => !r.crashed && !r.isBaseline)
+    const ok = byDevice.get(device).filter((r) => !r.crashed)
     const bestPp = ok.filter((r) => r.ppTps !== null).sort((a, b) => b.ppTps - a.ppTps)[0]
-    const bestEmb = ok.filter((r) => r.embPerSec !== null).sort((a, b) => b.embPerSec - a.embPerSec)[0]
     const ppCell = bestPp ? `${bestPp.config} — ${fmt(bestPp.ppTps)}` : '-'
-    const embCell = bestEmb ? `${bestEmb.config} — ${fmt(bestEmb.embPerSec)}` : '-'
-    lines.push(`| ${device} | ${ppCell} | ${embCell} |`)
+    lines.push(`| ${device} | ${ppCell} |`)
   }
   lines.push('')
 
@@ -797,7 +757,7 @@ function svgBarChart (title, unit, cats, series, maxOverride) {
 }
 
 // One bar per model on a single shared category: the base case per model. Built
-// as one series whose cells are each model's baseline ppTPS, so svgBarChart
+// as one series whose cells are each model's base-case ppTPS, so svgBarChart
 // renders one bar per model side by side.
 function baseCaseSeries (rows) {
   const byModel = baseCaseByModel(rows)
@@ -816,21 +776,20 @@ function renderHtml (rows, meta, addonVersionArg) {
   const addonVersion = meta.addonVersion || addonVersionArg || ''
   // Charts are desktop-only (the sweep axes); mobile rows carry no chart axes.
   const desktopRows = rows.filter((r) => !r.mobile)
-  const measured = desktopRows.filter((r) => !r.isBaseline && !r.crashed)
+  const measured = desktopRows.filter((r) => !r.crashed)
   const models = [...new Set(measured.map((r) => r.model))].sort()
   const legend = models.map((mName, i) => `<span style="display:inline-flex;align-items:center;margin:0 14px 6px 0"><span style="width:12px;height:12px;background:${CHART_COLORS[i % CHART_COLORS.length]};display:inline-block;margin-right:5px;border-radius:2px"></span>${mName}</span>`).join('')
   const BO = PARAMETER_SWEEP.batchSize.map((b) => String(b))
-  const SO = INPUT_MODES.map((m) => String(sequenceCount(m))).filter((s) => s !== 'null')
   const byBatch = (r) => r.batchSize
-  const bySeq = (r) => { const n = sequenceCount(r.inputMode); return n === null ? null : String(n) }
 
   let charts = ''
 
-  // 1. Headline: base case (baseline-config ppTPS) per model, one bar per model.
+  // 1. Headline: base case (smallest batch / fa=off / best quant) ppTPS per
+  // model, one bar per model.
   const base = baseCaseSeries(desktopRows)
   if (base.cats.length) {
     charts += svgBarChart(
-      'Base-case prefill throughput per model (baseline config: cpu / fa=off / bs=256 / single)',
+      `Base-case prefill throughput per model (bs=${BASE_BATCH} / fa=${BASE_FLASH}, best quant)`,
       'ppTPS, prefill tokens/sec', base.cats, base.series
     )
   }
@@ -849,33 +808,24 @@ function renderHtml (rows, meta, addonVersionArg) {
   }
 
   // 2. Prefill throughput vs batch size: X = batch size, one series per model,
-  // Y = ppTPS. Held gpu / fa=on / single, quant F16 (fallback baseline quant).
+  // Y = ppTPS. Held gpu / fa=on, quant F16 (fallback base-case quant).
   {
-    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, inputMode: CHART_INPUT }))
+    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH }))
     const { cats, series } = chartSeries(subset, byBatch, BO, 'ppTps', 'ppTpsStd')
     if (cats.length) charts += svgBarChart('Prefill throughput vs batch size', 'ppTPS, prefill tokens/sec', cats, series)
   }
 
-  // 3. Batched throughput vs sequence count: X = sequence count (1 / 5 / 10 / 20),
-  // one series per model, Y = embeddings/sec. Held gpu / fa=on / bs=512, quant F16.
+  // 3. Prefill latency vs batch size, one series per model. Held gpu / fa=on,
+  // quant F16 (fallback base-case quant).
   {
-    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, batchSize: CHART_BATCH }))
-    const { cats, series } = chartSeries(subset, bySeq, SO, 'embPerSec', 'embPerSecStd')
-    if (cats.length) charts += svgBarChart('Batched throughput vs sequence count', 'embeddings/sec', cats, series)
-  }
-
-  // 4. Cosine-similarity vs F16 and latency, per batch size, one series per model.
-  {
-    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH, inputMode: CHART_INPUT }))
-    const sim = chartSeries(subset, byBatch, BO, 'similarity', 'noStd')
-    if (sim.cats.length) charts += svgBarChart('Cosine-similarity vs F16 baseline by batch size', 'cosine similarity', sim.cats, sim.series, 1)
+    const subset = pinQuant(atConfig(desktopRows, { backend: CHART_BACKEND, flashAttn: CHART_FLASH }))
     const lat = chartSeries(subset, byBatch, BO, 'latency', 'latencyStd')
     if (lat.cats.length) charts += svgBarChart('Prefill latency by batch size', 'latency (ms), lower is better', lat.cats, lat.series)
   }
 
   const inputTokens = uniformInputTokens(desktopRows)
   const metaBits = [addonVersion && `Addon <code>${addonVersion}</code>`, `Device ${meta.device}`, inputTokens && `Input ${inputTokens} tok`].filter(Boolean).join(' &middot; ')
-  const caption = `Embedding is a single prefill pass: <b>ppTPS</b> = prefill tokens/sec, <b>embeddings/sec</b> = sequences embedded per second, <b>latency (ms)</b> = prefill time, <b>cosine-similarity</b> = each config's embeddings vs the F16 baseline. The headline is the base case (baseline config cpu / fa=off / bs=256 / single) per model. The scaling charts hold the other axes at <b>${CHART_BACKEND.toUpperCase()}, flash-attn ${CHART_FLASH}</b> (batch-size charts at single input; the sequence-count chart at batch size ${CHART_BATCH}) and quant <b>F16</b> (falling back to a model's base-case quant if its F16 row is absent at the held point). A missing bar means that configuration crashed, was not run, or had no measurable metric for this point. The full grid is in the report tables.`
+  const caption = `Embedding is a single prefill pass: <b>ppTPS</b> = prefill tokens/sec, <b>latency (ms)</b> = prefill time. The headline is the base case (bs=${BASE_BATCH} / fa=${BASE_FLASH}, best quant) per model. The scaling charts hold the other axes at <b>${CHART_BACKEND.toUpperCase()}, flash-attn ${CHART_FLASH}</b> and quant <b>F16</b> (falling back to a model's base-case quant if its F16 row is absent at the held point). A missing bar means that configuration crashed, was not run, or had no measurable metric for this point. The full grid is in the report tables.`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Embed Benchmark Charts</title></head><body style="max-width:920px;margin:24px auto;padding:0 16px;font-family:system-ui,Arial;color:#111827"><h1 style="font-size:20px;margin-bottom:2px">Embed Benchmark Charts</h1><p style="color:#6b7280;margin-top:0">${metaBits}</p><p style="color:#374151">${caption}</p><div style="margin:8px 0 20px">${legend}</div>${charts || '<p>No data to chart.</p>'}</body></html>`
 }
 
@@ -900,9 +850,9 @@ function main () {
   if (args.output) fs.writeFileSync(args.output, md)
   else process.stdout.write(md)
 
-  // HTML charts are a desktop-sweep artifact (per-quant / per-batch SVG bars).
-  // Mobile rows carry no per-axis chart fields, so the mobile report is the
-  // per-device markdown tables only — skip the empty HTML rather than emit it.
+  // HTML charts are a desktop-sweep artifact (per-batch SVG bars). Mobile rows
+  // carry no per-axis chart fields, so the mobile report is the per-device
+  // markdown tables only — skip the empty HTML rather than emit it.
   const isMobileRun = rows.every((r) => r.mobile)
   if (args.html && !isMobileRun) fs.writeFileSync(args.html, renderHtml(rows, meta, args.addonVersion))
 }

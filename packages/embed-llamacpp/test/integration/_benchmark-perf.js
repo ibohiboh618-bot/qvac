@@ -12,8 +12,8 @@
 // INTERNALLY — device requires a fresh load (2 loads/session), inputMode is a
 // runtime-only re-run of the same loaded model (no reload). Embedding is a
 // single prefill-only forward pass, so each config records prefill throughput
-// (ppTPS), prefill latency (ms), embeddings/sec, and cosine similarity vs an
-// in-run baseline (the first successful config for the same input mode). The
+// (ppTPS), prefill latency (ms), and cosine similarity vs an in-run baseline
+// (the first successful config for the same input mode). The
 // axes and input modes come from the benchmark sweep grid, so the mobile sweep
 // never drifts from the desktop one.
 
@@ -68,9 +68,8 @@ function stddev (values) {
 // The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
 // short input prefills faster than it can measure, so the addon reports a
 // sub-millisecond time and a tokens_per_second inflated to ~1e8. Treat prefill
-// timing below this floor as unmeasured so ppTPS / latency / embeddings-per-sec
-// report null for those configs instead of a fabricated value. Mirrors the
-// desktop case-runner.
+// timing below this floor as unmeasured so ppTPS / latency report null for those
+// configs instead of a fabricated value. Mirrors the desktop case-runner.
 const MIN_RELIABLE_PREFILL_MS = 1
 
 function reliablePrefillMs (totalTimeMs) {
@@ -83,22 +82,12 @@ function prefillTokensPerSecond (runtimeStats) {
   return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
 }
 
-function _envInt (key, fallback) {
-  let raw = ''
-  if (typeof os.getEnv === 'function') raw = os.getEnv(key) || ''
-  if (!raw && typeof process !== 'undefined' && process.env) raw = process.env[key] || ''
-  const v = parseInt(raw, 10)
-  return Number.isFinite(v) && v > 0 ? v : fallback
-}
-
 // Measured repetitions per config, reported as mean +/- stddev (matching the
-// desktop sweep, which repeats 5x). Repeating on-device guards against a single
-// shot skewed by mobile thermal throttling. Overridable via QVAC_PERF_RUNS /
-// QVAC_PERF_WARMUP_RUNS, which the Benchmark Performance workflow pushes to the
-// device (qvacPerfConfig.txt -> os.setEnv in integration-runtime.cjs), matching
-// the LLM benchmark runner.
-const PERF_RUNS = _envInt('QVAC_PERF_RUNS', 3)
-const PERF_WARMUP_RUNS = _envInt('QVAC_PERF_WARMUP_RUNS', 1)
+// desktop sweep). Repeating on-device guards against a single shot skewed by
+// mobile thermal throttling. A single warmup run primes GPU kernels/caches so
+// rep 1 isn't a cold-start outlier.
+const PERF_RUNS = 3
+const PERF_WARMUP_RUNS = 1
 
 function meanOf (values) {
   return values.length ? average(values) : null
@@ -116,9 +105,9 @@ const isLinuxArm64 = platform === 'linux' && os.arch() === 'arm64'
 // device list; everything else sweeps both.
 const DEVICES = (isDarwinX64 || isLinuxArm64) ? ['cpu'] : PARAMETER_SWEEP.device
 
-// A small, fixed sentence set, deliberately NOT the 81KB desktop inputs.json:
-// mobile memory is tight and the perf signal does not need hundreds of
-// sequences. `single` embeds the first sentence; `array` embeds all of them.
+// A small, fixed sentence set: mobile memory is tight and the perf signal does
+// not need long inputs. `single` embeds the first sentence; `array` embeds all
+// of them.
 const SENTENCES = [
   'That is a happy person enjoying a sunny afternoon in the park.',
   'The quarterly report shows steady growth across every region.',
@@ -212,7 +201,7 @@ function recordCrashedPlaceholder (label, device, model) {
 // rather than aborting the sweep.
 function benchmarkModel (modelName, quant, batchSize, flashAttn) {
   const spec = modelSpec(modelName, quant)
-  safeTest(`Mobile perf benchmark: ${spec.id} q=${quant} bs=${batchSize} fa=${flashAttn} (ppTPS / latency / embeddings-per-sec / cosine)`, {
+  safeTest(`Mobile perf benchmark: ${spec.id} q=${quant} bs=${batchSize} fa=${flashAttn} (ppTPS / latency / cosine)`, {
     timeout: 1_800_000,
     skip: !isMobile
   }, async (t) => {
@@ -268,7 +257,6 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
             try {
               const ppTpsValues = []
               const latencyValues = []
-              const embPerSecValues = []
               let firstEmbeddings = null
               let inputTokens = null
               for (let rep = 1; rep <= PERF_RUNS; rep++) {
@@ -282,7 +270,6 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
                 const ppTps = latencyMs != null ? prefillTokensPerSecond(stats) : null
                 if (ppTps != null) ppTpsValues.push(ppTps)
                 if (latencyMs != null) latencyValues.push(latencyMs)
-                if (latencyMs != null && latencyMs > 0) embPerSecValues.push(embeddings.length / (latencyMs / 1000))
               }
 
               // Cosine baseline per input mode is the first successful config's
@@ -302,14 +289,12 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
                 ppTpsStd: stdOf(ppTpsValues),
                 latencyMs: meanOf(latencyValues),
                 latencyMsStd: stdOf(latencyValues),
-                embPerSec: meanOf(embPerSecValues),
-                embPerSecStd: stdOf(embPerSecValues),
                 cosine,
                 inputTokens,
                 // Richest series: ppTPS can be null on a zero-prefill-time
                 // edge while latency is still valid, so don't let it under-
                 // report the sample count.
-                sampleCount: Math.max(ppTpsValues.length, latencyValues.length, embPerSecValues.length),
+                sampleCount: Math.max(ppTpsValues.length, latencyValues.length),
                 status: 'ok',
                 model: `${spec.id}-${quant}`
               }))

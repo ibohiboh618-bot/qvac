@@ -6,7 +6,6 @@ const process = require('bare-process')
 const {
   DEFAULT_RESULTS_DIR,
   DEFAULT_REPEATS,
-  DEFAULT_INPUTS_FILE,
   MODELS,
   PARAMETER_SWEEP
 } = require('./embed-parameter-sweep.config')
@@ -127,14 +126,6 @@ async function main () {
   const AddonCtor = resolveAddonCtor(addonSource)
   const repeats = parseRepeats(args.repeats)
   const resultsDir = DEFAULT_RESULTS_DIR
-  const inputsFilePath = DEFAULT_INPUTS_FILE
-  if (!fs.existsSync(inputsFilePath)) {
-    throw new Error(
-      `Missing inputs file: ${inputsFilePath}. ` +
-      'Place a JSON object { "<batchSize>": string[5], ... } at benchmarks/performance/inputs.json.'
-    )
-  }
-  const inputsByBatchSize = JSON.parse(fs.readFileSync(inputsFilePath, 'utf8'))
   const selectedModels = selectModels(MODELS, args.models)
 
   fs.mkdirSync(resultsDir, { recursive: true })
@@ -166,7 +157,6 @@ async function main () {
       debugLogger,
       modelDef: plan.modelDef,
       cases: plan.cases,
-      inputsByBatchSize,
       progress
     })
     report.models.push(modelResult)

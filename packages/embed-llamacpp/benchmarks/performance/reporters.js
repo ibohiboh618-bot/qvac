@@ -13,10 +13,7 @@ function tsFileStamp () {
   return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`
 }
 
-// Baseline rows render every config column as 'default'; otherwise show the
-// runtime value (stringified) or blank when unset.
-function cfgCell (isBaseline, value) {
-  if (isBaseline) return 'default'
+function cfgCell (value) {
   return value != null ? String(value) : ''
 }
 
@@ -31,31 +28,30 @@ function toMarkdown (report) {
   lines.push('')
   for (const model of report.models) {
     lines.push(`## Model: ${model.modelId}`)
-    lines.push('| Quantization | Device | Batch Size | Input | No Mmap | Flash Attn | Status | Load ms | Run ms (avg per repeat) | Unload ms | TPS (mean) | Avg CosSim | Error |')
-    lines.push('|---|---|---:|---|---|---|---|---:|---:|---:|---:|---:|---|')
+    lines.push('| Quantization | Device | Batch Size | Ctx | Sentences | No Mmap | Flash Attn | Status | Load ms | Run ms (avg per repeat) | Unload ms | ppTPS (mean) | Error |')
+    lines.push('|---|---|---:|---:|---:|---|---|---|---:|---:|---:|---:|---|')
     for (const item of model.cases) {
       const metrics = item.metrics || {}
       const runtimeConfig = item.runtimeConfig || {}
-      const cos = item.similarity ? item.similarity.avg : ''
-      const quantizationCell = cfgCell(item.isBaseline, item.quantization)
-      const deviceCell = cfgCell(item.isBaseline, runtimeConfig.device)
-      const batchSizeCell = cfgCell(item.isBaseline, runtimeConfig.batchSize)
-      const inputCell = item.inputMode || 'single'
-      const noMmapCell = item.isBaseline
-        ? 'default'
-        : (runtimeConfig.noMmap ? 'on' : 'off')
-      const flashAttnCell = cfgCell(item.isBaseline, runtimeConfig.flashAttn)
+      const derived = item.derived || {}
+      const quantizationCell = cfgCell(item.quantization)
+      const deviceCell = cfgCell(runtimeConfig.device)
+      const batchSizeCell = cfgCell(runtimeConfig.batchSize)
+      const ctxCell = cfgCell(derived.ctx ?? runtimeConfig.ctx)
+      const sentencesCell = cfgCell(derived.nSentences)
+      const noMmapCell = runtimeConfig.noMmap ? 'on' : 'off'
+      const flashAttnCell = cfgCell(runtimeConfig.flashAttn)
       const statusCell = item.status ?? ''
       const errorCell = item.error && item.error.message
         ? truncateText(item.error.message, 120)
         : ''
       lines.push(
-        `| ${quantizationCell} | ${deviceCell} | ${batchSizeCell} | ${inputCell} | ${noMmapCell} | ${flashAttnCell}` +
+        `| ${quantizationCell} | ${deviceCell} | ${batchSizeCell} | ${ctxCell} | ${sentencesCell} | ${noMmapCell} | ${flashAttnCell}` +
         ` | ${statusCell} | ${metrics.loadMs ?? ''}` +
         ` | ${metrics.runMs ?? ''}` +
         ` | ${metrics.unloadMs ?? ''}` +
         ` | ${metrics.tps ?? ''}` +
-        ` | ${cos} | ${errorCell} |`
+        ` | ${errorCell} |`
       )
     }
     lines.push('')
@@ -65,8 +61,8 @@ function toMarkdown (report) {
 }
 
 // Per-run JSON the renderer ingests: models[].cases[], each case carrying
-// caseId/parameter/quantization/modelName/inputMode/runtimeConfig/isBaseline/
-// metrics/similarity/status/repeatsAttempted/repeatsSucceeded/error.
+// caseId/parameter/quantization/modelName/runtimeConfig/derived/metrics/status/
+// repeatsAttempted/repeatsSucceeded/error.
 function toReportJson (report) {
   return {
     startedAt: report.startedAt,
@@ -81,11 +77,9 @@ function toReportJson (report) {
         parameter: item.parameter,
         quantization: item.quantization,
         modelName: item.modelName,
-        inputMode: item.inputMode,
         runtimeConfig: item.runtimeConfig,
-        isBaseline: item.isBaseline,
+        derived: item.derived,
         metrics: item.metrics,
-        similarity: item.similarity,
         status: item.status,
         repeatsAttempted: item.repeatsAttempted,
         repeatsSucceeded: item.repeatsSucceeded,
@@ -110,11 +104,9 @@ function toJsonLines (report) {
         parameter: item.parameter,
         quantization: item.quantization,
         modelName: item.modelName,
-        inputMode: item.inputMode,
         runtimeConfig: item.runtimeConfig,
-        isBaseline: item.isBaseline,
+        derived: item.derived,
         metrics: item.metrics,
-        similarity: item.similarity,
         status: item.status,
         repeatsAttempted: item.repeatsAttempted,
         repeatsSucceeded: item.repeatsSucceeded,

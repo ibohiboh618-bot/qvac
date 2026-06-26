@@ -11,9 +11,9 @@
 // the mobile test generator or the brittle test runner.
 //
 // The emitted schema is { device, results[] }; the per-row metrics are
-// embed-specific (pp_tps, latency_ms, emb_per_sec, cosine_similarity, plus the
-// _std variants, input_tokens and sample_count), matching what
-// render-report.js reads for mobile rows.
+// embed-specific (pp_tps, latency_ms, cosine_similarity, plus the _std variants,
+// input_tokens and sample_count), matching what render-report.js reads for
+// mobile rows.
 
 const fs = require('bare-fs')
 const path = require('bare-path')
@@ -61,8 +61,6 @@ function createPerformanceReporter (opts) {
           pp_tps_std: null,
           latency_ms: null,
           latency_ms_std: null,
-          emb_per_sec: null,
-          emb_per_sec_std: null,
           cosine_similarity: null,
           input_tokens: null,
           sample_count: null
@@ -185,8 +183,6 @@ function _num (v) {
  * @param {number} [extra.ppTpsStd]  stddev of ppTPS across the repeats.
  * @param {number} [extra.latencyMs] mean prefill time in ms across the repeats.
  * @param {number} [extra.latencyMsStd] stddev of latency across the repeats.
- * @param {number} [extra.embPerSec] mean embeddings/sec across the repeats.
- * @param {number} [extra.embPerSecStd] stddev of embeddings/sec across the repeats.
  * @param {number} [extra.cosine]    cosine similarity vs the in-run baseline.
  * @param {number} [extra.inputTokens] tokens fed to the model for this config.
  * @param {number} [extra.sampleCount] repeats that produced a value.
@@ -202,8 +198,6 @@ function recordPerformance (label, extra) {
   const ppTpsStd = extra ? _num(extra.ppTpsStd) : null
   const latencyMs = extra ? _num(extra.latencyMs) : null
   const latencyMsStd = extra ? _num(extra.latencyMsStd) : null
-  const embPerSec = extra ? _num(extra.embPerSec) : null
-  const embPerSecStd = extra ? _num(extra.embPerSecStd) : null
   const cosine = extra ? _num(extra.cosine) : null
   const inputTokens = extra ? _num(extra.inputTokens) : null
   const sampleCount = extra ? _num(extra.sampleCount) : null
@@ -215,8 +209,6 @@ function recordPerformance (label, extra) {
     pp_tps_std: ppTpsStd !== null ? Number(ppTpsStd.toFixed(3)) : null,
     latency_ms: latencyMs !== null ? Number(latencyMs.toFixed(3)) : null,
     latency_ms_std: latencyMsStd !== null ? Number(latencyMsStd.toFixed(3)) : null,
-    emb_per_sec: embPerSec !== null ? Number(embPerSec.toFixed(3)) : null,
-    emb_per_sec_std: embPerSecStd !== null ? Number(embPerSecStd.toFixed(3)) : null,
     cosine_similarity: cosine !== null ? Number(cosine.toFixed(6)) : null,
     input_tokens: inputTokens !== null ? Math.round(inputTokens) : null,
     sample_count: sampleCount !== null ? Math.round(sampleCount) : null
@@ -242,7 +234,6 @@ function recordPerformance (label, extra) {
     `${label} Performance Metrics (backend=${backend}, platform=${platformLabel}, reps=${sampleCount !== null ? sampleCount : 'n/a'}):`,
     `    - ppTPS (prefill tokens/sec): ${fmtMeanStd(ppTps, ppTpsStd)}`,
     `    - Latency (prefill ms): ${fmtMeanStd(latencyMs, latencyMsStd)}`,
-    `    - Embeddings/sec: ${fmtMeanStd(embPerSec, embPerSecStd)}`,
     `    - Cosine vs baseline: ${cosine !== null ? cosine.toFixed(4) : 'n/a'}`,
     `    - Input tokens: ${inputTokens !== null ? inputTokens : 'n/a'}`
   ].join('\n')

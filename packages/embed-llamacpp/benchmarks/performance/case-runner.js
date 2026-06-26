@@ -6,12 +6,10 @@ const process = require('bare-process')
 const {
   elapsedMs,
   round,
-  similarityStats,
   cartesianProduct,
   average,
   stddev
 } = require('./math')
-const { INPUT_MODES, maxBatchForModel } = require('./_sweep-grid')
 
 function createAddonRuntimeLogger (debugEnabled) {
   if (!debugEnabled) {
@@ -38,23 +36,45 @@ function normalizeEmbeddings (rawEmbeddings) {
   return rawEmbeddings[0].map((vector) => Array.from(vector))
 }
 
-// The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
-// short input prefills faster than it can measure, so the addon reports a
-// sub-millisecond prefill time and a tokens_per_second inflated to ~1e8. Treat
-// prefill timing below this floor as unmeasured so the timing-derived metrics
-// (ppTPS, latency, embeddings/sec) report null for those configs instead of a
-// fabricated value. Array inputs spend real milliseconds in prefill and are
-// unaffected.
-const MIN_RELIABLE_PREFILL_MS = 1
+// ── Synthetic filler input ──────────────────────────────────────────────────
+// This is a SPEED benchmark, so only the token count matters, not the content.
+// We pad by characters as a rough proxy for token count: different models
+// tokenize the same text differently, so a single ratio cannot land an exact
+// token count for every model. The only invariant we need is that no sequence
+// reaches its limit — the addon rejects a sequence whose token count reaches the
+// batch size or the context — so we target a margin BELOW the sentence length
+// with a conservative chars/token. The run records the real inputTokens. Sizing
+// to a tokenizer-exact length would require a per-model tokenizer pass, which is
+// out of scope for a throughput sweep.
+const CHARS_PER_TOKEN = 4.1 // conservative; the current filler measures ~4.2
+const TOKEN_SAFETY_MARGIN = 16
+const FILLER_HEAD = 'Some input. '
+const FILLER_UNIT = 'Some more input. '
 
-function reliablePrefillMs (totalTimeMs) {
-  return totalTimeMs != null && totalTimeMs >= MIN_RELIABLE_PREFILL_MS ? totalTimeMs : null
+function fillerForTokens (targetTokens) {
+  const tokens = Math.max(1, targetTokens)
+  const targetChars = Math.round(tokens * CHARS_PER_TOKEN)
+  let s = FILLER_HEAD
+  while (s.length < targetChars) s += FILLER_UNIT
+  return s.slice(0, targetChars)
 }
 
-// Prefill throughput (ppTPS) as measured by the addon; only meaningful when the
-// prefill time is reliable, which the caller enforces.
-function prefillTokensPerSecond (runtimeStats) {
-  return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
+// Per-case input, derived from the batch size and the model's trained context:
+//   ctx          = min(batchSize, trainedCtx) — the runtime context for the case
+//   sentenceLen  = ctx — the longest sentence the model can process
+//   nSentences   = round(batchSize / sentenceLen), at least 1 — so the array of
+//                  sentences fills the batch (1 when batch <= ctx; 2 for a
+//                  4096-batch / 2048-ctx model; 4 at 8192-batch / 2048-ctx)
+// Each filler sentence is sized a safe margin UNDER sentenceLen tokens, so no
+// sentence reaches the context/batch limit regardless of model — no per-model
+// cap, no crash.
+function deriveCaseInput (batchSize, trainedCtx) {
+  const ctx = Math.min(batchSize, trainedCtx)
+  const sentenceLen = ctx
+  const nSentences = Math.max(1, Math.round(batchSize / sentenceLen))
+  const sentence = fillerForTokens(sentenceLen - TOKEN_SAFETY_MARGIN)
+  const inputs = nSentences === 1 ? sentence : Array.from({ length: nSentences }, () => sentence)
+  return { ctx, sentenceLen, nSentences, inputs }
 }
 
 function buildAddonConfig (runtimeConfig, options = {}) {
@@ -62,6 +82,7 @@ function buildAddonConfig (runtimeConfig, options = {}) {
   const config = { verbosity: debugEnabled ? '2' : '0' }
   if (runtimeConfig.device != null) config.device = String(runtimeConfig.device)
   if (runtimeConfig.batchSize != null) config.batch_size = String(runtimeConfig.batchSize)
+  if (runtimeConfig.ctx != null) config.ctx_size = String(runtimeConfig.ctx)
   if (runtimeConfig.flashAttn != null) config.flash_attn = String(runtimeConfig.flashAttn)
   if (runtimeConfig.ngl != null) config.gpu_layers = String(runtimeConfig.ngl)
   if (runtimeConfig.noMmap) config['no-mmap'] = ''
@@ -76,17 +97,8 @@ function checkModelExists (modelDir, modelName) {
   return fs.existsSync(path.join(modelDir, modelName))
 }
 
-// Highest-fidelity available build, used as the cosine-similarity reference:
-// F16 where the model ships it, else the best available quant.
-const FIDELITY_ORDER = ['F16', 'Q8_0', 'Q6_K', 'Q4_K_M', 'Q4_1', 'Q4_0']
-
 function buildCases (modelDef, sweep) {
   const defaults = modelDef.defaults
-  const baseQuant = FIDELITY_ORDER.find((quant) => !!resolveModelName(modelDef, quant)) ||
-    modelDef.quantizations[0]
-  if (baseQuant == null) {
-    throw new Error(`No baseline quantization configured for model "${modelDef.id}"`)
-  }
   const supportedQuants = sweep.quantization
     .filter((quant) => !!resolveModelName(modelDef, quant))
 
@@ -95,57 +107,82 @@ function buildCases (modelDef, sweep) {
   }
 
   const cases = []
-  for (const inputMode of INPUT_MODES) {
-    cases.push({
-      caseId: `${modelDef.id}__q=${baseQuant}__baseline-defaults__input=${inputMode}`,
-      parameter: 'baseline',
-      quantization: baseQuant,
-      modelName: resolveModelName(modelDef, baseQuant),
-      runtimeConfig: { ...defaults },
-      inputMode,
-      isBaseline: true
-    })
-  }
-
-  // Skip batch sizes the model can't hold (e.g. embeddingGemma's 2048 context),
-  // which would otherwise overflow and crash every such config.
-  const maxBatch = maxBatchForModel(modelDef.id)
   const combos = cartesianProduct([
     supportedQuants,
     sweep.device,
     sweep.batchSize,
     sweep.flashAttn
-  ]).filter(([, , batchSize]) => batchSize <= maxBatch)
+  ])
 
   for (const [quantization, device, batchSize, flashAttn] of combos) {
-    for (const inputMode of INPUT_MODES) {
-      cases.push({
-        caseId: `${modelDef.id}__q=${quantization}__dev=${device}__bs=${batchSize}__fa=${flashAttn}__input=${inputMode}`,
-        parameter: 'full-grid',
-        quantization,
-        modelName: resolveModelName(modelDef, quantization),
-        runtimeConfig: {
-          ...defaults,
-          device,
-          batchSize,
-          flashAttn
-        },
-        inputMode,
-        isBaseline: false
-      })
-    }
+    cases.push({
+      caseId: `${modelDef.id}__q=${quantization}__dev=${device}__bs=${batchSize}__fa=${flashAttn}`,
+      parameter: 'full-grid',
+      quantization,
+      modelName: resolveModelName(modelDef, quantization),
+      runtimeConfig: {
+        ...defaults,
+        device,
+        batchSize,
+        flashAttn
+      }
+    })
   }
 
-  cases.sort((a, b) => Number(b.isBaseline) - Number(a.isBaseline))
   return cases
+}
+
+// The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
+// short input prefills faster than it can measure, so the addon reports a
+// sub-millisecond prefill time and a tokens_per_second inflated to ~1e8. Treat
+// prefill timing below this floor as unmeasured so the timing-derived metrics
+// (ppTPS, latency) report null for those configs instead of a fabricated value.
+const MIN_RELIABLE_PREFILL_MS = 1
+
+function reliablePrefillMs (totalTimeMs) {
+  return totalTimeMs != null && totalTimeMs >= MIN_RELIABLE_PREFILL_MS ? totalTimeMs : null
+}
+
+// Prefill throughput (ppTPS) as measured by the addon; only meaningful when the
+// prefill time is reliable, which the caller enforces.
+function prefillTokensPerSecond (runtimeStats) {
+  return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
+}
+
+// Load the model once, run a tiny input with stats on, read the model's trained
+// context size, then unload. Sizing every case's input off this means the filler
+// is always within the model's real context — no per-model cap. Returns null on
+// any failure; the caller falls back to treating trainedCtx as the batch size.
+async function probeTrainedContext ({ AddonCtor, modelDir, modelName, debugEnabled }) {
+  const addonConfig = buildAddonConfig({ device: 'gpu' }, { debugEnabled })
+  const addonRuntimeLogger = createAddonRuntimeLogger(debugEnabled)
+  let model = null
+  try {
+    model = new AddonCtor({
+      files: { model: [path.join(modelDir, modelName)] },
+      config: addonConfig,
+      logger: addonRuntimeLogger,
+      opts: { stats: true }
+    })
+    await model.load()
+    const response = await model.run('probe')
+    await response.await()
+    const trained = response.stats && response.stats.trained_context_size
+    return typeof trained === 'number' && trained > 0 ? trained : null
+  } catch (_) {
+    return null
+  } finally {
+    try {
+      if (model) await model.unload()
+    } catch (_) { /* probe is best-effort */ }
+  }
 }
 
 // Embedding is a single forward pass (prefill only), so every metric here is a
 // prefill or end-to-end quantity — there is no decode phase. The renderer reads:
-//   ppTpsMean/ppTpsStd      prefill tokens/sec (addon tokens_per_second)
+//   ppTpsMean/ppTpsStd          prefill tokens/sec (addon tokens_per_second)
 //   latencyMsMean/latencyMsStd  prefill time in ms (addon total_time_ms)
-//   embPerSecMean/embPerSecStd  embeddings/sec = sequences / (prefill_ms / 1000)
-//   inputTokens             tokens fed to the model for this case
+//   inputTokens                 tokens fed to the model for this case
 // loadMs/runMs/unloadMs are kept for the legacy .jsonl/.md reporters.
 function aggregateRunMetrics (runMetrics) {
   const repeatsSucceeded = runMetrics.length
@@ -160,8 +197,6 @@ function aggregateRunMetrics (runMetrics) {
       ppTpsStd: null,
       latencyMsMean: null,
       latencyMsStd: null,
-      embPerSecMean: null,
-      embPerSecStd: null,
       inputTokens: null
     }
   }
@@ -169,12 +204,6 @@ function aggregateRunMetrics (runMetrics) {
   const wallMsValues = runMetrics.map((x) => x.wallMs).filter((x) => x != null)
   const prefillMsValues = runMetrics.map((x) => x.prefillMs).filter((x) => x != null)
   const ppTpsValues = runMetrics.map((x) => x.ppTps).filter((x) => x != null)
-  // One embeddings/sec sample per repeat, from that repeat's own prefill time.
-  const embPerSecValues = runMetrics
-    .map((x) => (x.prefillMs != null && x.prefillMs > 0 && x.embeddingCount != null)
-      ? x.embeddingCount / (x.prefillMs / 1000)
-      : null)
-    .filter((x) => x != null)
   const inputTokens = runMetrics.find((x) => x.totalTokens != null)?.totalTokens ?? null
 
   return {
@@ -187,8 +216,6 @@ function aggregateRunMetrics (runMetrics) {
     ppTpsStd: ppTpsValues.length ? round(stddev(ppTpsValues), 3) : null,
     latencyMsMean: prefillMsValues.length ? round(average(prefillMsValues), 3) : null,
     latencyMsStd: prefillMsValues.length ? round(stddev(prefillMsValues), 3) : null,
-    embPerSecMean: embPerSecValues.length ? round(average(embPerSecValues), 3) : null,
-    embPerSecStd: embPerSecValues.length ? round(stddev(embPerSecValues), 3) : null,
     inputTokens
   }
 }
@@ -200,7 +227,7 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
   let model = null
   let loadMs = null
   let unloadMs = null
-  let firstEmbeddings = null
+  let producedEmbeddings = false
   const runMetrics = []
   const errors = []
   let primaryError = null
@@ -234,14 +261,13 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
         const rawEmbeddings = await response.await()
         const wallMs = elapsedMs(runStart)
         const runtimeStats = response.stats
-        const embeddings = normalizeEmbeddings(rawEmbeddings)
-        if (!firstEmbeddings) {
-          firstEmbeddings = embeddings
-        }
-        // ppTPS = prefill tokens/sec; prefillMs = prefill time; wallMs = end-to-end
-        // run latency; embeddingCount = sequences embedded in this run (used to
-        // derive embeddings/sec). Embedding is a single forward pass, so there is
-        // no decode phase and no generated-token metric.
+        // Validate the run produced a well-formed embedding response so a
+        // silently-empty run is treated as a failure, not a 0-metric success.
+        normalizeEmbeddings(rawEmbeddings)
+        producedEmbeddings = true
+        // ppTPS = prefill tokens/sec; prefillMs = prefill time; wallMs =
+        // end-to-end run latency. Embedding is a single forward pass, so there
+        // is no decode phase and no generated-token metric.
         const prefillMs = reliablePrefillMs(runtimeStats.total_time_ms)
         runMetrics.push({
           loadMs,
@@ -249,7 +275,6 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
           wallMs,
           ppTps: prefillMs != null ? prefillTokensPerSecond(runtimeStats) : null,
           totalTokens: runtimeStats.total_tokens,
-          embeddingCount: embeddings.length,
           unloadMs: null
         })
       } catch (error) {
@@ -303,7 +328,7 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
 
   return {
     metrics: aggregateRunMetrics(runMetrics),
-    embeddings: firstEmbeddings,
+    producedEmbeddings,
     errors,
     repeatsAttempted: repeats,
     repeatsSucceeded: runMetrics.length
@@ -313,7 +338,6 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
 function buildCaseResult ({
   testCase,
   executionResult,
-  baselineEmbeddingsByInputMode,
   repeats,
   failureMessage
 }) {
@@ -321,7 +345,6 @@ function buildCaseResult ({
     return {
       ...testCase,
       metrics: null,
-      similarity: null,
       status: 'failed',
       repeatsAttempted: repeats,
       repeatsSucceeded: 0,
@@ -330,21 +353,6 @@ function buildCaseResult ({
       }
     }
   }
-
-  if (testCase.parameter === 'baseline' && executionResult.embeddings) {
-    baselineEmbeddingsByInputMode.set(testCase.inputMode, executionResult.embeddings)
-  }
-
-  const similarity = testCase.parameter === 'baseline'
-    ? (
-        executionResult.embeddings
-          ? { avg: 1, min: 1, max: 1, count: executionResult.embeddings.length }
-          : null
-      )
-    : similarityStats(
-      baselineEmbeddingsByInputMode.get(testCase.inputMode),
-      executionResult.embeddings
-    )
 
   const hasRepeatErrors = Array.isArray(executionResult.errors) && executionResult.errors.length > 0
   const status = hasRepeatErrors
@@ -366,7 +374,6 @@ function buildCaseResult ({
   return {
     ...testCase,
     metrics: executionResult.metrics,
-    similarity,
     status,
     repeatsAttempted: executionResult.repeatsAttempted,
     repeatsSucceeded: executionResult.repeatsSucceeded,
@@ -381,12 +388,35 @@ async function runModelCases ({
   debugLogger,
   modelDef,
   cases,
-  inputsByBatchSize,
   progress
 }) {
   debugLogger.log(`\n=== ${modelDef.id} ===`)
   debugLogger.log(`Cases to run: ${cases.length}`)
-  const baselineEmbeddingsByInputMode = new Map()
+
+  // Probe the model's trained context once before its cases, so every case's
+  // input is sized to a length the model can actually hold. Use the first case's
+  // model file (the model is the same across quants for context purposes; any
+  // available quant works). If the probe fails, fall back to treating the trained
+  // context as the batch size (ctx = batchSize, single sentence) per case.
+  let trainedCtx = null
+  let probeNote = null
+  const probeCase = cases.find((c) =>
+    c.modelName && checkModelExists(modelDef.modelDir, c.modelName))
+  if (probeCase) {
+    trainedCtx = await probeTrainedContext({
+      AddonCtor,
+      modelDir: modelDef.modelDir,
+      modelName: probeCase.modelName,
+      debugEnabled
+    })
+  }
+  if (trainedCtx == null) {
+    probeNote = 'trained-context probe failed; sizing inputs to batch size (ctx = batchSize)'
+    debugLogger.warn(`${modelDef.id}: ${probeNote}`)
+  } else {
+    debugLogger.log(`${modelDef.id}: trained context = ${trainedCtx}`)
+  }
+
   const caseResults = []
 
   for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
@@ -408,41 +438,25 @@ async function runModelCases ({
       }
 
       debugLogger.log(`Running: ${testCase.caseId}`)
-      const inputsRaw = inputsByBatchSize[testCase.runtimeConfig.batchSize]
-      if (!Array.isArray(inputsRaw) || inputsRaw.length === 0) {
-        const configuredBatchSizes = Object.keys(inputsByBatchSize || {}).sort()
-        throw new Error(
-          `Invalid inputs.json for case ${testCase.caseId}: missing or empty inputs for batch size ` +
-          `${testCase.runtimeConfig.batchSize}. Configured batch sizes: ` +
-          `${configuredBatchSizes.length ? configuredBatchSizes.join(', ') : '(none)'}`
-        )
+      const batchSize = testCase.runtimeConfig.batchSize
+      // No probe value -> treat the trained context as the batch size, so the
+      // case runs a single sentence sized to the batch.
+      const effectiveCtx = trainedCtx == null ? batchSize : trainedCtx
+      const derived = deriveCaseInput(batchSize, effectiveCtx)
+      testCase.runtimeConfig.ctx = derived.ctx
+      testCase.derived = {
+        ctx: derived.ctx,
+        sentenceLen: derived.sentenceLen,
+        nSentences: derived.nSentences,
+        probeNote
       }
-      // 'single' embeds one sequence; 'array-N' embeds the first N sequences in
-      // one call (batched-throughput sweep). inputs.json provides enough
-      // sequences per batch size (see MAX_ARRAY_SEQUENCES).
-      let inputs
-      if (testCase.inputMode === 'single') {
-        inputs = inputsRaw[0]
-      } else {
-        const n = Number(testCase.inputMode.slice('array-'.length))
-        if (!Number.isInteger(n) || n <= 0) {
-          throw new Error(`Unrecognised input mode "${testCase.inputMode}" for case ${testCase.caseId}`)
-        }
-        if (inputsRaw.length < n) {
-          throw new Error(
-            `Invalid inputs.json for case ${testCase.caseId}: input mode ${testCase.inputMode} needs ` +
-            `${n} sequences at batch size ${testCase.runtimeConfig.batchSize}, but only ${inputsRaw.length} ` +
-            'are provided. Regenerate with `npm run generate:inputs`.'
-          )
-        }
-        inputs = inputsRaw.slice(0, n)
-      }
+
       executionResult = await runCaseWithRepeats({
         AddonCtor,
         modelDir: modelDef.modelDir,
         modelName: testCase.modelName,
         runtimeConfig: testCase.runtimeConfig,
-        inputs,
+        inputs: derived.inputs,
         repeats,
         debugEnabled,
         onRepeatComplete: ({ repeat, repeats: repeatsForCase }) => {
@@ -472,18 +486,17 @@ async function runModelCases ({
     const caseResult = buildCaseResult({
       testCase,
       executionResult,
-      baselineEmbeddingsByInputMode,
       repeats,
       failureMessage
     })
     caseResults.push(caseResult)
 
-    // Fail fast when the baseline case cannot initialize the model. Continuing
-    // the full grid in this state only floods logs with the same fatal error.
-    if (failureMessage && testCase.isBaseline &&
+    // Fail fast when the first case cannot initialize the model. Continuing the
+    // full grid in this state only floods logs with the same fatal error.
+    if (failureMessage && caseIndex === 0 &&
         /UnableToLoadModel|Failed to initialize model|failed to load model|failed to create context/i.test(failureMessage)) {
       throw new Error(
-        `Baseline case failed to initialize model "${testCase.modelName}". ` +
+        `First case failed to initialize model "${testCase.modelName}". ` +
         'Please re-prepare models and verify disk/free space before running the sweep again. ' +
         `Underlying error: ${failureMessage}`
       )

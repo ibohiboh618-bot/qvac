@@ -8,18 +8,13 @@ const DEFAULT_RESULTS_DIR = path.resolve(__dirname, 'results', 'parameter-sweep'
 const DEFAULT_MODELS_DIR = path.resolve(__dirname, 'models')
 const MANIFEST_PATH = path.resolve(__dirname, 'models.manifest.json')
 const RESOLVED_MODELS_PATH = path.resolve(__dirname, 'resolved-models.json')
-const DEFAULT_INPUTS_FILE = path.resolve(__dirname, 'inputs.json')
 const DEFAULT_REPEATS = 5
 
-// Baseline reference config (cosine-similarity is measured against its
-// embeddings): CPU, flash-attn off, batch-size 256. The reference quantization
-// is the highest-fidelity build per model (F16 where available, else the best
-// quant) — chosen in buildCases, not here.
+// Shared runtime defaults every swept case inherits before the case's own
+// (device, batchSize, flashAttn) and derived ctx_size are layered on. The sweep
+// is GPU-only; noMmap and ngl are held at their defaults.
 const BENCH_DEFAULT_RUNTIME = {
-  device: 'cpu',
-  batchSize: 256,
   noMmap: false,
-  flashAttn: 'off',
   ngl: 0
 }
 
@@ -103,7 +98,6 @@ module.exports = {
   MANIFEST_PATH,
   RESOLVED_MODELS_PATH,
   DEFAULT_REPEATS,
-  DEFAULT_INPUTS_FILE,
   BENCH_DEFAULT_RUNTIME,
   MODEL_RUNTIME_OVERRIDES,
   MODELS,
