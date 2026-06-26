@@ -14,7 +14,11 @@ const TRANSIENT_ERROR_CODES = new Set([
   // whole run with no retry).
   'ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED',
   // mid-transfer / timeout
-  'ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ESIZE'
+  'ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ESIZE',
+  // post-transfer: the request "resolved" but the .part is missing/short or
+  // couldn't be finalized (truncated/interrupted transfer) — retry it instead
+  // of hard-failing on the resulting ENOENT/short file.
+  'EINCOMPLETE'
 ])
 
 const cleanedIntegrationCacheFiles = new Set()
@@ -177,19 +181,38 @@ async function downloadFileWithRetries (urls, dest, opts = {}) {
   const urlList = Array.isArray(urls) ? urls : [urls]
   const partPath = dest + '.part'
 
+  // Drop any leftover .part from a previously interrupted/killed run so a stale
+  // temp file can't be mistaken for this download's output.
+  try { fs.unlinkSync(partPath) } catch (_) {}
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     const url = urlList[attempt % urlList.length]
     const host = urlHost(url)
     try {
       await withDeadline(downloadFileOnce(url, partPath, downloadOpts), attemptDeadlineMs, host)
 
-      const stat = fs.statSync(partPath)
-      if (stat.size < minBytes) {
-        fs.unlinkSync(partPath)
-        throw Object.assign(new Error(`Downloaded file is empty from ${host}`), { code: 'ESIZE' })
+      // Verify the artifact actually landed and is non-trivial. A "resolved"
+      // download whose .part is missing or short means the transfer was
+      // truncated/interrupted — surface it as EINCOMPLETE so the loop RETRIES
+      // instead of hard-failing on a fatal ENOENT (which previously killed the
+      // run after a single attempt).
+      let size = -1
+      try { size = fs.statSync(partPath).size } catch (_) { size = -1 }
+      if (size < minBytes) {
+        throw Object.assign(
+          new Error(`Incomplete download from ${host} (${size < 0 ? 'missing .part' : size + ' bytes'})`),
+          { code: 'EINCOMPLETE' }
+        )
       }
 
-      fs.renameSync(partPath, dest)
+      try {
+        fs.renameSync(partPath, dest)
+      } catch (err) {
+        throw Object.assign(
+          new Error(`Failed to finalize download from ${host}: ${err.code || err.message}`),
+          { code: 'EINCOMPLETE' }
+        )
+      }
       return
     } catch (err) {
       try { fs.unlinkSync(partPath) } catch (_) {}
