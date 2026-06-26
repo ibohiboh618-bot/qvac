@@ -16,6 +16,10 @@ import {
   createDuplexSession,
   getWorkerLifeSignal,
 } from "#rpc";
+// Per-runtime default for whether `unloadModel` auto-closes the RPC connection
+// when the last model is unloaded. Re-exported from the active `#rpc` client so
+// callers don't need to branch on the runtime themselves.
+export { autoCloseDefault } from "#rpc";
 import {
   WorkerCrashedError,
   RequestValidationFailedError,

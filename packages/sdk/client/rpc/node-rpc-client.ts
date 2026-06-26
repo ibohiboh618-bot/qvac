@@ -29,6 +29,11 @@ const logger = getClientLogger();
 // worker's stderr is treated as debug.
 const workerLogger = getLogger(SDK_SERVER_NAMESPACE, { enableConsole: false });
 
+// Auto-close the worker on unload (Node/Electron): the worker is a child
+// process that can be cleanly terminated, and closing it lets the host process
+// exit naturally once the last model is unloaded.
+export const autoCloseDefault = true;
+
 let rpcInstance: RPC | null = null;
 let rpcPromise: Promise<RPC> | null = null;
 let bareWorkerProc: BareChildProcess | null = null;

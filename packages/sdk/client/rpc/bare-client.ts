@@ -31,6 +31,11 @@ import {
 import { assertLifecycleAllowed } from "@/server/bare/runtime-lifecycle";
 import { ensurePluginsRegistered } from "@/client/rpc/ensure-worker-ready";
 
+// Bare hosts run the worker in-process and keep it open by default so
+// long-lived workers survive a routine unload (preserves prior `!isBare`
+// behavior); callers opt in to closing via `autoClose: true`.
+export const autoCloseDefault = false;
+
 async function ensureWorkerReady() {
   initializeWorkerCore();
   await ensurePluginsRegistered();

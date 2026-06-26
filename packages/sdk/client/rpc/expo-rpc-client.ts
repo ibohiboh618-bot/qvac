@@ -10,6 +10,14 @@ import type { RuntimeContext } from "@/schemas";
 
 const logger = getClientLogger();
 
+// Do NOT auto-close the worklet on unload (Expo/React Native). The bare worklet
+// is long-lived and is reused across load/unload. On Android it cannot be
+// safely terminated at all (addon dlclose leaves dangling pthread_key_t
+// destructors), so auto-closing would only drop our references and orphan the
+// worklet (V8 isolate + thread + loaded model) — leaking ~one worklet per
+// load/unload cycle. See close() below, which intentionally skips terminate().
+export const autoCloseDefault = false;
+
 let rpcInstance: RPC | null = null;
 let rpcPromise: Promise<RPC> | null = null;
 let workletInstance: Worklet | null = null;
