@@ -278,7 +278,16 @@ exports.config = {
     if (global.testResults) {
       var entry = global.testResults.tests[global.testResults.tests.length - 1];
       if (entry && entry.title === test.title) {
-        entry.status = passed ? 'passed' : 'failed';
+        // A test that called this.skip() is marked pending by mocha. The
+        // generated app.test.js does this when the app reports a test that
+        // registered 0 sub-tests (e.g. an env-gated benchmark shim) as
+        // "PASS (skipped ...)". Record it as skipped so the summary
+        // distinguishes an intentional skip from a real pass.
+        if (test.pending) {
+          entry.status = 'skipped';
+        } else {
+          entry.status = passed ? 'passed' : 'failed';
+        }
         entry.duration = duration || 0;
         if (error) {
           entry.error = {
