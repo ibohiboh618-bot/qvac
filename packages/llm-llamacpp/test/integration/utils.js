@@ -58,21 +58,27 @@ function urlHost (url) {
 // no retry until the 30-minute test-level timeout kills the whole shard. This
 // guarantees a stuck attempt rejects with a transient ETIMEDOUT so the retry
 // loop can move on.
-async function withDeadline (promise, deadlineMs, host) {
-  let timer
-  const deadline = new Promise((_resolve, reject) => {
-    timer = setTimeout(() => {
+//
+// We attach handlers directly to `promise` (rather than Promise.race against a
+// rejecting timer) so that a late settlement of the underlying download — after
+// the deadline already won — is ALWAYS observed. A Promise.race leaves the
+// loser unobserved, which Bare reports as an unhandled rejection and can
+// escalate to SIGABRT (the exact crash class this whole change exists to
+// avoid). Here the timer and the download both settle the same outer promise;
+// whichever loses becomes a no-op, and neither is left dangling.
+function withDeadline (promise, deadlineMs, host) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
       reject(Object.assign(
         new Error(`Download attempt exceeded ${deadlineMs}ms deadline from ${host}`),
         { code: 'ETIMEDOUT' }
       ))
     }, deadlineMs)
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (err) => { clearTimeout(timer); reject(err) }
+    )
   })
-  try {
-    return await Promise.race([promise, deadline])
-  } finally {
-    clearTimeout(timer)
-  }
 }
 
 async function downloadFileOnce (url, dest, opts = {}) {
