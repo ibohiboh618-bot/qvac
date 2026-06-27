@@ -28,7 +28,7 @@
     ]
   },
   "android": {
-    "continuousBatching": ["runContinuousBatchingTest"]
+    "apiBehavior": ["runApiBehaviorTest"]
   },
   "androidWeekly": {
     "ocr": [

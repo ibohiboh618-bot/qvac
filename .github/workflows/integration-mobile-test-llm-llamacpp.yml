@@ -270,8 +270,8 @@ jobs:
             |
               set -x
               PRESTAGE_DIR=/sdcard/Android/data/io.tether.test.qvac/files/prestaged-models
-              MODEL=Llama-3.2-1B-Instruct-Q4_0.gguf
-              URL=https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_0.gguf
+              MODEL=Qwen3-0.6B-Q8_0.gguf
+              URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf
               echo "[prestage] host curl $MODEL"
               mkdir -p /tmp/prestage
               curl -fSL --retry 6 --retry-all-errors -o "/tmp/prestage/$MODEL" "$URL"
