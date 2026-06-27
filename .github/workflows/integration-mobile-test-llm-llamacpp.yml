@@ -263,13 +263,13 @@ jobs:
           qvac-perf-only: ${{ inputs.qvac_perf_only }}
           test-groups: ${{ inputs.test_groups }}
           # POC(prestage): on the Device Farm HOST (reliable network), download
-          # the one model the continuousBatching shard needs and adb push it to
-          # the device's external app dir, so the phone never hits huggingface.
-          # ensureModel() reads from prestaged-models/ when present.
+          # the model the shard needs and adb push it to /data/local/tmp (the
+          # one path that is adb-writable AND app-readable), so the phone never
+          # hits huggingface.co. ensureModel() reads from prestaged-models/.
           extra-pre-test-commands: |
             |
               set -x
-              PRESTAGE_DIR=/sdcard/Android/data/io.tether.test.qvac/files/prestaged-models
+              PRESTAGE_DIR=/data/local/tmp/prestaged-models
               MODEL=Qwen3-0.6B-Q8_0.gguf
               URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf
               echo "[prestage] host curl $MODEL"
@@ -278,7 +278,9 @@ jobs:
               ls -la /tmp/prestage/
               adb shell mkdir -p "$PRESTAGE_DIR"
               adb push "/tmp/prestage/$MODEL" "$PRESTAGE_DIR/$MODEL"
+              echo "[prestage] verify on device:"
               adb shell ls -la "$PRESTAGE_DIR"
+              adb shell test -s "$PRESTAGE_DIR/$MODEL" || { echo "[prestage] FATAL: model not on device"; exit 1; }
               echo "[prestage] done"
 
       - name: Schedule Device Farm test runs
