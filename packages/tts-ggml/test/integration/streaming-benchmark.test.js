@@ -14,10 +14,12 @@ const enabled = flag === '1' || flag.toLowerCase() === 'true' || flag.toLowerCas
 if (enabled) {
   require('../benchmark/streaming-benchmark.test.js')
 } else {
-  console.log('[streaming-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
-  // bare-pack isolates globalThis/global per module, but console is shared.
-  console.__QVAC_SKIP_FLAG = true
-  if (typeof globalThis !== 'undefined') globalThis.__QVAC_TEST_SKIPPED = true
-  exports.__QVAC_SKIPPED = true
-  module.exports = { __QVAC_SKIPPED: true }
+  // Declare an INTENTIONAL skip via the harness-provided global.skipMobileTest
+  // (registers a real brittle skip → total > 0 → reported skipped, never a
+  // silent green pass). See ./rtf-benchmark.test.js for the full rationale.
+  if (typeof globalThis !== 'undefined' && typeof globalThis.skipMobileTest === 'function') {
+    globalThis.skipMobileTest('Streaming benchmark', 'QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set')
+  } else {
+    console.log('[streaming-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
+  }
 }

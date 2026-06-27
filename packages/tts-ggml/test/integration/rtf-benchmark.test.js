@@ -26,10 +26,15 @@ const enabled = flag === '1' || flag.toLowerCase() === 'true' || flag.toLowerCas
 if (enabled) {
   require('../benchmark/rtf-benchmark.test.js')
 } else {
-  console.log('[rtf-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
-  // bare-pack isolates globalThis/global per module, but console is shared.
-  console.__QVAC_SKIP_FLAG = true
-  if (typeof globalThis !== 'undefined') globalThis.__QVAC_TEST_SKIPPED = true
-  exports.__QVAC_SKIPPED = true
-  module.exports = { __QVAC_SKIPPED: true }
+  // Declare an INTENTIONAL skip. global.skipMobileTest (provided by the mobile
+  // test harness) registers a real brittle skipped test so this module reports
+  // total > 0 and the harness records it as skipped rather than passed. A
+  // module that registered nothing at all would be a 0/0 FAIL, so a real
+  // addon-load crash can never masquerade as a green skip. Off-device (where
+  // the harness global is absent) this is simply a no-op log.
+  if (typeof globalThis !== 'undefined' && typeof globalThis.skipMobileTest === 'function') {
+    globalThis.skipMobileTest('RTF benchmark', 'QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set')
+  } else {
+    console.log('[rtf-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
+  }
 }
