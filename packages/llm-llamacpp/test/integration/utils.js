@@ -259,12 +259,6 @@ function prestagedModelDir (modelName) {
 }
 
 async function ensureModel ({ modelName, downloadUrl }) {
-  const staged = prestagedModelDir(modelName)
-  if (staged) {
-    console.log(`[prestage] Using pre-staged model ${modelName} from ${staged}`)
-    return [modelName, staged]
-  }
-
   const modelDir = path.resolve(__dirname, '../model')
   const modelPath = path.join(modelDir, modelName)
 
@@ -275,6 +269,25 @@ async function ensureModel ({ modelName, downloadUrl }) {
     }
     console.log(`[download] Removing zero-byte cached file: ${modelName}`)
     fs.unlinkSync(modelPath)
+  }
+
+  // Pre-staged path: copy the host-staged model from the read-only staging dir
+  // into the normal (app-private, WRITABLE) modelDir, then return modelDir. The
+  // copy is a fast local operation (no network). Returning a writable dir is
+  // essential — tests write sibling files next to the model (sliding-context
+  // caches, finetuning checkpoints via path.join(modelDir, ...)), which would
+  // fail if we returned the read-only /data/local/tmp staging dir directly.
+  const staged = prestagedModelDir(modelName)
+  if (staged) {
+    fs.mkdirSync(modelDir, { recursive: true })
+    console.log(`[prestage] Using pre-staged model ${modelName} (copying into writable modelDir)`)
+    fs.copyFileSync(path.join(staged, modelName), modelPath)
+    const stat = fs.statSync(modelPath)
+    if (stat.size === 0) {
+      fs.unlinkSync(modelPath)
+      throw new Error(`[prestage] copied model ${modelName} is empty`)
+    }
+    return [modelName, modelDir]
   }
 
   fs.mkdirSync(modelDir, { recursive: true })
