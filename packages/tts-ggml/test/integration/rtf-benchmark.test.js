@@ -26,15 +26,12 @@ const enabled = flag === '1' || flag.toLowerCase() === 'true' || flag.toLowerCas
 if (enabled) {
   require('../benchmark/rtf-benchmark.test.js')
 } else {
-  // Declare an INTENTIONAL skip. global.skipMobileTest (provided by the mobile
-  // test harness) registers a real brittle skipped test so this module reports
-  // total > 0 and the harness records it as skipped rather than passed. A
-  // module that registered nothing at all would be a 0/0 FAIL, so a real
-  // addon-load crash can never masquerade as a green skip. Off-device (where
-  // the harness global is absent) this is simply a no-op log.
-  if (typeof globalThis !== 'undefined' && typeof globalThis.skipMobileTest === 'function') {
-    globalThis.skipMobileTest('RTF benchmark', 'QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set')
-  } else {
-    console.log('[rtf-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
-  }
+  // Declare an INTENTIONAL skip by registering a real brittle skipped test.
+  // brittle is the one module that crosses into the bundled mobile runtime, so
+  // this both keeps the build green AND lets the harness report it as skipped
+  // (the harness wraps brittle.skip to tag the shared runner). Registering a
+  // real test is the safety net: a module that registers NOTHING is a 0/0 FAIL,
+  // so a genuine addon-load crash can never masquerade as a green skip.
+  console.log('[rtf-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
+  require('brittle').skip('RTF benchmark — QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set', () => {})
 }

@@ -14,12 +14,9 @@ const enabled = flag === '1' || flag.toLowerCase() === 'true' || flag.toLowerCas
 if (enabled) {
   require('../benchmark/streaming-benchmark.test.js')
 } else {
-  // Declare an INTENTIONAL skip via the harness-provided global.skipMobileTest
-  // (registers a real brittle skip → total > 0 → reported skipped, never a
-  // silent green pass). See ./rtf-benchmark.test.js for the full rationale.
-  if (typeof globalThis !== 'undefined' && typeof globalThis.skipMobileTest === 'function') {
-    globalThis.skipMobileTest('Streaming benchmark', 'QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set')
-  } else {
-    console.log('[streaming-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
-  }
+  // Declare an INTENTIONAL skip by registering a real brittle skip (→ total > 0
+  // → reported skipped, never a silent green pass, and a genuine 0/0 still
+  // FAILs). See ./rtf-benchmark.test.js for the full rationale.
+  console.log('[streaming-benchmark mobile shim] QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set; skipping benchmark.')
+  require('brittle').skip('Streaming benchmark — QVAC_TTS_GGML_RUN_BENCHMARK_ON_MOBILE not set', () => {})
 }
