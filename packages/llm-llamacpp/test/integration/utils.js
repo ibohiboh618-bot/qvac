@@ -236,7 +236,31 @@ async function downloadFileWithRetries (urls, dest, opts = {}) {
   }
 }
 
+// Android Device Farm pre-staging: the device's network to huggingface.co is
+// unreliable (~40% of downloads fail even with retries), but the Device Farm
+// HOST has solid network. The test-spec pre_test phase downloads each model on
+// the host and `adb push`es it into the app's external files dir (this path is
+// adb-writable and readable by the app under scoped storage). When a model is
+// already staged there we skip the on-device download entirely.
+const PRESTAGED_MODEL_DIR =
+  '/sdcard/Android/data/io.tether.test.qvac/files/prestaged-models'
+
+function prestagedModelDir (modelName) {
+  if (os.platform() !== 'android') return null
+  try {
+    const p = path.join(PRESTAGED_MODEL_DIR, modelName)
+    if (fs.existsSync(p) && fs.statSync(p).size > 0) return PRESTAGED_MODEL_DIR
+  } catch (_) {}
+  return null
+}
+
 async function ensureModel ({ modelName, downloadUrl }) {
+  const staged = prestagedModelDir(modelName)
+  if (staged) {
+    console.log(`[prestage] Using pre-staged model ${modelName} from ${staged}`)
+    return [modelName, staged]
+  }
+
   const modelDir = path.resolve(__dirname, '../model')
   const modelPath = path.join(modelDir, modelName)
 
