@@ -239,6 +239,22 @@ jobs:
           # session outlives any single test.
           android-per-test-timeout-minutes: '30'
 
+      # Generate the per-shard model pre-stage script (Android). The Device Farm
+      # host has reliable network; it downloads exactly the models the shard
+      # needs and adb pushes them to /data/local/tmp so the phone never fetches
+      # from huggingface.co. Block is derived from model-manifest.json.
+      - name: Generate model pre-stage commands (Android)
+        id: prestage
+        if: matrix.platform == 'Android'
+        working-directory: addon/packages/llm-llamacpp
+        run: |
+          node scripts/generate-prestage-block.js > "$RUNNER_TEMP/prestage-block.txt"
+          {
+            echo "block<<PRESTAGE_EOF"
+            cat "$RUNNER_TEMP/prestage-block.txt"
+            echo "PRESTAGE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       # LLM ships with its own dedicated Device Farm project + iOS pool
       # (the LLM_* secrets), historically because LLM runs more often
       # than the others. Sharded mode is wired automatically: the composite
@@ -262,25 +278,9 @@ jobs:
           qvac-perf-warmup-runs: ${{ inputs.qvac_perf_warmup_runs }}
           qvac-perf-only: ${{ inputs.qvac_perf_only }}
           test-groups: ${{ inputs.test_groups }}
-          # POC(prestage): on the Device Farm HOST (reliable network), download
-          # the model the shard needs and adb push it to /data/local/tmp (the
-          # one path that is adb-writable AND app-readable), so the phone never
-          # hits huggingface.co. ensureModel() reads from prestaged-models/.
-          extra-pre-test-commands: |
-            |
-              set -x
-              PRESTAGE_DIR=/data/local/tmp/prestaged-models
-              MODEL=Qwen3-0.6B-Q8_0.gguf
-              URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf
-              echo "[prestage] host curl $MODEL"
-              mkdir -p /tmp/prestage
-              curl -fSL --retry 6 --retry-all-errors -o "/tmp/prestage/$MODEL" "$URL"
-              ls -la /tmp/prestage/
-              adb shell mkdir -p "$PRESTAGE_DIR"
-              adb push "/tmp/prestage/$MODEL" "$PRESTAGE_DIR/$MODEL"
-              echo "[prestage] verify on device:"
-              adb shell ls -la "$PRESTAGE_DIR"
-              adb shell test -s "$PRESTAGE_DIR/$MODEL" || { echo "[prestage] FATAL: model not on device"; exit 1; }
+          # Host pre-stages this shard's models to /data/local/tmp (adb-writable
+          # + app-readable) so the phone never downloads from huggingface.co.
+          extra-pre-test-commands: ${{ steps.prestage.outputs.block }}
               echo "[prestage] done"
 
       - name: Schedule Device Farm test runs
