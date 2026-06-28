@@ -35,8 +35,7 @@
 const CELLS = [
   { model: 'embeddingGemma', quant: 'Q8_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300M-Q8_0.gguf' },
   { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300m-Q4_0.gguf' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-Q8_0.gguf' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-f16.gguf' }
+  { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-Q8_0.gguf' }
 ]
 
 // Sweep axes + input modes for the mobile sweep. The desktop copy of these
