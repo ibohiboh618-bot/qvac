@@ -45,7 +45,7 @@ const CELLS = [
 const PARAMETER_SWEEP = {
   quantization: ['Q4_0', 'Q4_K_M', 'Q8_0', 'F16'],
   device: ['cpu', 'gpu'],
-  batchSize: [256, 512, 1024, 2048],
+  batchSize: [256, 512],
   flashAttn: ['off', 'on']
 }
 const INPUT_MODES = ['single', 'array']
