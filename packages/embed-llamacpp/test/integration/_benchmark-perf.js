@@ -154,6 +154,7 @@ function buildConfig (device, batchSize, flashAttn, modelDir) {
   const config = {
     gpu_layers: device === 'cpu' ? '0' : '999',
     batch_size: String(batchSize),
+    ctx_size: String(batchSize),
     flash_attn: flashAttn,
     verbosity: '0',
     openclCacheDir: modelDir
