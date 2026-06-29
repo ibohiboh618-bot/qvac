@@ -1,8 +1,8 @@
 vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
   REPO tetherto/qvac-fabric-llm.cpp
-  REF e9ad5fc9f
-  SHA512 03fd7f323739819aa66bfa4d708501e04fa1051312d6dfb09dcade05333f18804dcce2b71915ef4364e0707a368176060deca8aa36b755928d71f9bbd508d41b
+  REF a9a58d8f2
+  SHA512 1263bc97b4ce386dd2559769466cfcc9c71296848481e2c43eecba45272ce04f5ab3dd0a6e4de3fef483f0feee36f402cd9c21b5fb1e04898250f5f0697ecfea
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
@@ -211,6 +211,9 @@ vcpkg_cmake_configure(
     ${LLAMA_OPTIONS}
     ${PLATFORM_OPTIONS}
     ${FEATURE_OPTIONS}
+    # QVAC-21320 per-op profile: force the VK perf logger ON (paired with the
+    # profiler-branch diagnostics that route [VKPROF]/[CLIPDIAG] to logcat).
+    -DFORCE_GGML_VK_PERF_LOGGER=ON
 )
 
 vcpkg_cmake_install()
