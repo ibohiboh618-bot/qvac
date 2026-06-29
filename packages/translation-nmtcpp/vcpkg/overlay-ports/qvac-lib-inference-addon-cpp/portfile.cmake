@@ -1,7 +1,17 @@
-vcpkg_from_git(
+# TEMP (QVAC-21544): build qvac-lib-inference-addon-cpp from the JsLogger
+# teardown fix (PR #2932, commit f7fe267) via an overlay so a tmp-* GPR build
+# can be tested in Keet before the registry rollout.
+#
+# Uses vcpkg_from_github (content-addressed tarball) rather than the registry
+# port's vcpkg_from_git: the parallel per-platform prebuild jobs share the
+# self-hosted runner's vcpkg downloads dir, and concurrent vcpkg_from_git clones
+# collide on git-tmp/.git/shallow.lock. The tarball download is lock-free and
+# deduplicated by SHA512.
+vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL https://github.com/tetherto/qvac.git
+  REPO tetherto/qvac
   REF f7fe267c91401336fd0554c6fb263c2aee9add34
+  SHA512 5e17a2970b0807807d647853ebd92a850d0dcf9ed98af9bb3de245a271f62ffec94fa967309b4635b1093b6665badd87367aa5662d73ae3bd77316d0eb75aba8
 )
 
 vcpkg_check_features(
