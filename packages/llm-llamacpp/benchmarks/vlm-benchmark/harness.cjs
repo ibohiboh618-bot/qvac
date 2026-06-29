@@ -303,7 +303,11 @@ function runModel (spec) {
           ctx_size: spec.ctx_size,
           n_predict: '128',
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
-          'reasoning-budget': '0' // disable Qwen3.5 thinking -> clean direct answers
+          'reasoning-budget': '0', // disable Qwen3.5 thinking -> clean direct answers
+          // QVAC-21320 experiment: disable qwen3vl multi-tiling (revert to single-image
+          // dyn_size preprocessing, the pre-qwen3vl encode path). 'disabled' applies to
+          // BOTH mmproj-cpu and mmproj-gpu cells. Default on temp-9341 is 'sequential'.
+          'image-tile-mode': 'disabled'
         },
         logger: console,
         opts: { stats: true }
