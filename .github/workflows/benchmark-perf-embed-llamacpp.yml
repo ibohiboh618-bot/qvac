@@ -419,15 +419,13 @@ jobs:
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
           ADDON_VERSION: ${{ steps.addon_ver.outputs.version }}
         run: |
-          echo "::group::DEBUG combined-reports state"
-          pwd
-          ls -la combined-reports 2>&1 || echo "(combined-reports dir missing)"
-          echo "--- all files under combined-reports ---"
-          find combined-reports -type f 2>&1 | head -60
-          echo "--- json files matched by the guard ---"
-          find combined-reports -name "*.json" -type f 2>&1
-          echo "::endgroup::"
-          if ! find combined-reports -name "*.json" -type f 2>/dev/null | grep -q .; then
+          # Guard: at least one report JSON must be present. Use find -print -quit
+          # (exits after the first match) and test for empty output, instead of
+          # `find ... | grep -q .` — under `set -o pipefail` grep -q closes the pipe
+          # on the first match, find gets SIGPIPE, and the pipeline's non-zero status
+          # flips `if !` to "no reports" even when many JSONs exist (which is why this
+          # only tripped once mobile added ~16 perf-report artifacts).
+          if [ -z "$(find combined-reports -name '*.json' -type f -print -quit 2>/dev/null)" ]; then
             echo "::error::No benchmark reports found for run $ARTIFACT_RUN_ID. Nothing to render."
             exit 1
           fi
