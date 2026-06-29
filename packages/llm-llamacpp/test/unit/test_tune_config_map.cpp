@@ -817,11 +817,11 @@ TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_DefaultsQ8_0) {
   EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
 }
 
-TEST_F(TuneConfigMapTest, AutoDefault_OpenClGpu_StaysF16) {
+TEST_F(TuneConfigMapTest, AutoDefault_OpenClGpu_DefaultsQ8_0) {
   MockModelMetaData meta(false, "llama");
 
-  // OpenCL is excluded from the q8_0 auto-default: quantized KV-cache shifts
-  // abort on Adreno, so f16 stays the default (q8_0 only via explicit opt-in).
+  // EXPERIMENT branch: OpenCL is included in the q8_0 auto-default (the shipping
+  // `!isOpenCl` exclusion is removed) to probe the Adreno cache-shift crash.
   LlamaModel::tuneConfigMap(
       configFilemap_,
       meta,
@@ -831,8 +831,8 @@ TEST_F(TuneConfigMapTest, AutoDefault_OpenClGpu_StaysF16) {
       /*isMetal=*/false,
       /*isGpu=*/true);
 
-  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
-  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+  EXPECT_EQ(configFilemap_["cache-type-k"], "q8_0");
+  EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
 }
 
 TEST_F(TuneConfigMapTest, AutoDefault_MetalGpu_DefaultsQ8_0) {
@@ -955,11 +955,11 @@ TEST_F(TuneConfigMapTest, AutoDefault_AdrenoVulkan_NotApplied) {
   EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
 }
 
-TEST_F(TuneConfigMapTest, AutoDefault_AdrenoOpenCl_StaysF16) {
+TEST_F(TuneConfigMapTest, AutoDefault_AdrenoOpenCl_DefaultsQ8_0) {
   MockModelMetaData meta(false, "llama");
 
-  // Adreno (OpenCL) keeps the f16 default — quantized KV-cache shifts abort
-  // there. q8_0 is still available as an explicit opt-in (Tier 2 guard).
+  // EXPERIMENT branch: Adreno (OpenCL) now defaults to q8_0 (the shipping
+  // OpenCL exclusion is removed) to probe the cache-shift crash on device.
   LlamaModel::tuneConfigMap(
       configFilemap_,
       meta,
@@ -969,6 +969,6 @@ TEST_F(TuneConfigMapTest, AutoDefault_AdrenoOpenCl_StaysF16) {
       /*isMetal=*/false,
       /*isGpu=*/true);
 
-  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
-  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+  EXPECT_EQ(configFilemap_["cache-type-k"], "q8_0");
+  EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
 }

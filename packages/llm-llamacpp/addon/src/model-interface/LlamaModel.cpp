@@ -238,17 +238,21 @@ void LlamaModel::tuneConfigMap(
            v == "pq3_0" || v == "pq4_0";
   };
 
-  // 1. Default the KV-cache to q8_0 on Metal/Vulkan GPU backends when the
-  // caller hasn't picked a cache type. q8_0 is quality-neutral vs f16 on GPU
-  // and cuts KV-cache memory ~47%. CPU keeps the f16 default — ARM q8_0 carries
-  // a measured quality and decode-throughput cost. OpenCL (Adreno) is also
-  // EXCLUDED: q8_0 attention works there, but quantized KV-cache *shifts*
-  // (sliding context / context management) abort natively in
-  // llama_kv_cache::update on Adreno, so f16 stays the safe default (q8_0
-  // remains available as an explicit opt-in for shift-free workloads). Also
-  // skipped for finetuning (manages its own KV types), when flash attention is
-  // off (V-cache quantization requires it), and on Adreno+Vulkan (see above).
-  if (!isFinetuning && isGpu && !isOpenCl && flashAttnOn && !isAdrenoVulkan &&
+  // 1. Default the KV-cache to q8_0 on GPU backends when the caller hasn't
+  // picked a cache type. q8_0 is quality-neutral vs f16 on GPU and cuts KV-cache
+  // memory ~47%. CPU keeps the f16 default — ARM q8_0 carries a measured quality
+  // and decode-throughput cost.
+  //
+  // EXPERIMENT (test/QVAC-21318-kv-quant-vlm-ci, QVAC-21318): OpenCL (Adreno) is
+  // INTENTIONALLY INCLUDED here (the `!isOpenCl` exclusion the shipping branch
+  // uses has been removed) so every integration test runs q8_0 KV on Adreno.
+  // This is expected to surface the quantized-KV cache-shift abort in
+  // llama_kv_cache::update on Adreno — the whole point of this branch is to map
+  // which integration tests crash. DO NOT MERGE.
+  //
+  // Still skipped for finetuning (manages its own KV types), when flash
+  // attention is off (V-cache quantization requires it), and on Adreno+Vulkan.
+  if (!isFinetuning && isGpu && flashAttnOn && !isAdrenoVulkan &&
       notUserSet("cache-type-k", "cache_type_k") &&
       notUserSet("cache-type-v", "cache_type_v")) {
     configFilemap["cache-type-k"] = "q8_0";
