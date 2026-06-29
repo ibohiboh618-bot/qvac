@@ -3,7 +3,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -218,6 +221,17 @@ void SdModel::load() {
 
   params.preferred_gpu_backend =
       sd_backend_selection::preferredGpuBackendForConfigDevice(config_.device);
+
+  std::string mainGpuBackend;
+  if (auto mainGpuSpec = sd_backend_selection::parseMainGpu(config_.mainGpu);
+      mainGpuSpec.has_value()) {
+    if (auto resolved =
+            sd_backend_selection::resolveMainGpuBackendName(*mainGpuSpec);
+        resolved.has_value()) {
+      mainGpuBackend = *resolved;
+      params.backend = mainGpuBackend.c_str();
+    }
+  }
 
   QLOG_IF(
       qvac_lib_inference_addon_cpp::logger::Priority::INFO,
@@ -917,9 +931,14 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
   const auto t0 = std::chrono::steady_clock::now();
 
   int numFramesOut = 0;
-  sd_image_t* rawFrames =
-      generate_video(sdCtx_.get(), &vidParams, &numFramesOut);
+  sd_image_t* rawFrames = nullptr;
+  sd_audio_t* rawAudio = nullptr;
+  const bool generated =
+      generate_video(sdCtx_.get(), &vidParams, &rawFrames, &numFramesOut,
+                     &rawAudio);
   qvac_lib_inference_addon_sd::SdVideoFrames frames(rawFrames, numFramesOut);
+  std::unique_ptr<sd_audio_t, decltype(&free_sd_audio)> audio(
+      rawAudio, free_sd_audio);
 
   // If cancelled during the sampler, surface as an exception for the same
   // reason as the image path: a "successful" completion with zero frames
@@ -929,7 +948,7 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
     throw sd_errors::makeCancelledError();
   }
 
-  if (frames.empty())
+  if (!generated || frames.empty())
     throw StatusError(
         general_error::InternalError,
         "processVideo: generate_video() returned no frames");

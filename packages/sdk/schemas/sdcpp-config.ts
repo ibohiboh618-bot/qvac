@@ -57,6 +57,14 @@ export const sdcppConfigSchema = z
       ),
     threads: z.number().optional(),
     device: z.enum(["gpu", "cpu"]).optional(),
+    "main-gpu": z
+      .union([z.number().int().nonnegative(), z.enum(["integrated", "dedicated"])])
+      .optional()
+      .describe(
+        "GPU to pin when device is 'gpu': a device index, 'integrated', or " +
+          "'dedicated' (the discrete GPU with the most VRAM). Resolved inside " +
+          "the addon's own ggml enumeration. No-op if no matching device.",
+      ),
     prediction: z
       .enum(["auto", "eps", "v", "edm_v", "flow", "flux2_flow"])
       .optional()

@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <ggml-backend.h>
 #include <inference-addon-cpp/Errors.hpp>
@@ -118,6 +121,132 @@ int threadsFromMap(
   } catch (...) {
     return -1;
   }
+}
+
+std::optional<MainGpuSpec> parseMainGpu(const std::string& spec) {
+  if (spec.empty()) {
+    return std::nullopt;
+  }
+  // A bare non-negative integer is a device index.
+  try {
+    size_t consumed = 0;
+    const int index = std::stoi(spec, &consumed);
+    if (consumed == spec.size()) {
+      if (index < 0) {
+        throw StatusError(
+            general_error::InvalidArgument,
+            "main-gpu device index must be >= 0, got: '" + spec + "'");
+      }
+      return MainGpuSpec{MainGpuKind::Index, index};
+    }
+  } catch (const std::invalid_argument&) {
+    // Not a number; fall through to the symbolic forms.
+  } catch (const std::out_of_range&) {
+    throw StatusError(
+        general_error::InvalidArgument,
+        "main-gpu device index out of range, got: '" + spec + "'");
+  }
+
+  const std::string lower = toLowerCopy(spec);
+  if (lower == "integrated") {
+    return MainGpuSpec{MainGpuKind::Integrated, -1};
+  }
+  if (lower == "dedicated") {
+    return MainGpuSpec{MainGpuKind::Dedicated, -1};
+  }
+  throw StatusError(
+      general_error::InvalidArgument,
+      "main-gpu must be a device index, 'integrated', or 'dedicated', got: '" +
+          spec + "'");
+}
+
+std::optional<std::string> mainGpuFromMap(
+    const std::unordered_map<std::string, std::string>& configMap) {
+  const auto hyphen = configMap.find("main-gpu");
+  const auto underscore = configMap.find("main_gpu");
+  if (hyphen != configMap.end() && underscore != configMap.end()) {
+    throw StatusError(
+        general_error::InvalidArgument,
+        "both 'main-gpu' and 'main_gpu' are present; use one or the other.");
+  }
+  const auto entry = (hyphen != configMap.end()) ? hyphen : underscore;
+  if (entry == configMap.end()) {
+    return std::nullopt;
+  }
+  return entry->second;
+}
+
+std::optional<std::string> selectMainGpuName(
+    const std::vector<GpuCandidate>& devices, const MainGpuSpec& spec) {
+  auto nonEmpty = [](const std::string& name) -> std::optional<std::string> {
+    if (name.empty()) {
+      return std::nullopt;
+    }
+    return name;
+  };
+
+  if (spec.kind == MainGpuKind::Index) {
+    if (spec.index < 0 ||
+        static_cast<size_t>(spec.index) >= devices.size()) {
+      return std::nullopt;
+    }
+    return nonEmpty(devices[static_cast<size_t>(spec.index)].name);
+  }
+
+  const GpuClass wanted = spec.kind == MainGpuKind::Integrated
+                              ? GpuClass::Integrated
+                              : GpuClass::Dedicated;
+
+  // Pick the matching-class device with the most VRAM; first wins on ties
+  // (for integrated, VRAM is shared so the tie path is the common one).
+  const GpuCandidate* best = nullptr;
+  for (const auto& dev : devices) {
+    if (dev.cls != wanted) {
+      continue;
+    }
+    if (best == nullptr || dev.totalVram > best->totalVram) {
+      best = &dev;
+    }
+  }
+
+  return best == nullptr ? std::nullopt : nonEmpty(best->name);
+}
+
+std::optional<std::string> resolveMainGpuBackendName(const MainGpuSpec& spec) {
+  using Priority = qvac_lib_inference_addon_cpp::logger::Priority;
+
+  const size_t nDevices = ggml_backend_dev_count();
+  std::vector<GpuCandidate> devices;
+  devices.reserve(nDevices);
+  for (size_t i = 0; i < nDevices; ++i) {
+    ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+    const char* name = ggml_backend_dev_name(dev);
+    size_t freeBytes = 0;
+    size_t totalBytes = 0;
+    ggml_backend_dev_memory(dev, &freeBytes, &totalBytes);
+    GpuClass cls = GpuClass::Other;
+    switch (ggml_backend_dev_type(dev)) {
+      case GGML_BACKEND_DEVICE_TYPE_IGPU:
+        cls = GpuClass::Integrated;
+        break;
+      case GGML_BACKEND_DEVICE_TYPE_GPU:
+        cls = GpuClass::Dedicated;
+        break;
+      default:
+        break;
+    }
+    devices.push_back(
+        {name == nullptr ? std::string() : std::string(name), cls, totalBytes});
+  }
+
+  std::optional<std::string> name = selectMainGpuName(devices, spec);
+  const std::string msg =
+      name.has_value()
+          ? "main-gpu resolved to backend '" + name.value() + "'"
+          : std::string("main-gpu: no matching device found; leaving backend "
+                        "unset");
+  QLOG_IF(Priority::INFO, msg);
+  return name;
 }
 
 BackendDevice resolveBackendForDevice(BackendDevice preferred) {

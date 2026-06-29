@@ -1,14 +1,69 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <stable-diffusion.h>
 
 namespace sd_backend_selection {
 
 enum class BackendDevice : uint8_t { CPU, GPU };
+
+/** How a `main-gpu` config value selects the compute device. */
+enum class MainGpuKind : uint8_t { Index, Integrated, Dedicated };
+
+struct MainGpuSpec {
+  MainGpuKind kind;
+  int index; // valid only when kind == Index
+};
+
+/**
+ * Parse a `main-gpu` config value. Accepts a non-negative integer device index,
+ * "integrated", or "dedicated" (case-insensitive). Returns nullopt for an empty
+ * string (no preference). Throws StatusError on any other value.
+ */
+std::optional<MainGpuSpec> parseMainGpu(const std::string& spec);
+
+/**
+ * Read the "main-gpu" (or "main_gpu") key from a config map. Returns the raw
+ * string, or nullopt when absent. Throws if both spellings are present.
+ */
+std::optional<std::string> mainGpuFromMap(
+    const std::unordered_map<std::string, std::string>& configMap);
+
+/** A ggml device normalized for main-gpu selection. */
+enum class GpuClass : uint8_t { Other, Integrated, Dedicated };
+
+struct GpuCandidate {
+  std::string name;
+  GpuClass cls;
+  size_t totalVram;
+};
+
+/**
+ * Pure main-gpu selection over a normalized device list (no ggml enumeration,
+ * so it is unit-testable). For Index, returns the device at that index if in
+ * range. For Dedicated/Integrated, returns the matching-class device with the
+ * most VRAM (first wins on ties). Returns nullopt when no device matches or the
+ * selected device has an empty name.
+ */
+std::optional<std::string> selectMainGpuName(
+    const std::vector<GpuCandidate>& devices, const MainGpuSpec& spec);
+
+/**
+ * Resolve a `main-gpu` spec to a concrete ggml device backend name (e.g.
+ * "Vulkan1") suitable for `sd_ctx_params_t.backend`. Enumerates ggml devices
+ * into GpuCandidates and defers the pick to selectMainGpuName:
+ *   - Dedicated  -> the GGML_BACKEND_DEVICE_TYPE_GPU device with the most VRAM
+ *   - Integrated -> the GGML_BACKEND_DEVICE_TYPE_IGPU device with the most VRAM
+ *   - Index      -> the device at that index, if in range
+ * Returns nullopt when no matching device exists (caller leaves backend unset
+ * and the default preference applies — never forces an empty device set).
+ */
+std::optional<std::string> resolveMainGpuBackendName(const MainGpuSpec& spec);
 
 /** Validated config.device values shared by SD and ESRGAN upscaler paths. */
 enum class ConfigDevice : uint8_t { Cpu, Gpu };

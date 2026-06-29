@@ -112,6 +112,8 @@ const SdCtxHandlersMap SD_CTX_HANDLERS = {
        c.offloadToCpu = parseBool(v, "offload_to_cpu");
      }},
     {"device", [](SdCtxConfig& c, const std::string& v) { c.device = v; }},
+    {"main-gpu", [](SdCtxConfig& c, const std::string& v) { c.mainGpu = v; }},
+    {"main_gpu", [](SdCtxConfig& c, const std::string& v) { c.mainGpu = v; }},
     {"clip_on_cpu",
      [](SdCtxConfig& c, const std::string& v) {
        c.keepClipOnCpu = parseBool(v, "clip_on_cpu");
