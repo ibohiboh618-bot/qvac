@@ -24,12 +24,18 @@
 # ruleset yet.
 #
 # Fork safety: this runs on plain `pull_request` (checking out PR HEAD is safe
-# because fork PRs receive a read-only token and no secrets). The regeneration
-# step needs the private vcpkg registry + npm registry, so it is SKIPPED for
-# fork PRs; an internal maintainer re-runs it from a trusted branch. No secret
-# is ever exposed to fork-controlled code, and `pull_request_target` is
-# deliberately avoided (it would expose secrets to PR code — the pwn-request
-# pattern).
+# because fork PRs receive a read-only token and no secrets). No secret is ever
+# exposed to fork-controlled code, and `pull_request_target` is deliberately
+# avoided (it would expose secrets to PR code — the pwn-request pattern).
+#
+# Credential-gated enforcement: regeneration needs the private vcpkg registry +
+# npm registry (GH_TOKEN + NPM_TOKEN). NPM_TOKEN currently lives only in a
+# protected environment, so it is unavailable on fork PRs and on same-repo PRs
+# that don't opt into that environment. When the credentials are absent the job
+# SKIPS regeneration and passes (it does not block); it only ENFORCES drift
+# where the credentials are present. Provision NPM_TOKEN as a repo / low-
+# privilege-env secret (or run from the release environment) to turn on
+# enforcement everywhere.
 #
 # Authored with assistance from the qv-notice-generate skill.
 
@@ -114,7 +120,32 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The generator hard-requires GH_TOKEN + NPM_TOKEN. NPM_TOKEN lives only
+      # in a protected environment, so it is absent on fork PRs and on same-repo
+      # PRs that do not opt into that environment. When the credentials are not
+      # present we SKIP regeneration (and the drift check) rather than fail — the
+      # gate only ENFORCES where the private-registry credentials exist (e.g.
+      # once NPM_TOKEN is provisioned as a repo / low-privilege-env secret, or on
+      # a release-environment run). This keeps the check non-blocking on
+      # feature/fork PRs while still catching drift wherever it can run.
+      - name: Check for required credentials
+        id: creds
+        env:
+          # Presence-only check — the values are never printed.
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GH_TOKEN:-}" ] && [ -n "${NPM_TOKEN:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Credentials present — NOTICE drift will be verified."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping NOTICE regeneration — GH_TOKEN/NPM_TOKEN not available in this context. The drift gate only enforces where private-registry credentials are present."
+          fi
+
       - name: Regenerate NOTICE for ${{ matrix.package }}
+        if: steps.creds.outputs.available == 'true'
         env:
           # Secrets are passed through env (never interpolated into run:).
           # The generator reads GH_TOKEN; the repo's GitHub PAT (PAT_TOKEN) is
@@ -130,6 +161,7 @@ jobs:
           node .cursor/skills/qv-notice-generate/scripts/generate-notice.js "$PKG"
 
       - name: Fail on NOTICE drift
+        if: steps.creds.outputs.available == 'true'
         env:
           PKG: ${{ matrix.package }}
         run: |
