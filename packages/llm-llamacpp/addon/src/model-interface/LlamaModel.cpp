@@ -99,7 +99,7 @@ void LlamaModel::tuneConfigMap(
     std::unordered_map<std::string, std::string>& configFilemap,
     const ModelMetaData& metadata, const std::optional<int>& adrenoVersion,
     const FinetuneConfigOverrides& finetuneOverrides, bool isOpenCl,
-    bool isMetal) {
+    bool isMetal, bool isGpu) {
 
   const bool isFinetuning = finetuneOverrides.active;
 
@@ -212,17 +212,94 @@ void LlamaModel::tuneConfigMap(
     }
   }
 
-  // Quantized KV-cache types are fragile on OpenCL: standard q-cache types can
-  // fail later during cache shifts, while TBQ/PQ kernels are not implemented.
-  // Surface a clean error here instead of letting llama.cpp commit KV-cache
-  // tensors to a backend that can't run the required ops.
+  // QVAC-21318: KV-cache type policy. The three blocks below run in a fixed
+  // order that MUST NOT be reordered:
+  //   1. auto-default q8_0 on GPU   — fills in the default when unset
+  //   2. Adreno 800+ Vulkan reject  — rejects quantized KV that would crash
+  //   3. OpenCL / Metal guard       — validates the (possibly defaulted) type
+  // The finetuning f32 KV override above runs first; the auto-default is gated
+  // by !isFinetuning so it never clobbers it.
+  //
+  // Shared inputs, computed once (flash-attn is already resolved above):
+  constexpr int kAdrenoKvQuantThreshold = 800;
+  const auto flashAttnIt = configFilemap.find("flash-attn");
+  const bool flashAttnOn =
+      flashAttnIt != configFilemap.end() && flashAttnIt->second == "on";
+  // Adreno 800+ on Vulkan: coopmat1 Flash Attention is unstable with quantized
+  // KV (no fabric scalar-FA fix on this branch). Adreno selects OpenCL by
+  // default, so this is normally unreachable; kept as a defensive guard against
+  // forced-Vulkan paths.
+  const bool isAdrenoVulkan =
+      adrenoVersion.has_value() &&
+      adrenoVersion.value() >= kAdrenoKvQuantThreshold && !isOpenCl && !isMetal;
+  auto isQuantizedKvType = [](const std::string& v) {
+    return v == "q4_0" || v == "q4_1" || v == "q5_0" || v == "q5_1" ||
+           v == "q8_0" || v == "iq4_nl" || v == "tbq3_0" || v == "tbq4_0" ||
+           v == "pq3_0" || v == "pq4_0";
+  };
+
+  // 1. Default the KV-cache to q8_0 on Metal/Vulkan GPU backends when the
+  // caller hasn't picked a cache type. q8_0 is quality-neutral vs f16 on GPU
+  // and cuts KV-cache memory ~47%. CPU keeps the f16 default — ARM q8_0 carries
+  // a measured quality and decode-throughput cost. OpenCL (Adreno) is also
+  // EXCLUDED: q8_0 attention works there, but quantized KV-cache *shifts*
+  // (sliding context / context management) abort natively in
+  // llama_kv_cache::update on Adreno, so f16 stays the safe default (q8_0
+  // remains available as an explicit opt-in for shift-free workloads). Also
+  // skipped for finetuning (manages its own KV types), when flash attention is
+  // off (V-cache quantization requires it), and on Adreno+Vulkan (see above).
+  if (!isFinetuning && isGpu && !isOpenCl && flashAttnOn && !isAdrenoVulkan &&
+      notUserSet("cache-type-k", "cache_type_k") &&
+      notUserSet("cache-type-v", "cache_type_v")) {
+    configFilemap["cache-type-k"] = "q8_0";
+    configFilemap["cache-type-v"] = "q8_0";
+    QLOG_IF(
+        Priority::INFO,
+        "[LlamaModel] Defaulting KV-cache to q8_0 on GPU backend "
+        "(set cache-type-k/v to override)\n");
+  }
+
+  // 2. Adreno 800+ Vulkan: quantized KV-cache with Flash Attention crashes (the
+  // FA CM2 shader's dequant path hits an Adreno driver bug). Guard here so
+  // callers get a clean error instead of a native abort.
+  if (isAdrenoVulkan && flashAttnOn) {
+    auto checkAdrenoKv = [&](const char* hyphenKey,
+                             const char* underscoreKey,
+                             const char* side) {
+      auto it = configFilemap.find(hyphenKey);
+      if (it == configFilemap.end())
+        it = configFilemap.find(underscoreKey);
+      if (it == configFilemap.end())
+        return;
+      if (!isQuantizedKvType(it->second))
+        return;
+      throw qvac_errors::StatusError(
+          qvac_errors::general_error::InvalidArgument,
+          string_format(
+              "[LlamaModel] cache-type-%s=%s: quantized KV-cache with "
+              "Flash Attention is not supported on Adreno 800+ (Vulkan). "
+              "Use flash-attn=off, set cache-type-%s to f16/f32/bf16, or "
+              "disable GPU acceleration.\n",
+              side,
+              it->second.c_str(),
+              side));
+    };
+    checkAdrenoKv("cache-type-k", "cache_type_k", "k");
+    checkAdrenoKv("cache-type-v", "cache_type_v", "v");
+  }
+
+  // 3. OpenCL: the fabric FA kernels support only q4_0 and q8_0 among quantized
+  // KV types. Reject by default — anything outside the known-safe set
+  // {f32,f16,bf16,q4_0,q8_0} fails cleanly here instead of crashing at
+  // inference (covers q4_1/q5_0/q5_1/iq4_nl, TBQ/PQ, and any future/unknown
+  // type). Metal: standard quant types are supported; only TBQ/PQ is rejected.
   if (isOpenCl || isMetal) {
     auto isTurboQuantKvType = [](const std::string& v) {
       return v == "tbq3_0" || v == "tbq4_0" || v == "pq3_0" || v == "pq4_0";
     };
-    auto isQuantizedKvType = [&](const std::string& v) {
-      return isTurboQuantKvType(v) || v == "q4_0" || v == "q4_1" ||
-             v == "q5_0" || v == "q5_1" || v == "q8_0" || v == "iq4_nl";
+    auto isOpenClSafeKvType = [](const std::string& v) {
+      return v == "f32" || v == "f16" || v == "bf16" || v == "q4_0" ||
+             v == "q8_0";
     };
     auto checkCacheType = [&](const char* hyphenKey,
                               const char* underscoreKey,
@@ -233,7 +310,7 @@ void LlamaModel::tuneConfigMap(
       if (it == configFilemap.end())
         return;
       if (isOpenCl) {
-        if (!isQuantizedKvType(it->second))
+        if (isOpenClSafeKvType(it->second))
           return;
       } else if (!isTurboQuantKvType(it->second)) {
         return;
@@ -243,7 +320,7 @@ void LlamaModel::tuneConfigMap(
                                  ? "TurboQuant/PolarQuant"
                                  : "quantized";
       const char* alternatives =
-          isOpenCl ? "f32/f16/bf16"
+          isOpenCl ? "f32/f16/bf16/q4_0/q8_0"
                    : "f32/f16/bf16/q4_0/q4_1/q5_0/q5_1/q8_0/iq4_nl";
       throw qvac_errors::StatusError(
           qvac_errors::general_error::InvalidArgument,
@@ -1153,6 +1230,7 @@ void LlamaModel::commonParamsParse(
 
   bool isOpenCl = false;
   bool isMetal = false;
+  bool isGpu = false;
   {
     using namespace backend_selection;
     const BackendType preferredBackend =
@@ -1217,11 +1295,12 @@ void LlamaModel::commonParamsParse(
     }
     configFilemap.erase("device");
 
-    isOpenCl = chosenBackend.first == BackendType::GPU &&
-               chosenBackend.second.find("opencl") != std::string::npos;
-    isMetal = chosenBackend.first == BackendType::GPU &&
-              (chosenBackend.second.find("metal") != std::string::npos ||
-               chosenBackend.second.rfind("mtl", 0) == 0);
+    isGpu = chosenBackend.first == BackendType::GPU;
+    isOpenCl =
+        isGpu && chosenBackend.second.find("opencl") != std::string::npos;
+    isMetal =
+        isGpu && (chosenBackend.second.find("metal") != std::string::npos ||
+                  chosenBackend.second.rfind("mtl", 0) == 0);
   }
 
   tuneConfigMap(
@@ -1230,7 +1309,8 @@ void LlamaModel::commonParamsParse(
       outAdrenoVersion,
       pendingFinetuneOverrides_,
       isOpenCl,
-      isMetal);
+      isMetal,
+      isGpu);
 
   // Handle both reverse-prompt variants
   for (const std::string& key : {"reverse-prompt", "reverse_prompt"}) {

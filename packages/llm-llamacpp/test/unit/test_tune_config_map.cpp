@@ -235,9 +235,27 @@ TEST_F(TuneConfigMapTest, NotOpenCl_NonBitnet_FlashAttnDefaultsOn) {
   EXPECT_EQ(configFilemap_["flash-attn"], "on");
 }
 
-TEST_F(TuneConfigMapTest, OpenCl_RejectsStandardQuantizedKCache) {
+// ---- Tier 2: OpenCL allows q4_0/q8_0 (fabric FA kernels), rejects the rest --
+
+TEST_F(TuneConfigMapTest, OpenCl_AllowsQ8_0KCache) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
+      configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_AllowsQ4_0VCacheUnderscore) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache_type_v"] = "q4_0";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
+      configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_RejectsUnsupportedQuantizedKCache) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q5_0";
 
   EXPECT_THROW(
       LlamaModel::tuneConfigMap(
@@ -245,9 +263,31 @@ TEST_F(TuneConfigMapTest, OpenCl_RejectsStandardQuantizedKCache) {
       qvac_errors::StatusError);
 }
 
-TEST_F(TuneConfigMapTest, OpenCl_RejectsStandardQuantizedVCacheUnderscore) {
+TEST_F(TuneConfigMapTest, OpenCl_RejectsUnsupportedQuantizedVCacheUnderscore) {
   MockModelMetaData meta(false, "llama");
-  configFilemap_["cache_type_v"] = "q4_0";
+  configFilemap_["cache_type_v"] = "iq4_nl";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, OpenCl_RejectsTurboQuantKCache) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "tbq4_0";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true),
+      qvac_errors::StatusError);
+}
+
+// Reject-by-default: a type outside the known-safe OpenCL set
+// {f32,f16,bf16,q4_0,q8_0} must fail cleanly rather than fall through.
+TEST_F(TuneConfigMapTest, OpenCl_RejectsUnlistedKvType) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q6_K";
 
   EXPECT_THROW(
       LlamaModel::tuneConfigMap(
@@ -667,6 +707,255 @@ TEST_F(TuneConfigMapTest, NotFinetuning_CacheTypesUnchanged) {
   MockModelMetaData meta(false, "gemma3");
 
   LlamaModel::tuneConfigMap(configFilemap_, meta, std::nullopt);
+
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+// ---- Tier 1: Adreno 800+ Vulkan rejects quantized KV with flash attention
+// ----
+
+TEST_F(TuneConfigMapTest, AdrenoVulkan_QuantizedKCache_FlashAttnOn_Rejected) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+  // Set flash-attn explicitly so the test does not depend on the FA-default
+  // ordering elsewhere in tuneConfigMap().
+  configFilemap_["flash-attn"] = "on";
+
+  // isOpenCl=false, isMetal=false, isGpu=true, adreno=830 -> Vulkan on Adreno.
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          830,
+          FtOverrides{},
+          /*isOpenCl=*/false,
+          /*isMetal=*/false,
+          /*isGpu=*/true),
+      qvac_errors::StatusError);
+}
+
+TEST_F(
+    TuneConfigMapTest,
+    AdrenoVulkan_QuantizedKCacheUnderscore_FlashAttnOn_Rejected) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache_type_k"] = "q8_0";
+  configFilemap_["flash-attn"] = "on";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          830,
+          FtOverrides{},
+          /*isOpenCl=*/false,
+          /*isMetal=*/false,
+          /*isGpu=*/true),
+      qvac_errors::StatusError);
+}
+
+TEST_F(TuneConfigMapTest, AdrenoVulkan_QuantizedVCache_FlashAttnOff_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-v"] = "q8_0";
+  configFilemap_["flash-attn"] = "off";
+
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      830,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true));
+}
+
+TEST_F(TuneConfigMapTest, AdrenoOpenCl_QuantizedKCache_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+
+  // Adreno on OpenCL routes to the working OpenCL FA path -> allowed (Tier 2).
+  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      830,
+      FtOverrides{},
+      /*isOpenCl=*/true,
+      /*isMetal=*/false,
+      /*isGpu=*/true));
+}
+
+// ---- Auto-default q8_0 KV on GPU backends (QVAC-21318) ----
+
+TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_DefaultsQ8_0) {
+  MockModelMetaData meta(false, "llama");
+
+  // Plain (non-Adreno) GPU: isGpu=true, not OpenCL/Metal, no adreno version.
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  ASSERT_EQ(configFilemap_.count("cache-type-k"), 1);
+  EXPECT_EQ(configFilemap_["cache-type-k"], "q8_0");
+  ASSERT_EQ(configFilemap_.count("cache-type-v"), 1);
+  EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_OpenClGpu_StaysF16) {
+  MockModelMetaData meta(false, "llama");
+
+  // OpenCL is excluded from the q8_0 auto-default: quantized KV-cache shifts
+  // abort on Adreno, so f16 stays the default (q8_0 only via explicit opt-in).
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/true,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_MetalGpu_DefaultsQ8_0) {
+  MockModelMetaData meta(false, "llama");
+
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/true,
+      /*isGpu=*/true);
+
+  EXPECT_EQ(configFilemap_["cache-type-k"], "q8_0");
+  EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_Cpu_StaysF16) {
+  MockModelMetaData meta(false, "llama");
+
+  // isGpu=false (CPU) -> no auto-default; KV types left to llama.cpp (f16).
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/false);
+
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_UserSetKCache_NotOverridden) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "f16";
+
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  // User set K -> the default does not apply to either side.
+  EXPECT_EQ(configFilemap_["cache-type-k"], "f16");
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_UserSetVCache_KNotDefaulted) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-v"] = "f16";
+
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  // User set V -> the all-or-nothing default does not independently set K.
+  EXPECT_EQ(configFilemap_["cache-type-v"], "f16");
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_FlashAttnOff_NotApplied) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["flash-attn"] = "off";
+
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_Finetuning_NotApplied) {
+  MockModelMetaData meta(false, "gemma3");
+
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{.active = true},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_AdrenoVulkan_NotApplied) {
+  MockModelMetaData meta(false, "llama");
+
+  // Defensive: Adreno 800+ on Vulkan must not be auto-defaulted to quant KV
+  // (no fabric scalar-FA fix on this branch).
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      830,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
+  EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
+}
+
+TEST_F(TuneConfigMapTest, AutoDefault_AdrenoOpenCl_StaysF16) {
+  MockModelMetaData meta(false, "llama");
+
+  // Adreno (OpenCL) keeps the f16 default — quantized KV-cache shifts abort
+  // there. q8_0 is still available as an explicit opt-in (Tier 2 guard).
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      830,
+      FtOverrides{},
+      /*isOpenCl=*/true,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
 
   EXPECT_EQ(configFilemap_.count("cache-type-k"), 0);
   EXPECT_EQ(configFilemap_.count("cache-type-v"), 0);
