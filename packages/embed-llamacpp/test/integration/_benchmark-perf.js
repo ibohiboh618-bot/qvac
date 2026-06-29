@@ -154,6 +154,14 @@ function buildConfig (device, batchSize, flashAttn, modelDir) {
   const config = {
     gpu_layers: device === 'cpu' ? '0' : '999',
     batch_size: String(batchSize),
+    // Cap the context to the batch (the addon further caps to the trained ctx).
+    // Without this, a model loads at its full trained context regardless of batch:
+    // Qwen3-embedding-0.6B's trained context is 32768, which reserves a ~3GB
+    // context/compute buffer and OOMs iOS, while embeddingGemma's 2048 fits. All
+    // mobile batches are <= both models' trained contexts, so ctx_size = batch
+    // keeps every model's buffer to tens-to-hundreds of MB. Mirrors the desktop
+    // sweep's min(batch, trained-ctx) rule.
+    ctx_size: String(batchSize),
     flash_attn: flashAttn,
     verbosity: '0',
     openclCacheDir: modelDir
