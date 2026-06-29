@@ -27,16 +27,22 @@
 // case per quant (embeddinggemma-300M-Q8_0 vs -300m-Q4_0; Qwen ...-f16 lowercase),
 // so the filename is pinned here rather than reconstructed: a guessed name 404s,
 // and a 404 is not retried. Verified against each repo's HF file listing.
-// MOBILE matrix is a SUBSET of the desktop manifest: the Qwen3-embedding-4B
-// (4.5-8GB) does not fit Device Farm phones (OOM hard-crash, confirmed on-device
-// run 27878011366), so it is desktop-only, mirroring the LLM benchmark which
-// dropped Qwen3-4B from mobile for the same reason. The desktop sweep
-// (benchmarks/performance) still covers all 3 models via the manifest.
+// MOBILE matrix is embeddingGemma-only, a strict SUBSET of the desktop manifest's
+// 3 models. Both Qwen3-embedding models are desktop-only because they OOM Device
+// Farm phones:
+//   - Qwen3-embedding-4B (4.5-8GB): hard OOM crash, confirmed on-device run 27878011366.
+//   - Qwen3-embedding-0.6B: iOS jetsam (OOM) regardless of quant or batch size. The
+//     addon does not free native model memory between load cycles (see the shard-key
+//     note above), so a shard's cpu+gpu loads of the 0.6B model accumulate past the
+//     iOS memory ceiling. Confirmed by isolation: an embeddingGemma-only matrix passes
+//     every iOS shard (run 28344256143), while dropping F16 (run 28338516813) and
+//     capping batch to 256/512 (run 28341211676) each still crashed iOS — so neither
+//     quant nor batch is the lever, the 0.6B model itself is. embeddingGemma (300m)
+//     stays under the ceiling, mirroring the LLM benchmark dropping models that don't fit.
+// The desktop sweep (benchmarks/performance) still covers all 3 models via the manifest.
 const CELLS = [
   { model: 'embeddingGemma', quant: 'Q8_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300M-Q8_0.gguf' },
-  { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300m-Q4_0.gguf' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'Q8_0', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-Q8_0.gguf' },
-  { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-f16.gguf' }
+  { model: 'embeddingGemma', quant: 'Q4_0', repo: 'unsloth/embeddinggemma-300m-GGUF', revision: 'main', file: 'embeddinggemma-300m-Q4_0.gguf' }
 ]
 
 // Sweep axes + input modes for the mobile sweep. The desktop copy of these
