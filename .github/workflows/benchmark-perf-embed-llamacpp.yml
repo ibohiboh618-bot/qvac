@@ -3,15 +3,17 @@ name: Benchmark Performance — Embed Parameter Sweep
 # Manually-triggered embed performance benchmark (no sweep inputs — the matrix is
 # in the scripts). Embedding is prefill-only (a single forward pass, no decode),
 # so the headline metric is prefill throughput (ppTPS) alongside per-embedding
-# latency, embeddings/sec, and cosine-similarity vs an in-run baseline.
+# latency.
 #
 # Desktop: bare benchmarks/performance/embed-parameter-sweep.js on the self-hosted
 #          Linux GPU runner (downloads the prebuild artifacts the integration
 #          tests consume rather than compiling on the runner).
-# Mobile:  added in a follow-up once the sharded mobile scaffolding lands.
+# Mobile:  sharded on-device benchmark on Device Farm (Android + iOS), one shard
+#          per (batchSize, flashAttn) pair, generated from the matrix.
 #
 # To change what runs, edit:
-#   models.manifest.json (models) + embed-parameter-sweep.config.js (sweep dims)
+#   Desktop: models.manifest.json (models) + embed-parameter-sweep.config.js (sweep dims)
+#   Mobile:  test/integration/_benchmark-matrix.js (then regenerate shards)
 
 on:
   workflow_dispatch:
