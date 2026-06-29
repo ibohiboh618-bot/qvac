@@ -191,6 +191,24 @@ function recordCrashedPlaceholder (label, device, model) {
   recordPerformance(label, { deviceId: device, status: 'crashed', model })
 }
 
+// MEMORY INSTRUMENTATION (temporary, for the iOS OOM investigation): log process
+// RSS + system used/free at each step. Across a session's configs this trace
+// distinguishes per-config peak (rss/used spikes during a config then recovers
+// after unload) from cumulative growth (used rises monotonically across configs
+// despite the unload calls). Snapshots land in the on-device log via t.comment,
+// so even a session that ends in a jetsam kill leaves the trace up to the crash.
+function memMB (n) { return Number.isFinite(n) ? (n / 1048576).toFixed(1) : '?' }
+function memSnapshot (t, tag) {
+  try {
+    const rss = os.memoryUsage().rss
+    const free = os.freemem()
+    const total = os.totalmem()
+    t.comment(`[mem] ${tag} | rss=${memMB(rss)}MB sysUsed=${memMB(total - free)}MB sysFree=${memMB(free)}MB`)
+  } catch (err) {
+    t.comment(`[mem] ${tag} | unavailable: ${err && err.message ? err.message : err}`)
+  }
+}
+
 // Registers the benchmark test for one (model x quant x batchSize x flashAttn),
 // sweeping device x inputMode internally. One Device Farm session per call.
 // batchSize and flashAttn are fixed per shard (the reload-heavy axes live in the
@@ -225,7 +243,9 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
       const baselineByInputMode = new Map()
 
       for (const device of DEVICES) {
+        const mtag = `${spec.id} q=${quant} ${device} bs=${batchSize} fa=${flashAttn}`
         let addon = null
+        memSnapshot(t, `${mtag} PRE-LOAD`)
         try {
           addon = new GGMLBert({
             files: { model: [modelPath] },
@@ -234,6 +254,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
             opts: { stats: true }
           })
           await addon.load()
+          memSnapshot(t, `${mtag} POST-LOAD`)
         } catch (loadErr) {
           t.comment(`[${spec.id} q=${quant}] [${device}] [bs=${batchSize}] [fa=${flashAttn}] load failed (reported as Crashed): ${loadErr && loadErr.message ? loadErr.message : loadErr}`)
           await (addon && addon.unload && addon.unload().catch(() => {}))
@@ -252,6 +273,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
           } catch (warmErr) {
             t.comment(`[${spec.id} q=${quant}] [${device}] warmup failed: ${warmErr && warmErr.message ? warmErr.message : warmErr}`)
           }
+          memSnapshot(t, `${mtag} POST-WARMUP`)
           for (const inputMode of INPUT_MODES) {
             const label = labelFor(spec, device, batchSize, flashAttn, inputMode)
             try {
@@ -271,6 +293,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
                 if (ppTps != null) ppTpsValues.push(ppTps)
                 if (latencyMs != null) latencyValues.push(latencyMs)
               }
+              memSnapshot(t, `${mtag} input=${inputMode} POST-RUN`)
 
               // Cosine baseline per input mode is the first successful config's
               // first-rep embeddings; reps of the same config are numerically
@@ -305,6 +328,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
           }
         } finally {
           await addon.unload().catch(() => {})
+          memSnapshot(t, `${mtag} POST-UNLOAD`)
         }
       }
     } finally {
