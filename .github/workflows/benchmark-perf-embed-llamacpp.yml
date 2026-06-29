@@ -419,6 +419,14 @@ jobs:
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
           ADDON_VERSION: ${{ steps.addon_ver.outputs.version }}
         run: |
+          echo "::group::DEBUG combined-reports state"
+          pwd
+          ls -la combined-reports 2>&1 || echo "(combined-reports dir missing)"
+          echo "--- all files under combined-reports ---"
+          find combined-reports -type f 2>&1 | head -60
+          echo "--- json files matched by the guard ---"
+          find combined-reports -name "*.json" -type f 2>&1
+          echo "::endgroup::"
           if ! find combined-reports -name "*.json" -type f 2>/dev/null | grep -q .; then
             echo "::error::No benchmark reports found for run $ARTIFACT_RUN_ID. Nothing to render."
             exit 1
