@@ -147,8 +147,12 @@ jobs:
 
   publish-gpr:
     needs: [build, publish-logic]
+    # TEMP (QVAC-21544): always() + explicit success checks. Keeps the
+    # green-build safety gate (publishes only when build AND publish-logic
+    # succeeded) while bypassing the implicit reusable-workflow needs-skip quirk
+    # that suppressed this job on the tmp-* GPR build.
     if: >-
-      needs.publish-logic.outputs.publish_main == 'true' || needs.publish-logic.outputs.publish_feature == 'true' || needs.publish-logic.outputs.publish_tmp == 'true'
+      always() && needs.build.result == 'success' && needs.publish-logic.result == 'success' && ( needs.publish-logic.outputs.publish_main == 'true' || needs.publish-logic.outputs.publish_feature == 'true' || needs.publish-logic.outputs.publish_tmp == 'true' )
     continue-on-error: true
     outputs:
       published_version: ${{ steps.publish.outputs.npm_published_version }}
