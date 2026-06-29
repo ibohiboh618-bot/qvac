@@ -13,6 +13,7 @@
       "runBitnetTest",
       "runCacheStateMachineTest",
       "runConfigParametersTest",
+      "runKvCacheTypeDefaultsTest",
       "runToolsCompactTest"
     ],
     "lightB": [
@@ -37,7 +38,8 @@
     ],
     "funcShardB": [
       "runToolsCompactTest",
-      "runSlidingContextTest"
+      "runSlidingContextTest",
+      "runKvCacheTypeDefaultsTest"
     ],
     "funcShardC": [
       "runToolCallingTest",
