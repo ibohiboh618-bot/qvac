@@ -241,16 +241,26 @@ TEST_F(TuneConfigMapTest, OpenCl_AllowsQ8_0KCache) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
 
-  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
-      configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          std::nullopt,
+          FtOverrides{},
+          /*isOpenCl=*/true));
 }
 
 TEST_F(TuneConfigMapTest, OpenCl_AllowsQ4_0VCacheUnderscore) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache_type_v"] = "q4_0";
 
-  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
-      configFilemap_, meta, std::nullopt, FtOverrides{}, /*isOpenCl=*/true));
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          std::nullopt,
+          FtOverrides{},
+          /*isOpenCl=*/true));
 }
 
 TEST_F(TuneConfigMapTest, OpenCl_RejectsUnsupportedQuantizedKCache) {
@@ -759,14 +769,15 @@ TEST_F(TuneConfigMapTest, AdrenoVulkan_QuantizedVCache_FlashAttnOff_Allowed) {
   configFilemap_["cache-type-v"] = "q8_0";
   configFilemap_["flash-attn"] = "off";
 
-  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
-      configFilemap_,
-      meta,
-      830,
-      FtOverrides{},
-      /*isOpenCl=*/false,
-      /*isMetal=*/false,
-      /*isGpu=*/true));
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          830,
+          FtOverrides{},
+          /*isOpenCl=*/false,
+          /*isMetal=*/false,
+          /*isGpu=*/true));
 }
 
 TEST_F(TuneConfigMapTest, AdrenoOpenCl_QuantizedKCache_Allowed) {
@@ -774,14 +785,15 @@ TEST_F(TuneConfigMapTest, AdrenoOpenCl_QuantizedKCache_Allowed) {
   configFilemap_["cache-type-k"] = "q8_0";
 
   // Adreno on OpenCL routes to the working OpenCL FA path -> allowed (Tier 2).
-  EXPECT_NO_THROW(LlamaModel::tuneConfigMap(
-      configFilemap_,
-      meta,
-      830,
-      FtOverrides{},
-      /*isOpenCl=*/true,
-      /*isMetal=*/false,
-      /*isGpu=*/true));
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          830,
+          FtOverrides{},
+          /*isOpenCl=*/true,
+          /*isMetal=*/false,
+          /*isGpu=*/true));
 }
 
 // ---- Auto-default q8_0 KV on GPU backends (QVAC-21318) ----
