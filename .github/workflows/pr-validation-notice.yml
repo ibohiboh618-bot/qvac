@@ -15,13 +15,20 @@
 # drift is caught on PR. Generator output is deterministic and sorted, so a
 # clean tree means an empty diff.
 #
-# SCOPE (PROVISIONAL): the matrix below lists the Tier-1 shipping packages —
-# the C1 ("ships to end users") and C4 ("signs/publishes releases") rows. The
-# authoritative list is docs/devops/TIER-1-SCOPE.md (QVAC-19052), which is
-# still DRAFT pending the "shipped" definition sign-off (Olu). Reconcile this
-# matrix with that doc before promoting this check to REQUIRED in branch
-# protection. Until then keep it advisory: do NOT add notice-drift-gate to the
-# ruleset yet.
+# Scoped to changed packages: the `select` job resolves which in-scope packages
+# a PR actually touches (via .github/scripts/notice-affected-packages.mjs) and
+# the drift matrix only runs over those. A change to the generator, this
+# workflow, the selector script, or the model registry forces a FULL re-check.
+# This keeps the gate relevant (it flags drift a PR introduces, not pre-existing
+# repo-wide drift) and fast. A manual run (workflow_dispatch) always checks the
+# full set.
+#
+# SCOPE (PROVISIONAL): the in-scope Tier-1 shipping list (C1 "ships to end
+# users" / C4 "signs/publishes releases") lives in
+# .github/scripts/notice-affected-packages.mjs. The authoritative list is
+# docs/devops/TIER-1-SCOPE.md (QVAC-19052), still DRAFT pending the "shipped"
+# definition sign-off. Reconcile the two before promoting notice-drift-gate to
+# a REQUIRED check; until then keep it advisory (do NOT add it to the ruleset).
 #
 # Fork safety: this runs on plain `pull_request` (checking out PR HEAD is safe
 # because fork PRs receive a read-only token and no secrets). No secret is ever
@@ -32,8 +39,8 @@
 # GitHub API used by the C++/vcpkg scan and @tetherto GitHub Packages. It does
 # NOT use NPM_TOKEN — the @qvac deps are public on npmjs and install
 # anonymously. PAT_TOKEN is a repo secret, so this gate ENFORCES on same-repo
-# PRs. On fork PRs (no secrets) the job skips regeneration and passes, so it
-# never blocks external contributors.
+# PRs. On fork PRs (no secrets) regeneration is skipped and the gate passes, so
+# it never blocks external contributors.
 #
 # Authored with assistance from the qv-notice-generate skill.
 
@@ -55,9 +62,10 @@ on:
       - "packages/**/requirements*.txt"
       - "packages/**/pyproject.toml"
       - "packages/registry-server/data/models.prod.json"
-      # The committed NOTICE files, the generator, and this workflow:
+      # The committed NOTICE files, the generator, the selector, and this workflow:
       - "packages/**/NOTICE"
       - ".cursor/skills/qv-notice-generate/**"
+      - ".github/scripts/notice-affected-packages.mjs"
       - ".github/workflows/pr-validation-notice.yml"
 
 permissions:
@@ -68,42 +76,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  notice-drift:
-    name: notice-drift
+  # Resolve the in-scope packages affected by this PR. Skipped on fork PRs (no
+  # secrets); when skipped, the downstream jobs are skipped too and the gate
+  # passes, so external contributors are never blocked.
+  select:
+    name: select-packages
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Skip on fork PRs: regeneration needs GH_TOKEN (private vcpkg registry +
-    # GitHub API), which fork PRs never receive. Same-repo PRs and manual runs
-    # proceed normally.
+    timeout-minutes: 5
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      packages: ${{ steps.pick.outputs.packages }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
+        with:
+          node-version: "20"
+
+      - name: Resolve affected in-scope packages
+        id: pick
+        env:
+          # github.token (read-only) is enough to list this repo's PR files.
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/notice-affected-packages.mjs
+
+  notice-drift:
+    name: notice-drift
+    needs: select
+    # Only run when the selector resolved at least one in-scope package.
+    if: needs.select.outputs.packages != '' && needs.select.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # PROVISIONAL Tier-1 shipping scope — reconcile with
-        # docs/devops/TIER-1-SCOPE.md (QVAC-19052) before making this required.
-        package:
-          - sdk
-          - bare-sdk
-          - cli
-          - rag
-          - ai-sdk-provider
-          - registry-server/client
-          - llm-llamacpp
-          - embed-llamacpp
-          - transcription-whispercpp
-          - transcription-parakeet
-          - tts-onnx
-          - tts-ggml
-          - ocr-onnx
-          - ocr-ggml
-          - diffusion-cpp
-          - translation-nmtcpp
-          - classification-ggml
-          - vla-ggml
-          - bci-whispercpp
-          - decoder-audio
+        package: ${{ fromJSON(needs.select.outputs.packages) }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
@@ -186,23 +203,25 @@ jobs:
 
   # Single, stable status check that aggregates the matrix. Make THIS the
   # required check once docs/devops/TIER-1-SCOPE.md is signed off — its name
-  # stays constant regardless of how the matrix changes. Passes when the matrix
-  # was skipped (fork PR) so it never blocks external contributors.
+  # stays constant regardless of how the matrix changes. Passes when no in-scope
+  # package changed (matrix skipped) or on fork PRs (select skipped), so it
+  # never blocks unrelated or external contributions.
   notice-drift-gate:
     name: notice-drift-gate
-    needs: notice-drift
+    needs: [select, notice-drift]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check matrix result
         env:
-          RESULT: ${{ needs.notice-drift.result }}
+          SELECT: ${{ needs.select.result }}
+          DRIFT: ${{ needs.notice-drift.result }}
         run: |
           set -euo pipefail
-          echo "notice-drift result: $RESULT"
-          if [ "$RESULT" = "failure" ]; then
+          echo "select=$SELECT notice-drift=$DRIFT"
+          if [ "$DRIFT" = "failure" ]; then
             echo "::error::One or more NOTICE files are out of date. See the notice-drift jobs above."
             exit 1
           fi
-          echo "No NOTICE drift detected (matrix succeeded or was skipped for a fork PR)."
+          echo "No NOTICE drift detected (no in-scope package changed, or all regenerations matched, or skipped on a fork PR)."
