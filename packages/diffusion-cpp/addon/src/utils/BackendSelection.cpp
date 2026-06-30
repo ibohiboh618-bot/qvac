@@ -160,8 +160,8 @@ std::optional<MainGpuSpec> parseMainGpu(const std::string& spec) {
           spec + "'");
 }
 
-std::optional<std::string> mainGpuFromMap(
-    const std::unordered_map<std::string, std::string>& configMap) {
+std::optional<std::string>
+mainGpuFromMap(const std::unordered_map<std::string, std::string>& configMap) {
   const auto hyphen = configMap.find("main-gpu");
   const auto underscore = configMap.find("main_gpu");
   if (hyphen != configMap.end() && underscore != configMap.end()) {
@@ -236,14 +236,14 @@ std::optional<std::string> resolveMainGpuBackendName(const MainGpuSpec& spec) {
     ggml_backend_dev_memory(dev, &freeBytes, &totalBytes);
     GpuClass cls = GpuClass::Other;
     switch (ggml_backend_dev_type(dev)) {
-      case GGML_BACKEND_DEVICE_TYPE_IGPU:
-        cls = GpuClass::Integrated;
-        break;
-      case GGML_BACKEND_DEVICE_TYPE_GPU:
-        cls = GpuClass::Dedicated;
-        break;
-      default:
-        break;
+    case GGML_BACKEND_DEVICE_TYPE_IGPU:
+      cls = GpuClass::Integrated;
+      break;
+    case GGML_BACKEND_DEVICE_TYPE_GPU:
+      cls = GpuClass::Dedicated;
+      break;
+    default:
+      break;
     }
     devices.push_back(
         {name == nullptr ? std::string() : std::string(name), cls, totalBytes});
@@ -253,8 +253,9 @@ std::optional<std::string> resolveMainGpuBackendName(const MainGpuSpec& spec) {
   const std::string msg =
       name.has_value()
           ? "main-gpu resolved to backend '" + name.value() + "'"
-          : std::string("main-gpu: no matching device found; leaving backend "
-                        "unset");
+          : std::string(
+                "main-gpu: no matching device found; leaving backend "
+                "unset");
   QLOG_IF(Priority::INFO, msg);
   return name;
 }

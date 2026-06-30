@@ -32,8 +32,8 @@ std::optional<MainGpuSpec> parseMainGpu(const std::string& spec);
  * Read the "main-gpu" (or "main_gpu") key from a config map. Returns the raw
  * string, or nullopt when absent. Throws if both spellings are present.
  */
-std::optional<std::string> mainGpuFromMap(
-    const std::unordered_map<std::string, std::string>& configMap);
+std::optional<std::string>
+mainGpuFromMap(const std::unordered_map<std::string, std::string>& configMap);
 
 /** A ggml device normalized for main-gpu selection. */
 enum class GpuClass : uint8_t { Other, Integrated, Dedicated };

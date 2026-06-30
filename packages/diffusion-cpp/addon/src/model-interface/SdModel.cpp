@@ -84,8 +84,8 @@ bool sdAbortCallback(void* /*data*/) {
 }
 
 #ifndef QVAC_SD_HAS_CTX_BACKEND
-std::optional<std::string> vulkanDeviceIndexFromBackendName(
-    const std::string& backendName) {
+std::optional<std::string>
+vulkanDeviceIndexFromBackendName(const std::string& backendName) {
   constexpr std::string_view kVulkanPrefix = "Vulkan";
   if (backendName.rfind(kVulkanPrefix, 0) != 0 ||
       backendName.size() == kVulkanPrefix.size()) {
@@ -1032,9 +1032,8 @@ SdModel::processVideo(const GenerationJob& job, const picojson::value& parsed) {
 #ifdef QVAC_SD_HAS_AUDIO_VIDEO_API
   sd_image_t* rawFrames = nullptr;
   sd_audio_t* rawAudio = nullptr;
-  const bool generated =
-      generate_video(sdCtx_.get(), &vidParams, &rawFrames, &numFramesOut,
-                     &rawAudio);
+  const bool generated = generate_video(
+      sdCtx_.get(), &vidParams, &rawFrames, &numFramesOut, &rawAudio);
   qvac_lib_inference_addon_sd::SdVideoFrames frames(rawFrames, numFramesOut);
   std::unique_ptr<sd_audio_t, decltype(&free_sd_audio)> audio(
       rawAudio, free_sd_audio);

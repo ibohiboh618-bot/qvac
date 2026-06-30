@@ -4,8 +4,8 @@
 
 #include <inference-addon-cpp/Errors.hpp>
 
-#include "utils/LoggingMacros.hpp"
 #include "utils/BackendSelection.hpp"
+#include "utils/LoggingMacros.hpp"
 
 namespace qvac_lib_inference_addon_sd {
 
