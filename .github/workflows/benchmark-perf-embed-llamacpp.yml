@@ -51,6 +51,10 @@ on:
         description: "Previous run ID to summarize (the number in that run's URL). Only used when 'summarize_only' is checked."
         required: false
         type: string
+      compare_run_id:
+        description: "Optional baseline run ID to compare against (the number in that run's URL). Adds Δ ppTPS / latency columns vs that run."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -293,11 +297,11 @@ jobs:
           if-no-files-found: ignore
 
   # Mobile is sharded one batch per (batchSize, flashAttn) pair, each batch its
-  # own reused-workflow call carrying its 7 model x quant groups. batchSize and
+  # own reused-workflow call carrying its 4 (model x quant) groups. batchSize and
   # flashAttn each need a fresh model load, so making them the batch key keeps
   # every Device Farm session to at most 2 model loads (one per device) for a
-  # given (model, quant) — a coarser per-model batch would reload the model for
-  # each batchSize x flashAttn combo (16 loads) and OOM the phones. Batches run
+  # given (model, quant) — a coarser per-(model, quant) batch would reload the
+  # model for each of the 8 batchSize x flashAttn combos and OOM the phones. Batches run
   # sequentially (max-parallel: 1) to avoid pool contention; each gets a distinct
   # artifact_suffix so its perf-report doesn't collide, and summarize aggregates
   # them. The benchmark shards are deliberately absent from test-groups.json, so
@@ -415,11 +419,60 @@ jobs:
           digest-mismatch: warn
         continue-on-error: true
 
+      # Baseline run for the optional regression compare (Δ columns). Same artifact
+      # patterns as the current run, downloaded into a separate dir.
+      - name: Download baseline desktop sweep for comparison
+        if: inputs.compare_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+        with:
+          pattern: embed-param-sweep-desktop-*
+          run-id: ${{ inputs.compare_run_id }}
+          github-token: ${{ github.token }}
+          path: baseline-reports
+          digest-mismatch: warn
+        continue-on-error: true
+
+      - name: Download baseline mobile perf-reports for comparison
+        if: inputs.compare_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+        with:
+          pattern: perf-report-llamacpp-embed-*
+          run-id: ${{ inputs.compare_run_id }}
+          github-token: ${{ github.token }}
+          path: baseline-reports
+          digest-mismatch: warn
+        continue-on-error: true
+
+      - name: Download baseline run-meta for comparison
+        if: inputs.compare_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
+        with:
+          pattern: embed-benchmark-run-meta-*
+          run-id: ${{ inputs.compare_run_id }}
+          github-token: ${{ github.token }}
+          path: baseline-reports
+          digest-mismatch: warn
+        continue-on-error: true
+
+      - name: Verify baseline artifacts downloaded
+        if: inputs.compare_run_id != ''
+        shell: bash
+        env:
+          COMPARE_RUN_ID: ${{ inputs.compare_run_id }}
+        run: |
+          # SIGPIPE-safe presence check (see the render guard below for why).
+          if [ -z "$(find baseline-reports -name '*.json' -type f -print -quit 2>/dev/null)" ]; then
+            echo "::error::No baseline artifacts found for run $COMPARE_RUN_ID (wrong run ID, or artifacts expired past the 90-day retention). A comparison was requested but cannot be produced."
+            exit 1
+          fi
+
       - name: Render benchmark report
         shell: bash
         env:
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
+          COMPARE_RUN_ID: ${{ inputs.compare_run_id }}
           ADDON_VERSION: ${{ steps.addon_ver.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           # Guard: at least one report JSON must be present. Use find -print -quit
           # (exits after the first match) and test for empty output, instead of
@@ -440,6 +493,14 @@ jobs:
           ARGS=(--dir combined-reports --output benchmark-artifacts/embed-benchmark-findings.md --html benchmark-artifacts/embed-benchmark-charts.html --charts-url "__CHARTS_URL__")
           if [ -n "$ADDON_VERSION" ]; then
             ARGS+=(--addon-version "$ADDON_VERSION")
+          fi
+          # Add Δ columns when a baseline run was downloaded (SIGPIPE-safe check).
+          if [ -d baseline-reports ] && [ -n "$(find baseline-reports -name '*.json' -type f -print -quit 2>/dev/null)" ]; then
+            ARGS+=(--compare-dir baseline-reports)
+            if [ -n "$COMPARE_RUN_ID" ]; then
+              ARGS+=(--baseline-run-id "$COMPARE_RUN_ID")
+              ARGS+=(--baseline-run-url "https://github.com/$REPO/actions/runs/$COMPARE_RUN_ID")
+            fi
           fi
 
           node packages/embed-llamacpp/benchmarks/performance/render-report.js "${ARGS[@]}"

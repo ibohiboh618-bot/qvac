@@ -129,10 +129,22 @@ async function main () {
   const selectedModels = selectModels(MODELS, args.models)
 
   fs.mkdirSync(resultsDir, { recursive: true })
+  // Record what this run actually covered so the renderer can flag a narrowed
+  // run (a --models subset or reduced --repeats, used for quick plumbing checks)
+  // instead of letting it read as the full official sweep.
+  const requestedModelIds = selectedModels.map((m) => m.id)
+  const manifestModelIds = MODELS.map((m) => m.id)
   const report = {
     startedAt: new Date().toISOString(),
     finishedAt: null,
     repeats,
+    coverage: {
+      requestedModelIds,
+      manifestModelIds,
+      repeats,
+      defaultRepeats: DEFAULT_REPEATS,
+      narrowed: requestedModelIds.length < manifestModelIds.length || repeats !== DEFAULT_REPEATS
+    },
     models: []
   }
 

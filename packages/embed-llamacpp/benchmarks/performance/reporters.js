@@ -68,6 +68,7 @@ function toReportJson (report) {
     startedAt: report.startedAt,
     finishedAt: report.finishedAt,
     repeats: report.repeats,
+    coverage: report.coverage,
     models: report.models.map((model) => ({
       modelId: model.modelId,
       source: model.source,

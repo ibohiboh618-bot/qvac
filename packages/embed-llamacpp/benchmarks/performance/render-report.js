@@ -44,7 +44,11 @@ function parseArgs (argv) {
     html: null,
     chartsUrl: null,
     device: 'Desktop (linux-x64 GPU)',
-    addonVersion: null
+    addonVersion: null,
+    compareDir: null,
+    baselineRunId: null,
+    baselineRunNumber: null,
+    baselineRunUrl: null
   }
   for (let i = 2; i < argv.length; i++) {
     const t = argv[i]
@@ -54,11 +58,16 @@ function parseArgs (argv) {
     else if (t === '--charts-url') a.chartsUrl = argv[++i]
     else if (t === '--device') a.device = argv[++i]
     else if (t === '--addon-version') a.addonVersion = argv[++i]
+    else if (t === '--compare-dir') a.compareDir = argv[++i]
+    else if (t === '--baseline-run-id') a.baselineRunId = argv[++i]
+    else if (t === '--baseline-run-number') a.baselineRunNumber = argv[++i]
+    else if (t === '--baseline-run-url') a.baselineRunUrl = argv[++i]
   }
   if (!a.dir) {
     throw new Error(
       'usage: render-report.js --dir <path> [--output <md>] [--html <html>] ' +
-      '[--device <name>] [--addon-version <ver>] [--charts-url <url>]'
+      '[--device <name>] [--addon-version <ver>] [--charts-url <url>] ' +
+      '[--compare-dir <path>] [--baseline-run-id <id>] [--baseline-run-number <n>] [--baseline-run-url <url>]'
     )
   }
   return a
@@ -97,7 +106,7 @@ function loadDir (dir, deviceArg) {
       if (d && typeof d.device === 'string' && d.device) { resolvedDevice = d.device; break }
     } catch {}
   }
-  const meta = { addonVersion: null, repeats: null, expectedShards: null, device: resolvedDevice }
+  const meta = { addonVersion: null, repeats: null, expectedShards: null, coverage: null, device: resolvedDevice }
   const rows = []
   for (const f of files) rows.push(...rowsFromFile(f, resolvedDevice, meta))
   return { rows: collapseMobileRows(rows), meta }
@@ -153,8 +162,15 @@ function rowsFromFile (file, device, meta) {
     const mobileDevice = (doc.device.name || 'unknown').trim()
     for (const r of doc.results) {
       const m = r.metrics || {}
-      const crashed = (r.status && String(r.status).toLowerCase() === 'crashed') ||
-        (num(m.pp_tps) === null && num(m.latency_ms) === null)
+      const statusLc = r.status ? String(r.status).toLowerCase() : ''
+      const bothTimingNull = num(m.pp_tps) === null && num(m.latency_ms) === null
+      // A status=ok row with timing below the addon's ~1ms resolution produced
+      // valid embeddings but no measurable prefill time — that is "unmeasured",
+      // not a crash. Only a crashed/failed status (or null timing without a
+      // success status, e.g. the pre-run placeholder) is a real crash.
+      const crashed = statusLc === 'crashed' || statusLc === 'failed' ||
+        (bothTimingNull && statusLc !== 'ok')
+      const unmeasured = !crashed && bothTimingNull
       const config = r.test || '(unknown)'
       rows.push({
         device: mobileDevice,
@@ -165,6 +181,7 @@ function rowsFromFile (file, device, meta) {
         backend: null,
         batchSize: null,
         flashAttn: null,
+        unmeasured,
         ppTps: num(m.pp_tps),
         ppTpsStd: num(m.pp_tps_std),
         latency: num(m.latency_ms),
@@ -183,6 +200,7 @@ function rowsFromFile (file, device, meta) {
   }
 
   if (num(doc.repeats) !== null && meta.repeats === null) meta.repeats = doc.repeats
+  if (doc.coverage && meta.coverage === null) meta.coverage = doc.coverage
 
   for (const model of doc.models) {
     for (const c of model.cases) {
@@ -193,6 +211,10 @@ function rowsFromFile (file, device, meta) {
       // the repeats that succeeded — kept as a real row, flagged so its smaller
       // sample is never read as a clean full run.
       const crashed = c.status && c.status !== 'ok' && c.status !== 'partial-failure'
+      // Same "ran but timing below the 1ms floor" case the mobile branch flags,
+      // so the two sections label the condition identically rather than leaving
+      // a desktop row as a bare '-'.
+      const unmeasured = !crashed && num(m.ppTpsMean) === null && num(m.latencyMsMean) === null
       rows.push({
         device,
         model: model.modelId,
@@ -207,6 +229,7 @@ function rowsFromFile (file, device, meta) {
         backend: rc.device || null,
         batchSize: rc.batchSize != null ? String(rc.batchSize) : null,
         flashAttn: rc.flashAttn != null ? String(rc.flashAttn) : null,
+        unmeasured,
         ppTps: num(m.ppTpsMean),
         ppTpsStd: num(m.ppTpsStd),
         latency: num(m.latencyMsMean),
@@ -243,6 +266,23 @@ function modelOf (config) {
 function fmt (v, decimals = 2) {
   if (v === null || v === undefined) return '-'
   return (Math.round(v * Math.pow(10, decimals)) / Math.pow(10, decimals)).toFixed(decimals)
+}
+
+// Signed delta (current minus baseline), used by the optional Δ columns when a
+// baseline run is supplied via --compare-dir.
+function fmtDelta (v, decimals = 2) {
+  if (v === null || v === undefined) return '-'
+  const sign = v >= 0 ? '+' : ''
+  return `${sign}${fmt(v, decimals)}`
+}
+
+// Map a run's rows by `<device>@@<config>` so the current row's matching baseline
+// row can be looked up for the Δ columns. Keyed on both because the same config
+// label repeats across devices in a combined run.
+function buildBaselineMap (rows) {
+  const m = new Map()
+  for (const r of rows) m.set(`${r.device}@@${r.config}`, r)
+  return m
 }
 
 // "mean ± std" when there is more than one sample; bare mean otherwise.
@@ -528,7 +568,8 @@ function mobileCoverageLines (rows, devices, expectedShards) {
 // the metric table (Config | ppTPS | latency (ms)). Rows within a model are
 // config-sorted. Used by both the desktop and mobile sections so every device
 // groups model-first.
-function deviceModelTables (rows) {
+function deviceModelTables (rows, baselineMap = null) {
+  const comparing = baselineMap !== null
   const byModel = new Map()
   for (const r of rows) {
     if (!byModel.has(r.model)) byModel.set(r.model, [])
@@ -540,20 +581,33 @@ function deviceModelTables (rows) {
     const items = byModel.get(model).slice().sort((a, b) => a.config.localeCompare(b.config))
     lines.push(`### ${model}`)
     lines.push('')
-    lines.push('| Config | ppTPS | latency (ms) |')
-    lines.push('| --- | ---: | ---: |')
+    if (comparing) {
+      lines.push('| Config | ppTPS | Δ ppTPS | latency (ms) | Δ latency |')
+      lines.push('| --- | ---: | ---: | ---: | ---: |')
+    } else {
+      lines.push('| Config | ppTPS | latency (ms) |')
+      lines.push('| --- | ---: | ---: |')
+    }
     for (const r of items) {
       if (r.crashed) {
-        lines.push(`| ${r.config} | Crashed | Crashed |`)
-      } else {
-        const note = r.partial && r.repeatsSucceeded != null && r.repeatsAttempted != null
-          ? ` _(partial: ${r.repeatsSucceeded}/${r.repeatsAttempted} repeats)_`
-          : ''
-        lines.push(
-          `| ${r.config}${note} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ` +
-          `${fmtMS(r.latency, r.latencyStd, r.sampleCount)} |`
-        )
+        lines.push(comparing ? `| ${r.config} | Crashed | - | Crashed | - |` : `| ${r.config} | Crashed | Crashed |`)
+        continue
       }
+      const note = r.unmeasured
+        ? ' _(unmeasured: prefill below timer resolution)_'
+        : (r.partial && r.repeatsSucceeded != null && r.repeatsAttempted != null
+            ? ` _(partial: ${r.repeatsSucceeded}/${r.repeatsAttempted} repeats)_`
+            : '')
+      const pp = fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)
+      const lat = fmtMS(r.latency, r.latencyStd, r.sampleCount)
+      if (!comparing) {
+        lines.push(`| ${r.config}${note} | ${pp} | ${lat} |`)
+        continue
+      }
+      const base = baselineMap.get(`${r.device}@@${r.config}`)
+      const ppDelta = base && !base.crashed && r.ppTps != null && base.ppTps != null ? r.ppTps - base.ppTps : null
+      const latDelta = base && !base.crashed && r.latency != null && base.latency != null ? r.latency - base.latency : null
+      lines.push(`| ${r.config}${note} | ${pp} | ${fmtDelta(ppDelta)} | ${lat} | ${fmtDelta(latDelta)} |`)
     }
     lines.push('')
   }
@@ -563,7 +617,7 @@ function deviceModelTables (rows) {
 // Mobile report: per device, one `### <model>` table with the same columns as
 // the desktop tables (Config | ppTPS | latency (ms)), plus mobile coverage
 // scored against the (model x quant x batchSize x flashAttn) shard matrix.
-function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark Results') {
+function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark Results', baselineMap = null, baseline = null) {
   const addonVersion = meta.addonVersion || addonVersionArg || null
   const byDevice = new Map()
   for (const r of rows) {
@@ -582,6 +636,7 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
     lines.push(metaParts.join(' · '))
     lines.push('')
   }
+  for (const l of comparisonBanner(baseline)) lines.push(l)
   lines.push(
     'Metrics are addon `runtimeStats` (embedding = single prefill pass, no decode): ' +
     'ppTPS = prefill tokens/sec, latency = prefill time (ms). ' +
@@ -600,7 +655,7 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   for (const device of devices) {
     lines.push(`## ${device}`)
     lines.push('')
-    for (const l of deviceModelTables(byDevice.get(device))) lines.push(l)
+    for (const l of deviceModelTables(byDevice.get(device), baselineMap)) lines.push(l)
   }
 
   lines.push('## Best configuration per device')
@@ -617,7 +672,40 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   return lines.join('\n') + '\n'
 }
 
-function render (rows, meta, addonVersionArg, chartsUrl) {
+// Prominent banner when the desktop sweep was narrowed for a quick check
+// (a --models subset or reduced --repeats), so a partial run is never read as
+// the full official sweep. Returns [] for a full run.
+function narrowingBanner (coverage) {
+  if (!coverage || !coverage.narrowed) return []
+  const requested = Array.isArray(coverage.requestedModelIds) ? coverage.requestedModelIds : []
+  const manifest = Array.isArray(coverage.manifestModelIds) ? coverage.manifestModelIds : []
+  const omitted = manifest.filter((id) => !requested.includes(id))
+  const notes = []
+  if (omitted.length) {
+    notes.push(`models limited to ${requested.join(', ')} — omitted: ${omitted.join(', ')}`)
+  }
+  if (coverage.repeats != null && coverage.defaultRepeats != null && coverage.repeats !== coverage.defaultRepeats) {
+    notes.push(`repeats reduced to ${coverage.repeats} (official is ${coverage.defaultRepeats})`)
+  }
+  if (!notes.length) return []
+  return [`> ⚠️ **Narrowed run — not the full sweep.** ${notes.join('; ')}.`, '']
+}
+
+// Banner naming the baseline run the Δ columns compare against, plus how to read
+// the sign. Returns [] when not comparing.
+function comparisonBanner (baseline) {
+  if (!baseline) return []
+  const idParts = []
+  if (baseline.runNumber) idParts.push(`run #${baseline.runNumber}`)
+  if (baseline.runId) idParts.push(`run ID ${baseline.runId}`)
+  const heading = idParts.length ? idParts.join(', ') : 'previous run'
+  const lines = [`> **Comparing against baseline (${heading}).** Δ = current minus baseline; +Δ ppTPS and −Δ latency are improvements.`]
+  if (baseline.runUrl) lines.push(`> [View baseline run](${baseline.runUrl})`)
+  lines.push('')
+  return lines
+}
+
+function render (rows, meta, addonVersionArg, chartsUrl, baselineMap = null, baseline = null) {
   // Both desktop and mobile group device-first then model; the desktop sweep
   // carries repeats while mobile is one perf-report per device. Render each from
   // its OWN rows so a combined run (both present) shows a "— Desktop" and a
@@ -625,7 +713,7 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
   // desktop-only run keeps the bare "# Embed Benchmark Results".)
   const desktopRows = rows.filter((r) => !r.mobile)
   const mobileRows = rows.filter((r) => r.mobile)
-  if (!desktopRows.length) return renderMobile(mobileRows, meta, addonVersionArg)
+  if (!desktopRows.length) return renderMobile(mobileRows, meta, addonVersionArg, '# Embed Benchmark Results', baselineMap, baseline)
 
   const models = [...new Set(desktopRows.map((r) => r.model))].sort()
   // Stamped version (from run-meta) wins over any manually-passed value.
@@ -645,6 +733,9 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
     lines.push(metaParts.join(' · '))
     lines.push('')
   }
+
+  for (const l of narrowingBanner(meta.coverage)) lines.push(l)
+  for (const l of comparisonBanner(baseline)) lines.push(l)
 
   lines.push(
     'Metrics are addon `runtimeStats` (embedding = single prefill pass, no decode): ' +
@@ -676,7 +767,7 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
   for (const device of devices) {
     lines.push(`## ${device}`)
     lines.push('')
-    for (const l of deviceModelTables(byDevice.get(device))) lines.push(l)
+    for (const l of deviceModelTables(byDevice.get(device), baselineMap)) lines.push(l)
   }
 
   lines.push('## Best configuration per device')
@@ -692,8 +783,10 @@ function render (rows, meta, addonVersionArg, chartsUrl) {
   lines.push('')
 
   // Combined run: append the mobile per-device section under its own heading.
+  // Pass baseline=null so the comparison banner isn't repeated (the desktop
+  // section above already emitted it); baselineMap still drives the Δ columns.
   if (mobileRows.length) {
-    lines.push(renderMobile(mobileRows, meta, addonVersionArg, '# Embed Benchmark Results — Mobile'))
+    lines.push(renderMobile(mobileRows, meta, addonVersionArg, '# Embed Benchmark Results — Mobile', baselineMap, null))
   }
   return lines.join('\n') + '\n'
 }
@@ -846,7 +939,21 @@ function main () {
     return
   }
 
-  const md = render(rows, meta, args.addonVersion, args.chartsUrl)
+  // Optional cross-run regression compare: load the baseline run's reports and
+  // key them so the renderer can show Δ columns against the current run.
+  let baselineMap = null
+  let baseline = null
+  if (args.compareDir && fs.existsSync(args.compareDir)) {
+    const { rows: baseRows } = loadDir(args.compareDir, args.device)
+    if (baseRows.length) {
+      baselineMap = buildBaselineMap(baseRows)
+      baseline = { runId: args.baselineRunId, runNumber: args.baselineRunNumber, runUrl: args.baselineRunUrl }
+    } else {
+      process.stderr.write(`compare: no baseline rows found in ${args.compareDir}; rendering without Δ columns\n`)
+    }
+  }
+
+  const md = render(rows, meta, args.addonVersion, args.chartsUrl, baselineMap, baseline)
   if (args.output) fs.writeFileSync(args.output, md)
   else process.stdout.write(md)
 
