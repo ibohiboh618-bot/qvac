@@ -889,7 +889,8 @@ TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_DefaultsQ8_0) {
 }
 
 // Underscore flash_attn variant must also arm the q8_0 auto-default.
-TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_FlashAttnUnderscore_DefaultsQ8_0) {
+TEST_F(
+    TuneConfigMapTest, AutoDefault_VulkanGpu_FlashAttnUnderscore_DefaultsQ8_0) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["flash_attn"] = "on";
 
