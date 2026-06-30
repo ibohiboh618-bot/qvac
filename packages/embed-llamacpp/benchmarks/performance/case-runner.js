@@ -86,7 +86,6 @@ function buildAddonConfig (runtimeConfig, options = {}) {
   if (runtimeConfig.batchSize != null) config.batch_size = String(runtimeConfig.batchSize)
   if (runtimeConfig.ctx != null) config.ctx_size = String(runtimeConfig.ctx)
   if (runtimeConfig.flashAttn != null) config.flash_attn = String(runtimeConfig.flashAttn)
-  if (runtimeConfig.ngl != null) config.gpu_layers = String(runtimeConfig.ngl)
   if (runtimeConfig.noMmap) config['no-mmap'] = ''
   return config
 }
@@ -134,21 +133,24 @@ function buildCases (modelDef, sweep) {
   return cases
 }
 
-// The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
-// short input prefills faster than it can measure, so the addon reports a
-// sub-millisecond prefill time and a tokens_per_second inflated to ~1e8. Treat
-// prefill timing below this floor as unmeasured so the timing-derived metrics
-// (ppTPS, latency) report null for those configs instead of a fabricated value.
+// The addon's prefill timer has ~millisecond resolution. A single short input
+// prefills faster than it can measure, so the per-call prefill time can round to
+// sub-millisecond. Treat prefill timing below this floor as unmeasured so the
+// timing-derived metrics (ppTPS, latency) report null for those configs instead
+// of a fabricated value.
 const MIN_RELIABLE_PREFILL_MS = 1
 
-function reliablePrefillMs (totalTimeMs) {
-  return totalTimeMs != null && totalTimeMs >= MIN_RELIABLE_PREFILL_MS ? totalTimeMs : null
+function reliablePrefillMs (prefillMs) {
+  return prefillMs != null && prefillMs >= MIN_RELIABLE_PREFILL_MS ? prefillMs : null
 }
 
-// Prefill throughput (ppTPS) as measured by the addon; only meaningful when the
-// prefill time is reliable, which the caller enforces.
-function prefillTokensPerSecond (runtimeStats) {
-  return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
+// Prefill throughput (ppTPS) computed from this repeat's own token count and
+// prefill time. The addon's tokens_per_second is derived from cumulative
+// counters (see the delta handling in runCaseWithRepeats) and is not per-call,
+// so it is not used here.
+function prefillTokensPerSecond (deltaTokens, prefillMs) {
+  if (deltaTokens == null || deltaTokens <= 0 || prefillMs == null || prefillMs <= 0) return null
+  return (deltaTokens * 1000) / prefillMs
 }
 
 // Load the model once, run a tiny input with stats on, read the model's trained
@@ -182,8 +184,8 @@ async function probeTrainedContext ({ AddonCtor, modelDir, modelName, debugEnabl
 
 // Embedding is a single forward pass (prefill only), so every metric here is a
 // prefill or end-to-end quantity — there is no decode phase. The renderer reads:
-//   ppTpsMean/ppTpsStd          prefill tokens/sec (addon tokens_per_second)
-//   latencyMsMean/latencyMsStd  prefill time in ms (addon total_time_ms)
+//   ppTpsMean/ppTpsStd          prefill tokens/sec (per-repeat delta)
+//   latencyMsMean/latencyMsStd  prefill time in ms (per-repeat delta)
 //   inputTokens                 tokens fed to the model for this case
 // loadMs/runMs/unloadMs are kept for the legacy .jsonl/.md reporters.
 function aggregateRunMetrics (runMetrics) {
@@ -247,13 +249,24 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
     await model.load()
     loadMs = elapsedMs(loadStart)
 
+    // The addon's total_time_ms / total_tokens are CUMULATIVE for the context's
+    // lifetime (llama_perf_context, never reset between run() calls), so each
+    // measured repeat must report the delta since the previous run, not the raw
+    // counter. These track the running totals; they are seeded from the warmup.
+    let prevCumulativeMs = 0
+    let prevCumulativeTokens = 0
+
     // Warmup run (discarded) so the first measured repeat isn't skewed by
-    // cold-start graph build / GPU kernel warmup. Without it the first run is a
-    // large outlier that makes the ppTPS / latency mean ± stddev meaningless.
+    // cold-start graph build / GPU kernel warmup. Seeding the cumulative
+    // baseline from it means the first measured delta excludes the warmup.
     // Mirrors the LLM desktop sweep and the mobile runner's warmup.
     try {
       const warmup = await model.run(inputs)
       await warmup.await()
+      if (warmup.stats) {
+        if (warmup.stats.total_time_ms != null) prevCumulativeMs = warmup.stats.total_time_ms
+        if (warmup.stats.total_tokens != null) prevCumulativeTokens = warmup.stats.total_tokens
+      }
     } catch (_) { /* measured runs below surface any real error */ }
 
     for (let repeat = 1; repeat <= repeats; repeat++) {
@@ -263,20 +276,30 @@ async function runCaseWithRepeats ({ AddonCtor, modelDir, modelName, runtimeConf
         const rawEmbeddings = await response.await()
         const wallMs = elapsedMs(runStart)
         const runtimeStats = response.stats
+        // total_time_ms / total_tokens are cumulative; this repeat's own cost is
+        // the delta since the previous run. Advance the baseline here, BEFORE
+        // validating the embeddings: the addon counter advanced whether or not
+        // the response validates, so a throw below must not leave the next rep's
+        // delta double-counting this run. ppTPS = prefill tokens/sec; prefillMs =
+        // prefill time; wallMs = end-to-end run latency. Embedding is a single
+        // forward pass, so there is no decode phase and no generated-token metric.
+        const cumulativeMs = runtimeStats.total_time_ms
+        const cumulativeTokens = runtimeStats.total_tokens
+        const deltaMs = cumulativeMs != null ? cumulativeMs - prevCumulativeMs : null
+        const deltaTokens = cumulativeTokens != null ? cumulativeTokens - prevCumulativeTokens : null
+        if (cumulativeMs != null) prevCumulativeMs = cumulativeMs
+        if (cumulativeTokens != null) prevCumulativeTokens = cumulativeTokens
         // Validate the run produced a well-formed embedding response so a
         // silently-empty run is treated as a failure, not a 0-metric success.
         normalizeEmbeddings(rawEmbeddings)
         producedEmbeddings = true
-        // ppTPS = prefill tokens/sec; prefillMs = prefill time; wallMs =
-        // end-to-end run latency. Embedding is a single forward pass, so there
-        // is no decode phase and no generated-token metric.
-        const prefillMs = reliablePrefillMs(runtimeStats.total_time_ms)
+        const prefillMs = reliablePrefillMs(deltaMs)
         runMetrics.push({
           loadMs,
           prefillMs,
           wallMs,
-          ppTps: prefillMs != null ? prefillTokensPerSecond(runtimeStats) : null,
-          totalTokens: runtimeStats.total_tokens,
+          ppTps: prefillMs != null ? prefillTokensPerSecond(deltaTokens, prefillMs) : null,
+          totalTokens: deltaTokens,
           unloadMs: null
         })
       } catch (error) {

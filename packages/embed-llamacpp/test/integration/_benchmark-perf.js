@@ -65,21 +65,23 @@ function stddev (values) {
   return Math.sqrt(varianceSum / values.length)
 }
 
-// The addon's prefill timer (t_p_eval_ms) has ~millisecond resolution. A single
-// short input prefills faster than it can measure, so the addon reports a
-// sub-millisecond time and a tokens_per_second inflated to ~1e8. Treat prefill
-// timing below this floor as unmeasured so ppTPS / latency report null for those
-// configs instead of a fabricated value. Mirrors the desktop case-runner.
+// The addon's prefill timer has ~millisecond resolution. A single short input
+// prefills faster than it can measure, so the per-call prefill time can round to
+// sub-millisecond. Treat prefill timing below this floor as unmeasured so ppTPS /
+// latency report null for those configs instead of a fabricated value. Mirrors
+// the desktop case-runner.
 const MIN_RELIABLE_PREFILL_MS = 1
 
-function reliablePrefillMs (totalTimeMs) {
-  return totalTimeMs != null && totalTimeMs >= MIN_RELIABLE_PREFILL_MS ? totalTimeMs : null
+function reliablePrefillMs (prefillMs) {
+  return prefillMs != null && prefillMs >= MIN_RELIABLE_PREFILL_MS ? prefillMs : null
 }
 
-// Prefill throughput (ppTPS) as measured by the addon; only meaningful when the
-// prefill time is reliable, which the caller enforces.
-function prefillTokensPerSecond (runtimeStats) {
-  return runtimeStats.tokens_per_second != null ? runtimeStats.tokens_per_second : null
+// Prefill throughput (ppTPS) from this repeat's own token count and prefill time.
+// The addon's tokens_per_second is derived from cumulative counters (see the
+// delta handling in the run loop) and is not per-call, so it is not used here.
+function prefillTokensPerSecond (deltaTokens, prefillMs) {
+  if (deltaTokens == null || deltaTokens <= 0 || prefillMs == null || prefillMs <= 0) return null
+  return (deltaTokens * 1000) / prefillMs
 }
 
 // Measured repetitions per config, reported as mean +/- stddev (matching the
@@ -152,7 +154,6 @@ async function ensureBenchmarkModel (spec) {
 
 function buildConfig (device, batchSize, flashAttn, modelDir) {
   const config = {
-    gpu_layers: device === 'cpu' ? '0' : '999',
     batch_size: String(batchSize),
     // Cap the context to the batch (the addon further caps to the trained ctx).
     // Without this, a model loads at its full trained context regardless of batch:
@@ -249,12 +250,24 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
         }
 
         try {
+          // total_time_ms / total_tokens are CUMULATIVE for the loaded model's
+          // lifetime (llama_perf_context, never reset between run() calls), so
+          // each measured rep must report the delta since the previous run, not
+          // the raw counter. These span the warmup and both input modes because
+          // they share one loaded model.
+          let prevCumulativeMs = 0
+          let prevCumulativeTokens = 0
+
           // Warm up per loaded backend (discarded, never a measured rep) to
-          // prime GPU kernels/caches so rep 1 isn't a cold-start outlier.
+          // prime GPU kernels/caches so rep 1 isn't a cold-start outlier, and
+          // seed the cumulative baseline so the first measured delta excludes it.
           try {
             for (let warm = 1; warm <= PERF_WARMUP_RUNS; warm++) {
               const w = await addon.run(inputsFor(INPUT_MODES[0]))
               await w.await()
+              const ws = w.stats || {}
+              if (ws.total_time_ms != null) prevCumulativeMs = ws.total_time_ms
+              if (ws.total_tokens != null) prevCumulativeTokens = ws.total_tokens
               t.comment(`[${spec.id} q=${quant}] [${device}] warmup ${warm}/${PERF_WARMUP_RUNS} - perf NOT recorded`)
             }
           } catch (warmErr) {
@@ -271,11 +284,22 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
                 const response = await addon.run(inputsFor(inputMode))
                 const raw = await response.await()
                 const stats = response.stats || {}
+                // Per-call cost = delta of the cumulative counters since the
+                // previous run (warmup or prior rep, including the prior mode).
+                // Advance the baseline BEFORE validating embeddings: the addon
+                // counter advanced regardless of validation, so a throw must not
+                // leave the next rep double-counting this run.
+                const cumulativeMs = stats.total_time_ms
+                const cumulativeTokens = stats.total_tokens
+                const deltaMs = cumulativeMs != null ? cumulativeMs - prevCumulativeMs : null
+                const deltaTokens = cumulativeTokens != null ? cumulativeTokens - prevCumulativeTokens : null
+                if (cumulativeMs != null) prevCumulativeMs = cumulativeMs
+                if (cumulativeTokens != null) prevCumulativeTokens = cumulativeTokens
                 const embeddings = normalizeEmbeddings(raw)
                 if (!firstEmbeddings) firstEmbeddings = embeddings
-                if (inputTokens == null && stats.total_tokens != null) inputTokens = stats.total_tokens
-                const latencyMs = reliablePrefillMs(stats.total_time_ms)
-                const ppTps = latencyMs != null ? prefillTokensPerSecond(stats) : null
+                if (inputTokens == null && deltaTokens != null) inputTokens = deltaTokens
+                const latencyMs = reliablePrefillMs(deltaMs)
+                const ppTps = latencyMs != null ? prefillTokensPerSecond(deltaTokens, latencyMs) : null
                 if (ppTps != null) ppTpsValues.push(ppTps)
                 if (latencyMs != null) latencyValues.push(latencyMs)
               }
