@@ -57,6 +57,16 @@ function pickMainGpuTarget (devices) {
   return vulkanGpus.find((dev) => dev.gpuIndex > 0 && hasEnoughMemory(dev))
 }
 
+async function waitForLog (logs, predicate, timeoutMs = 5000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const match = logs.find(predicate)
+    if (match) return match
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return logs.find(predicate)
+}
+
 test('main-gpu pins an explicit Vulkan GPU when multiple GPUs are visible', { timeout: 600000 }, async (t) => {
   const isSupportedDesktop = (os.platform() === 'linux' || os.platform() === 'win32') && os.arch() === 'x64'
   if (!isSupportedDesktop) {
@@ -115,10 +125,10 @@ test('main-gpu pins an explicit Vulkan GPU when multiple GPUs are visible', { ti
 
     await model.load()
 
-    const resolvedLog = logs.find((line) =>
+    const resolvedLog = await waitForLog(logs, (line) =>
       line.includes(`main-gpu resolved to backend '${target.name}'`)
     )
-    const directOrLegacyPinLog = logs.find((line) =>
+    const directOrLegacyPinLog = await waitForLog(logs, (line) =>
       line.includes(`main-gpu pinning stable-diffusion backend '${target.name}'`) ||
       line.includes(`main-gpu using legacy SD_VK_DEVICE fallback for backend '${target.name}'`) ||
       line.includes(`Selecting ${target.name} as main device by env var SD_VK_DEVICE`)
