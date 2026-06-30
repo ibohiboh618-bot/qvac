@@ -18,9 +18,9 @@ Generate deterministic, sorted NOTICE files for individual packages or all packa
 ## Prerequisites
 
 Before running, ensure `.env` is sourced and contains:
-- `GH_TOKEN` -- GitHub token (access to private repos and GitHub API)
-- `HF_TOKEN` -- HuggingFace token (model license verification)
-- `NPM_TOKEN` -- npm registry token (private package resolution)
+- `GH_TOKEN` -- GitHub token (GitHub API for the C++/vcpkg scan + `@tetherto` GitHub Packages auth); **required**
+- `NPM_TOKEN` -- **optional**; not needed for the public `@qvac` packages (they install anonymously). Set only as a last resort if a private npmjs dependency is ever introduced
+- `HF_TOKEN` -- not used by this generator (kept for the separate `npm run verify:licenses` model-license check)
 
 System requirements for Python scanning:
 - `python3` and `pip` available in PATH (for `pip-licenses`)

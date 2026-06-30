@@ -32,9 +32,9 @@ Output:
   NOTICE_LOG.txt            Warnings and errors (gitignored)
 
 Environment variables (source .env first):
-  GH_TOKEN    GitHub token for private repo access
-  HF_TOKEN    HuggingFace token for model verification
-  NPM_TOKEN   npm registry token for private packages
+  GH_TOKEN    GitHub token — required (GitHub API + @tetherto GitHub Packages)
+  NPM_TOKEN   optional — only for a private npmjs dependency; the public @qvac
+              packages install anonymously
 
 Examples:
   source .env && node generate-notice.js --all --dry-run
@@ -48,11 +48,13 @@ Examples:
 // Check required env vars
 // ---------------------------------------------------------------------------
 function checkEnv () {
-  const missing = []
-  if (!process.env.GH_TOKEN) missing.push('GH_TOKEN')
-  if (!process.env.NPM_TOKEN) missing.push('NPM_TOKEN')
-  if (missing.length > 0) {
-    console.error(`Missing environment variables: ${missing.join(', ')}`)
+  // Only GH_TOKEN is required — it backs the GitHub API used by the C++/vcpkg
+  // scan and the @tetherto GitHub Packages auth in the generated .npmrc.
+  // NPM_TOKEN is OPTIONAL: the @qvac packages are public on npmjs and install
+  // anonymously. Set NPM_TOKEN only as a last resort if a private npmjs
+  // dependency is ever introduced.
+  if (!process.env.GH_TOKEN) {
+    console.error('Missing environment variable: GH_TOKEN')
     console.error('Run: source .env')
     process.exit(1)
   }

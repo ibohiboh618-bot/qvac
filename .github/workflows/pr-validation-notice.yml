@@ -28,14 +28,12 @@
 # exposed to fork-controlled code, and `pull_request_target` is deliberately
 # avoided (it would expose secrets to PR code — the pwn-request pattern).
 #
-# Credential-gated enforcement: regeneration needs the private vcpkg registry +
-# npm registry (GH_TOKEN + NPM_TOKEN). NPM_TOKEN currently lives only in a
-# protected environment, so it is unavailable on fork PRs and on same-repo PRs
-# that don't opt into that environment. When the credentials are absent the job
-# SKIPS regeneration and passes (it does not block); it only ENFORCES drift
-# where the credentials are present. Provision NPM_TOKEN as a repo / low-
-# privilege-env secret (or run from the release environment) to turn on
-# enforcement everywhere.
+# Credentials: the generator needs only GH_TOKEN (the repo PAT_TOKEN) for the
+# GitHub API used by the C++/vcpkg scan and @tetherto GitHub Packages. It does
+# NOT use NPM_TOKEN — the @qvac deps are public on npmjs and install
+# anonymously. PAT_TOKEN is a repo secret, so this gate ENFORCES on same-repo
+# PRs. On fork PRs (no secrets) the job skips regeneration and passes, so it
+# never blocks external contributors.
 #
 # Authored with assistance from the qv-notice-generate skill.
 
@@ -74,9 +72,9 @@ jobs:
     name: notice-drift
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Skip on fork PRs: regeneration needs GH_TOKEN/NPM_TOKEN (private vcpkg
-    # registry + GitHub API + private npm packages), which fork PRs never
-    # receive. Same-repo PRs and manual runs proceed normally.
+    # Skip on fork PRs: regeneration needs GH_TOKEN (private vcpkg registry +
+    # GitHub API), which fork PRs never receive. Same-repo PRs and manual runs
+    # proceed normally.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -120,41 +118,35 @@ jobs:
         with:
           python-version: "3.12"
 
-      # The generator hard-requires GH_TOKEN + NPM_TOKEN. NPM_TOKEN lives only
-      # in a protected environment, so it is absent on fork PRs and on same-repo
-      # PRs that do not opt into that environment. When the credentials are not
-      # present we SKIP regeneration (and the drift check) rather than fail — the
-      # gate only ENFORCES where the private-registry credentials exist (e.g.
-      # once NPM_TOKEN is provisioned as a repo / low-privilege-env secret, or on
-      # a release-environment run). This keeps the check non-blocking on
-      # feature/fork PRs while still catching drift wherever it can run.
+      # The generator requires GH_TOKEN (PAT_TOKEN). It is a repo secret, so it
+      # is present on same-repo PRs but absent on fork PRs. When it is not
+      # present we SKIP regeneration (and the drift check) rather than fail, so
+      # the gate never blocks fork PRs; it ENFORCES drift on same-repo PRs.
       - name: Check for required credentials
         id: creds
         env:
-          # Presence-only check — the values are never printed.
+          # Presence-only check — the value is never printed.
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${GH_TOKEN:-}" ] && [ -n "${NPM_TOKEN:-}" ]; then
+          if [ -n "${GH_TOKEN:-}" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "Credentials present — NOTICE drift will be verified."
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping NOTICE regeneration — GH_TOKEN/NPM_TOKEN not available in this context. The drift gate only enforces where private-registry credentials are present."
+            echo "::notice::Skipping NOTICE regeneration — GH_TOKEN (PAT_TOKEN) not available in this context (e.g. fork PR). The drift gate only enforces where it is present."
           fi
 
       - name: Regenerate NOTICE for ${{ matrix.package }}
         if: steps.creds.outputs.available == 'true'
         env:
           # Secrets are passed through env (never interpolated into run:).
-          # The generator reads GH_TOKEN; the repo's GitHub PAT (PAT_TOKEN) is
-          # required because the C++ scan reads portfiles from the PRIVATE
-          # tetherto/qvac-registry-vcpkg repo, which the default GITHUB_TOKEN
-          # cannot access.
+          # Only GH_TOKEN is needed: the C++ scan reads portfiles from the
+          # PRIVATE tetherto/qvac-registry-vcpkg repo (the default GITHUB_TOKEN
+          # cannot), and @tetherto GitHub Packages auth uses it too. NPM_TOKEN is
+          # intentionally NOT used — the @qvac deps are public on npmjs and
+          # install anonymously.
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PKG: ${{ matrix.package }}
         run: |
           set -euo pipefail

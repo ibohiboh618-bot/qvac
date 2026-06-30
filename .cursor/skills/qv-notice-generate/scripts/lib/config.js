@@ -165,13 +165,19 @@ function isLicenseAllowed (license) {
 function buildNpmrc () {
   const ghToken = process.env.GH_TOKEN || ''
   const npmToken = process.env.NPM_TOKEN || ''
-  return [
+  const lines = [
     '@tetherto:registry=https://npm.pkg.github.com',
     '@qvac:registry=https://registry.npmjs.org',
-    `//registry.npmjs.org/:_authToken=${npmToken}`,
-    `//npm.pkg.github.com/:_authToken=${ghToken}`,
-    ''
-  ].join('\n')
+    `//npm.pkg.github.com/:_authToken=${ghToken}`
+  ]
+  // NPM_TOKEN is optional — the public @qvac packages install anonymously.
+  // Only emit npmjs auth when a token is explicitly provided (last-resort path
+  // for a private dependency). Avoids writing an empty _authToken line.
+  if (npmToken) {
+    lines.push(`//registry.npmjs.org/:_authToken=${npmToken}`)
+  }
+  lines.push('')
+  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------------------
