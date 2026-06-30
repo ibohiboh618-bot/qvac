@@ -199,6 +199,12 @@ void MtmdLlmContext::initVisionContext() {
   mparams.backend_device =
       params_.mmproj_backend.empty() ? nullptr : params_.mmproj_backend.c_str();
   mparams.print_timings = true;
+  // Vision-tower flash attention is left at llama's default (enabled). On Adreno
+  // OpenCL this is correct thanks to the qvac-fabric fix to the flash-attention
+  // dispatch, which previously inferred causal masking from a null mask and so
+  // made the bidirectional SigLIP / Qwen3-VL encoder attend causally (corrupting
+  // the image embedding). A null mask is now treated as bidirectional, so the
+  // encode is both fast and accurate.
   mparams.n_threads = params_.cpuparams.n_threads;
   mparams.image_tile_mode = params_.image_tile_mode;
   // Forward the per-image token budget to the vision encoder. These were

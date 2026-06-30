@@ -1270,7 +1270,16 @@ void LlamaModel::commonParamsParse(
     if (chosenBackend.first == BackendType::GPU) {
       params.mmproj_backend = chosenBackend.second;
 #ifdef __ANDROID__
-      params.mmproj_use_gpu = false;
+      // The vision encoder (mmproj/clip) follows the model's device selection:
+      // with device 'gpu', run it on the GPU only when the chosen Android
+      // backend is OpenCL (Adreno). The Adreno OpenCL backend (qvac-fabric >=
+      // 9341) implements every op the SigLIP / Qwen3-VL vision graph emits
+      // (vision M-RoPE, conv_2d, im2col, soft_max, norm, mul_mat, gelu, concat)
+      // and was validated on Adreno 830 at cos-sim >= 0.98 vs CPU. Other Android
+      // GPU backends (e.g. Vulkan, which regresses SigLIP accuracy on Adreno)
+      // keep the CPU path. (device 'cpu' takes the CPU branch below.)
+      params.mmproj_use_gpu =
+          chosenBackend.second.find("opencl") != std::string::npos;
 #else
       params.mmproj_use_gpu = true;
 #endif
