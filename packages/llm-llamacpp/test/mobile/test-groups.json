@@ -57,6 +57,7 @@
       "runModelLoadingTest",
       "runImageFruitPlateTest",
       "runQwen35ImageTileModeTokensTest",
+      "runQwen35VisionOpenclTest",
       "runGrammarTest",
       "runTurboquantTest",
       "runBitnetTest",

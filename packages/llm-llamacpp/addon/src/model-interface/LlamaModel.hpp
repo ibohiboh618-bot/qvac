@@ -26,6 +26,7 @@
 #include "ModelMetadata.hpp"
 #include "ToolsCompactController.hpp"
 #include "common/chat.h"
+#include "utils/BackendSelection.hpp"
 #include "inference-addon-cpp/BlobsStream.hpp"
 #include "inference-addon-cpp/GGUFShards.hpp"
 #include "inference-addon-cpp/InitLoader.hpp"
@@ -76,6 +77,20 @@ public:
       const ModelMetaData& metadata, const std::optional<int>& adrenoVersion,
       const FinetuneConfigOverrides& finetuneOverrides = {},
       bool isOpenCl = false, bool isMetal = false);
+
+  /// @brief Decide whether the vision encoder (mmproj/clip) runs on the GPU for
+  /// the chosen backend. On Android the projector runs on the GPU only when the
+  /// chosen backend is OpenCL (Adreno) — qvac-fabric >= 9341 runs the SigLIP /
+  /// Qwen3-VL vision graph there at cos-sim >= 0.98 vs CPU; other Android GPU
+  /// backends (e.g. Vulkan, which regresses SigLIP accuracy on Adreno) keep the
+  /// CPU path. Off-Android any GPU backend qualifies; a CPU backend is false.
+  /// @param backendType The chosen backend type (GPU/CPU) from chooseBackend.
+  /// @param backendName The chosen backend name (lower-cased by chooseBackend).
+  /// @param isAndroid Whether the build target is Android (parameterized so the
+  /// mapping is unit-testable on a non-Android host).
+  static bool mmprojUseGpuForBackend(
+      backend_selection::BackendType backendType,
+      const std::string& backendName, bool isAndroid);
 
   /**
    * The Constructor for llama model.

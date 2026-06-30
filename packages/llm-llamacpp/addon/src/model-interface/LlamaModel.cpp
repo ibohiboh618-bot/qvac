@@ -1024,6 +1024,21 @@ LlamaModel::resolveToolsCompactConfig(bool toolsCompactRequested) const {
       .profile = std::move(profile)};
 }
 
+bool LlamaModel::mmprojUseGpuForBackend(
+    backend_selection::BackendType backendType, const std::string& backendName,
+    bool isAndroid) {
+  if (backendType != backend_selection::BackendType::GPU) {
+    return false;
+  }
+  if (!isAndroid) {
+    return true;
+  }
+  // chooseBackend lower-cases the backend name, so an OpenCL (Adreno) backend
+  // contains "opencl"; only that backend runs the SigLIP / Qwen3-VL vision
+  // graph correctly on Android.
+  return backendName.find("opencl") != std::string::npos;
+}
+
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static,readability-function-cognitive-complexity)
 void LlamaModel::commonParamsParse(
     const std::string& modelPath,
@@ -1269,20 +1284,16 @@ void LlamaModel::commonParamsParse(
 
     if (chosenBackend.first == BackendType::GPU) {
       params.mmproj_backend = chosenBackend.second;
+      // The vision encoder (mmproj/clip) follows device selection; on Android it
+      // runs on the GPU only for the OpenCL (Adreno) backend. See
+      // LlamaModel::mmprojUseGpuForBackend for the rationale.
 #ifdef __ANDROID__
-      // The vision encoder (mmproj/clip) follows the model's device selection:
-      // with device 'gpu', run it on the GPU only when the chosen Android
-      // backend is OpenCL (Adreno). The Adreno OpenCL backend (qvac-fabric >=
-      // 9341) implements every op the SigLIP / Qwen3-VL vision graph emits
-      // (vision M-RoPE, conv_2d, im2col, soft_max, norm, mul_mat, gelu, concat)
-      // and was validated on Adreno 830 at cos-sim >= 0.98 vs CPU. Other Android
-      // GPU backends (e.g. Vulkan, which regresses SigLIP accuracy on Adreno)
-      // keep the CPU path. (device 'cpu' takes the CPU branch below.)
-      params.mmproj_use_gpu =
-          chosenBackend.second.find("opencl") != std::string::npos;
+      constexpr bool kIsAndroid = true;
 #else
-      params.mmproj_use_gpu = true;
+      constexpr bool kIsAndroid = false;
 #endif
+      params.mmproj_use_gpu = mmprojUseGpuForBackend(
+          chosenBackend.first, chosenBackend.second, kIsAndroid);
       params.split_mode = splitMode;
       runtimeBackendDevice_ = 1;
 

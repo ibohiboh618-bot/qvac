@@ -496,6 +496,11 @@ async function runQwen35Test (options = {}) { // eslint-disable-line no-unused-v
   return runIntegrationModule('../integration/qwen3-5.test.js', options)
 }
 
+async function runQwen35VisionOpenclTest (options = {}) { // eslint-disable-line no-unused-vars
+  if (typeof __shouldRunTest === 'function' && !__shouldRunTest('runQwen35VisionOpenclTest')) return __FILTERED
+  return runIntegrationModule('../integration/qwen3-5-vision-opencl.test.js', options)
+}
+
 async function runReasoningTest (options = {}) { // eslint-disable-line no-unused-vars
   if (typeof __shouldRunTest === 'function' && !__shouldRunTest('runReasoningTest')) return __FILTERED
   return runIntegrationModule('../integration/reasoning.test.js', options)
