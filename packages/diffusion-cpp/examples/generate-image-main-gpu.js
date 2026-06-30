@@ -69,6 +69,7 @@ async function main () {
       vae: path.join(MODELS_DIR, VAE_MODEL)
     },
     config: {
+      device: 'gpu',
       threads: 4,
       diffusion_fa: true,
       'main-gpu': mainGpu

@@ -223,14 +223,20 @@ void SdModel::load() {
       sd_backend_selection::preferredGpuBackendForConfigDevice(config_.device);
 
   std::string mainGpuBackend;
-  if (auto mainGpuSpec = sd_backend_selection::parseMainGpu(config_.mainGpu);
-      mainGpuSpec.has_value()) {
+  if (!config_.mainGpu.empty() &&
+      sd_backend_selection::parseConfigDeviceString(config_.device) ==
+          sd_backend_selection::ConfigDevice::Gpu) {
+    auto mainGpuSpec = sd_backend_selection::parseMainGpu(config_.mainGpu);
     if (auto resolved =
             sd_backend_selection::resolveMainGpuBackendName(*mainGpuSpec);
         resolved.has_value()) {
       mainGpuBackend = *resolved;
       params.backend = mainGpuBackend.c_str();
     }
+  } else if (!config_.mainGpu.empty()) {
+    QLOG_IF(
+        qvac_lib_inference_addon_cpp::logger::Priority::INFO,
+        "main-gpu ignored because device is 'cpu'");
   }
 
   QLOG_IF(

@@ -186,11 +186,21 @@ std::optional<std::string> selectMainGpuName(
   };
 
   if (spec.kind == MainGpuKind::Index) {
-    if (spec.index < 0 ||
-        static_cast<size_t>(spec.index) >= devices.size()) {
+    if (spec.index < 0) {
       return std::nullopt;
     }
-    return nonEmpty(devices[static_cast<size_t>(spec.index)].name);
+
+    int gpuIndex = 0;
+    for (const auto& dev : devices) {
+      if (dev.cls == GpuClass::Other) {
+        continue;
+      }
+      if (gpuIndex == spec.index) {
+        return nonEmpty(dev.name);
+      }
+      ++gpuIndex;
+    }
+    return std::nullopt;
   }
 
   const GpuClass wanted = spec.kind == MainGpuKind::Integrated

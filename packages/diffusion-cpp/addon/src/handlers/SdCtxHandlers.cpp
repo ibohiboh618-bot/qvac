@@ -5,6 +5,7 @@
 #include <inference-addon-cpp/Errors.hpp>
 
 #include "utils/LoggingMacros.hpp"
+#include "utils/BackendSelection.hpp"
 
 namespace qvac_lib_inference_addon_sd {
 
@@ -112,8 +113,6 @@ const SdCtxHandlersMap SD_CTX_HANDLERS = {
        c.offloadToCpu = parseBool(v, "offload_to_cpu");
      }},
     {"device", [](SdCtxConfig& c, const std::string& v) { c.device = v; }},
-    {"main-gpu", [](SdCtxConfig& c, const std::string& v) { c.mainGpu = v; }},
-    {"main_gpu", [](SdCtxConfig& c, const std::string& v) { c.mainGpu = v; }},
     {"clip_on_cpu",
      [](SdCtxConfig& c, const std::string& v) {
        c.keepClipOnCpu = parseBool(v, "clip_on_cpu");
@@ -356,6 +355,18 @@ const SdCtxHandlersMap SD_CTX_HANDLERS = {
 void applySdCtxHandlers(
     SdCtxConfig& config,
     const std::unordered_map<std::string, std::string>& configMap) {
+  if (auto mainGpu = sd_backend_selection::mainGpuFromMap(configMap);
+      mainGpu.has_value()) {
+#if defined(__ANDROID__) ||                                                    \
+    (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS)
+    throw StatusError(
+        general_error::InvalidArgument,
+        "main-gpu is not supported on mobile (single-GPU device).");
+#else
+    config.mainGpu = *mainGpu;
+#endif
+  }
+
   for (const auto& [key, value] : configMap) {
     if (auto it = SD_CTX_HANDLERS.find(key); it != SD_CTX_HANDLERS.end()) {
       it->second(config, value);

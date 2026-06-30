@@ -23,7 +23,8 @@ struct MainGpuSpec {
 /**
  * Parse a `main-gpu` config value. Accepts a non-negative integer device index,
  * "integrated", or "dedicated" (case-insensitive). Returns nullopt for an empty
- * string (no preference). Throws StatusError on any other value.
+ * string (no preference). Numeric indices count GPU/iGPU devices only, not the
+ * CPU entry in ggml's raw device list. Throws StatusError on any other value.
  */
 std::optional<MainGpuSpec> parseMainGpu(const std::string& spec);
 
@@ -45,10 +46,10 @@ struct GpuCandidate {
 
 /**
  * Pure main-gpu selection over a normalized device list (no ggml enumeration,
- * so it is unit-testable). For Index, returns the device at that index if in
- * range. For Dedicated/Integrated, returns the matching-class device with the
- * most VRAM (first wins on ties). Returns nullopt when no device matches or the
- * selected device has an empty name.
+ * so it is unit-testable). For Index, returns the nth GPU/iGPU device if in
+ * range, skipping CPU/other devices. For Dedicated/Integrated, returns the
+ * matching-class device with the most VRAM (first wins on ties). Returns
+ * nullopt when no device matches or the selected device has an empty name.
  */
 std::optional<std::string> selectMainGpuName(
     const std::vector<GpuCandidate>& devices, const MainGpuSpec& spec);
@@ -59,7 +60,7 @@ std::optional<std::string> selectMainGpuName(
  * into GpuCandidates and defers the pick to selectMainGpuName:
  *   - Dedicated  -> the GGML_BACKEND_DEVICE_TYPE_GPU device with the most VRAM
  *   - Integrated -> the GGML_BACKEND_DEVICE_TYPE_IGPU device with the most VRAM
- *   - Index      -> the device at that index, if in range
+ *   - Index      -> the nth GPU/iGPU device, if in range
  * Returns nullopt when no matching device exists (caller leaves backend unset
  * and the default preference applies — never forces an empty device set).
  */
