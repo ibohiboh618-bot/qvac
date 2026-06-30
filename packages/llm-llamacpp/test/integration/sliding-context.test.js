@@ -65,7 +65,15 @@ async function setupModel (t, overrides = {}) {
     temp: '0.9',
     top_p: '0.95',
     seed: '42',
-    verbosity: '2'
+    verbosity: '2',
+    // QVAC-21318 PROBE (DO NOT MERGE): force q4_0 KV + flash attention so the
+    // sliding-context shift exercises the quantized-K requant copy on the
+    // selected backend. On Adreno (device:gpu -> OpenCL) the requant
+    // ggml_cpy(F32 -> q4_0) is unsupported -> expected native abort on the shift.
+    // Vulkan (Mali/NVIDIA) and CPU have the kernel -> expected pass.
+    'cache-type-k': 'q4_0',
+    'cache-type-v': 'q4_0',
+    'flash-attn': 'on'
   }
 
   const model = new LlmLlamacpp({
