@@ -68,8 +68,9 @@ public:
   /// @param finetuneOverrides If set, finetuning mode is active with these
   /// context/batch params and GPU caps.
   /// @param isOpenCl True when the chosen GPU backend is OpenCL; gates the
-  /// OpenCL KV-cache policy — allows the supported quantized types (q4_0/q8_0)
-  /// and rejects every other type outside {f32,f16,bf16,q4_0,q8_0}.
+  /// OpenCL KV-cache policy — rejects ALL quantized KV types, only f32/f16/bf16
+  /// are safe (quantized KV-cache shifts abort in llama_kv_cache::update on
+  /// Adreno because ggml-opencl has no F32->quantized requantize kernel).
   /// @param isMetal True when the chosen GPU backend is Metal; used to reject
   /// unsupported TurboQuant/PolarQuant KV-cache types.
   /// @param isGpu True when any GPU backend was selected (OpenCL, Metal, or

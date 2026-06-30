@@ -224,17 +224,26 @@ void LlamaModel::tuneConfigMap(
   // The finetuning f32 KV override above runs first; the auto-default is gated
   // by !isFinetuning so it never clobbers it.
   //
-  // Shared inputs, computed once (flash-attn is already resolved above):
+  // Shared inputs, computed once (flash-attn is already resolved above).
+  // flash-attn is read from BOTH the hyphen and underscore keys: a caller may
+  // pass flash_attn=on directly, and the underscore->hyphen normalization only
+  // happens later in the configVector loop — so check both here, otherwise the
+  // auto-default and the Adreno reject guard below would be silently skipped.
   constexpr int kAdrenoKvQuantThreshold = 800;
-  const auto flashAttnIt = configFilemap.find("flash-attn");
-  const bool flashAttnOn =
-      flashAttnIt != configFilemap.end() && flashAttnIt->second == "on";
+  auto valueIs =
+      [&](const char* hyphenKey, const char* underscoreKey, const char* want) {
+        auto it = configFilemap.find(hyphenKey);
+        if (it == configFilemap.end())
+          it = configFilemap.find(underscoreKey);
+        return it != configFilemap.end() && it->second == want;
+      };
+  const bool flashAttnOn = valueIs("flash-attn", "flash_attn", "on");
   // Adreno 800+ on Vulkan: coopmat1 Flash Attention is unstable with quantized
   // KV (no fabric scalar-FA fix on this branch). Adreno selects OpenCL by
   // default, so this is normally unreachable; kept as a defensive guard against
-  // forced-Vulkan paths.
+  // forced-Vulkan paths. Requires isGpu so a non-GPU call can't fire it.
   const bool isAdrenoVulkan =
-      adrenoVersion.has_value() &&
+      isGpu && adrenoVersion.has_value() &&
       adrenoVersion.value() >= kAdrenoKvQuantThreshold && !isOpenCl && !isMetal;
   auto isQuantizedKvType = [](const std::string& v) {
     return v == "q4_0" || v == "q4_1" || v == "q5_0" || v == "q5_1" ||

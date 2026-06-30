@@ -301,7 +301,7 @@ TEST_F(TuneConfigMapTest, OpenCl_RejectsTurboQuantKCache) {
 }
 
 // Reject-by-default: a type outside the known-safe OpenCL set
-// {f32,f16,bf16,q4_0,q8_0} must fail cleanly rather than fall through.
+// {f32,f16,bf16} must fail cleanly rather than fall through.
 TEST_F(TuneConfigMapTest, OpenCl_RejectsUnlistedKvType) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q6_K";
@@ -771,6 +771,45 @@ TEST_F(
       qvac_errors::StatusError);
 }
 
+// An underscore flash_attn=on must still arm the Adreno-Vulkan reject guard
+// (flashAttnOn is read from both key variants).
+TEST_F(
+    TuneConfigMapTest,
+    AdrenoVulkan_QuantizedKCache_FlashAttnUnderscore_Rejected) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+  configFilemap_["flash_attn"] = "on";
+
+  EXPECT_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          830,
+          FtOverrides{},
+          /*isOpenCl=*/false,
+          /*isMetal=*/false,
+          /*isGpu=*/true),
+      qvac_errors::StatusError);
+}
+
+// The Adreno-Vulkan guard requires isGpu: a non-GPU call (even with an Adreno
+// version + quantized KV) must NOT fire it.
+TEST_F(TuneConfigMapTest, AdrenoVulkan_QuantizedKCache_NotGpu_Allowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+  configFilemap_["flash-attn"] = "on";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          830,
+          FtOverrides{},
+          /*isOpenCl=*/false,
+          /*isMetal=*/false,
+          /*isGpu=*/false));
+}
+
 TEST_F(TuneConfigMapTest, AdrenoVulkan_QuantizedVCache_FlashAttnOff_Allowed) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-v"] = "q8_0";
@@ -829,6 +868,9 @@ TEST_F(TuneConfigMapTest, MixedQuantizedAsymmetric_WarnsButAllowed) {
 
 TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_DefaultsQ8_0) {
   MockModelMetaData meta(false, "llama");
+  // Set flash-attn explicitly (the q8_0 auto-default requires it) so the test
+  // doesn't rely on the earlier default-FA block's ordering.
+  configFilemap_["flash-attn"] = "on";
 
   // Plain (non-Adreno) GPU: isGpu=true, not OpenCL/Metal, no adreno version.
   LlamaModel::tuneConfigMap(
@@ -843,6 +885,24 @@ TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_DefaultsQ8_0) {
   ASSERT_EQ(configFilemap_.count("cache-type-k"), 1);
   EXPECT_EQ(configFilemap_["cache-type-k"], "q8_0");
   ASSERT_EQ(configFilemap_.count("cache-type-v"), 1);
+  EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
+}
+
+// Underscore flash_attn variant must also arm the q8_0 auto-default.
+TEST_F(TuneConfigMapTest, AutoDefault_VulkanGpu_FlashAttnUnderscore_DefaultsQ8_0) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["flash_attn"] = "on";
+
+  LlamaModel::tuneConfigMap(
+      configFilemap_,
+      meta,
+      std::nullopt,
+      FtOverrides{},
+      /*isOpenCl=*/false,
+      /*isMetal=*/false,
+      /*isGpu=*/true);
+
+  EXPECT_EQ(configFilemap_["cache-type-k"], "q8_0");
   EXPECT_EQ(configFilemap_["cache-type-v"], "q8_0");
 }
 
@@ -866,6 +926,7 @@ TEST_F(TuneConfigMapTest, AutoDefault_OpenClGpu_StaysF16) {
 
 TEST_F(TuneConfigMapTest, AutoDefault_MetalGpu_DefaultsQ8_0) {
   MockModelMetaData meta(false, "llama");
+  configFilemap_["flash-attn"] = "on";
 
   LlamaModel::tuneConfigMap(
       configFilemap_,
