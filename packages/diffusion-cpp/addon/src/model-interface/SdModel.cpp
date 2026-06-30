@@ -308,6 +308,9 @@ void SdModel::load() {
       mainGpuBackend = *resolved;
 #ifdef QVAC_SD_HAS_CTX_BACKEND
       params.backend = mainGpuBackend.c_str();
+      QLOG_IF(
+          qvac_lib_inference_addon_cpp::logger::Priority::INFO,
+          "main-gpu pinning stable-diffusion backend '" + mainGpuBackend + "'");
 #else
       if (auto vkIndex = vulkanDeviceIndexFromBackendName(mainGpuBackend);
           vkIndex.has_value()) {

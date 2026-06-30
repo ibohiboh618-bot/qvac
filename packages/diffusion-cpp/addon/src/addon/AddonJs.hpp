@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include <ggml-backend.h>
 #include <inference-addon-cpp/JsInterface.hpp>
 #include <inference-addon-cpp/JsUtils.hpp>
 #include <inference-addon-cpp/ModelInterfaces.hpp>
@@ -23,6 +24,21 @@
 #include "utils/BackendSelection.hpp"
 
 namespace qvac_lib_inference_addon_sd {
+
+inline std::string backendDeviceTypeToString(enum ggml_backend_dev_type type) {
+  switch (type) {
+  case GGML_BACKEND_DEVICE_TYPE_CPU:
+    return "CPU";
+  case GGML_BACKEND_DEVICE_TYPE_GPU:
+    return "GPU";
+  case GGML_BACKEND_DEVICE_TYPE_IGPU:
+    return "IGPU";
+  case GGML_BACKEND_DEVICE_TYPE_ACCEL:
+    return "ACCEL";
+  default:
+    return "UNKNOWN";
+  }
+}
 
 inline int parseStandaloneUpscaleRepeats(const std::string& paramsJson) {
   picojson::value v;
@@ -343,6 +359,65 @@ getExpectedEsrganBackendDevice(js_env_t* env, js_callback_info_t* info) try {
   const std::string expected =
       sd_backend_selection::expectedEsrganBackendDeviceForConfig(device);
   return js::String::create(env, expected);
+}
+JSCATCH
+
+/**
+ * Return ggml backend devices as JSON for integration diagnostics.
+ * Args: [] or [backendsDir].
+ */
+inline js_value_t*
+getBackendDevicesJson(js_env_t* env, js_callback_info_t* info) try {
+  using namespace qvac_lib_inference_addon_cpp;
+
+  const std::vector<js_value_t*> argv = js::getArguments(env, info);
+  std::string backendsDir;
+  if (!argv.empty() && !js::is<js::Undefined>(env, argv[0]) &&
+      !js::is<js::Null>(env, argv[0])) {
+    backendsDir = js::String{env, argv[0]}.as<std::string>(env);
+  }
+
+  loadBackendModulesOnce(backendsDir);
+
+  picojson::array devices;
+  int gpuIndex = 0;
+  const size_t deviceCount = ggml_backend_dev_count();
+  devices.reserve(deviceCount);
+  for (size_t i = 0; i < deviceCount; ++i) {
+    ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+    if (dev == nullptr) {
+      continue;
+    }
+
+    const char* name = ggml_backend_dev_name(dev);
+    const char* desc = ggml_backend_dev_description(dev);
+    const auto type = ggml_backend_dev_type(dev);
+    size_t freeBytes = 0;
+    size_t totalBytes = 0;
+    ggml_backend_dev_memory(dev, &freeBytes, &totalBytes);
+
+    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+    const char* regName = reg != nullptr ? ggml_backend_reg_name(reg) : nullptr;
+
+    picojson::object item;
+    item["index"] = picojson::value(static_cast<double>(i));
+    item["gpuIndex"] = picojson::value(-1.0);
+    if (type == GGML_BACKEND_DEVICE_TYPE_GPU ||
+        type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+      item["gpuIndex"] = picojson::value(static_cast<double>(gpuIndex++));
+    }
+    item["name"] = picojson::value(std::string(name != nullptr ? name : ""));
+    item["description"] =
+        picojson::value(std::string(desc != nullptr ? desc : ""));
+    item["type"] = picojson::value(backendDeviceTypeToString(type));
+    item["registry"] =
+        picojson::value(std::string(regName != nullptr ? regName : ""));
+    item["freeBytes"] = picojson::value(static_cast<double>(freeBytes));
+    item["totalBytes"] = picojson::value(static_cast<double>(totalBytes));
+    devices.emplace_back(item);
+  }
+
+  return js::String::create(env, picojson::value(devices).serialize());
 }
 JSCATCH
 
