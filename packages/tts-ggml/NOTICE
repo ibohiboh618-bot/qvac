@@ -19,13 +19,15 @@ JavaScript Dependencies
     https://github.com/tetherto/qvac
   b4a@1.8.1
     https://github.com/holepunchto/b4a
+  bare-buffer@3.6.1
+    https://github.com/holepunchto/bare-buffer
   bare-env@3.0.0
     https://github.com/holepunchto/bare-env
   bare-events@2.9.1
     https://github.com/holepunchto/bare-events
   bare-fs@4.7.2
     https://github.com/holepunchto/bare-fs
-  bare-os@3.9.3
+  bare-os@3.9.1
     https://github.com/holepunchto/bare-os
   bare-path@3.0.1
     https://github.com/holepunchto/bare-path
@@ -56,6 +58,11 @@ C++ Dependencies
 
   qvac-lib-inference-addon-cpp
     https://github.com/tetherto/qvac
+
+--- apache-2.0-with-llvm-exception ---
+
+  libc++ (LLVM C++ Standard Library)
+    https://github.com/llvm/llvm-project
 
 --- mit (MIT License) ---
 

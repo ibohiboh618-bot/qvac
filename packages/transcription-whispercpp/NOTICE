@@ -88,7 +88,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/bare-events
   bare-fs@4.7.2
     https://github.com/holepunchto/bare-fs
-  bare-os@3.9.3
+  bare-os@3.9.1
     https://github.com/holepunchto/bare-os
   bare-path@3.0.1
     https://github.com/holepunchto/bare-path
@@ -183,6 +183,11 @@ C++ Dependencies
 
   qvac-lib-inference-addon-cpp
     https://github.com/tetherto/qvac
+
+--- apache-2.0-with-llvm-exception ---
+
+  libc++ (LLVM C++ Standard Library)
+    https://github.com/llvm/llvm-project
 
 --- bsd-3-clause (BSD 3-Clause License) ---
 

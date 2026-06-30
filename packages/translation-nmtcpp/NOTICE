@@ -57,8 +57,6 @@ Third-Party Model Licenses
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enbg
   model.enbn.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enbn
-  model.enbs.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enbs
   model.enca.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enca
   model.encs.intgemm.alphas
@@ -109,12 +107,8 @@ Third-Party Model Licenses
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enml
   model.enms.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enms
-  model.ennb.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/tiny/ennb
   model.ennl.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/ennl
-  model.enno.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/tiny/enno
   model.enpl.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enpl
   model.enpt.intgemm.alphas
@@ -129,24 +123,16 @@ Third-Party Model Licenses
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/ensl
   model.ensq.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/ensq
-  model.ensr.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/ensr
   model.ensv.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/ensv
   model.enta.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enta
   model.ente.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/ente
-  model.enth.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enth
   model.entr.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/entr
   model.enuk.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enuk
-  model.envi.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/envi
-  model.enzh.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/enzh
   model.esen.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/esen
   model.eten.intgemm.alphas
@@ -159,8 +145,6 @@ Third-Party Model Licenses
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/fren
   model.guen.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/guen
-  model.hbsen.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/hbsen
   model.heen.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/heen
   model.hien.intgemm.alphas
@@ -197,8 +181,6 @@ Third-Party Model Licenses
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/nlen
   model.nnen.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/nnen
-  model.noen.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/tiny/noen
   model.plen.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/plen
   model.pten.intgemm.alphas
@@ -221,16 +203,12 @@ Third-Party Model Licenses
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/taen
   model.teen.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/teen
-  model.then.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/then
   model.tren.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/tren
   model.uken.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/uken
   model.vien.intgemm.alphas
     https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/vien
-  model.zhen.intgemm.alphas
-    https://github.com/mozilla/firefox-translations-models/tree/main/models/base-memory/zhen
 
 =========================================================================
 Modification Notice
@@ -251,23 +229,17 @@ JavaScript Dependencies
 
 --- apache-2.0 (Apache License 2.0) ---
 
-  @qvac/diagnostics@0.1.2
-    https://github.com/tetherto/qvac
+  @qvac/diagnostics@0.1.1
   @qvac/error@0.1.1
-  @qvac/infer-base@0.4.2
+  @qvac/infer-base@0.4.1
     https://github.com/tetherto/qvac
-  @qvac/logging@0.1.1
-    https://github.com/tetherto/qvac
-  bare-env@3.0.0
-    https://github.com/holepunchto/bare-env
-  bare-events@2.9.1
+  @qvac/logging@0.1.0
+  bare-events@2.4.2
     https://github.com/holepunchto/bare-events
-  bare-os@3.9.3
+  bare-os@3.9.1
     https://github.com/holepunchto/bare-os
-  bare-path@3.0.1
+  bare-path@3.0.0
     https://github.com/holepunchto/bare-path
-  which-runtime@1.4.0
-    https://github.com/holepunchto/which-runtime
 
 
 =========================================================================
@@ -319,10 +291,16 @@ C++ Dependencies
 
   qvac-lib-inference-addon-cpp
     https://github.com/tetherto/qvac
+  qvac-lint-cpp
   sentencepiece
     https://github.com/google/sentencepiece
   ssplit
     https://github.com/browsermt/ssplit-cpp
+
+--- apache-2.0-with-llvm-exception ---
+
+  libc++ (LLVM C++ Standard Library)
+    https://github.com/llvm/llvm-project
 
 --- mit (MIT License) ---
 
@@ -333,8 +311,4 @@ C++ Dependencies
 
   bergamot-translator
     https://github.com/tetherto/qvac-ext-bergamot-translator
-
---- Unknown ---
-
-  qvac-lint-cpp
 

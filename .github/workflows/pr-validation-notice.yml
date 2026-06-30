@@ -144,11 +144,8 @@ jobs:
         env:
           # Presence-only check — the value is never printed.
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-          PKG: ${{ matrix.package }}
         run: |
           set -euo pipefail
-          # Slash-free artifact name (registry-server/client -> registry-server-client).
-          echo "safe=notice-${PKG//\//-}" >> "$GITHUB_OUTPUT"
           if [ -n "${GH_TOKEN:-}" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "Credentials present — NOTICE drift will be verified."
@@ -203,18 +200,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::error file=$NOTICE_PATH::NOTICE is out of date — regenerate with qv-notice-generate and commit."
           exit 1
-
-      # Publish the freshly generated NOTICE so a maintainer can download and
-      # commit it to clear drift. Runs even when the drift check above fails
-      # (that is the case where the artifact is actually needed).
-      - name: Upload regenerated NOTICE
-        if: always() && steps.creds.outputs.available == 'true'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
-        with:
-          name: ${{ steps.creds.outputs.safe }}
-          path: packages/${{ matrix.package }}/NOTICE
-          retention-days: 1
-          if-no-files-found: error
 
   # Single, stable status check that aggregates the matrix. Make THIS the
   # required check once docs/devops/TIER-1-SCOPE.md is signed off — its name

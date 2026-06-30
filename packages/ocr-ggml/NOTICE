@@ -1,55 +1,63 @@
 @qvac/ocr-ggml
-Copyright 2026 Tether Data, S.A. de C.V.
+Copyright (C) Tether Operations Limited
 
-This product includes third-party components under their
-respective licenses. @qvac/ocr-ggml itself is licensed under
-Apache-2.0; bundled dependencies are governed by the licenses
-listed below.
+Licensed under the Apache License, Version 2.0 (the "License"). You may
+obtain a copy of the License at:
 
-=========================================================================
-JavaScript Dependencies
-=========================================================================
+    http://www.apache.org/licenses/LICENSE-2.0
 
---- apache-2.0 (Apache License 2.0) ---
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
 
-  @qvac/diagnostics@0.1.2
-    https://github.com/tetherto/qvac
-  @qvac/error@0.1.1
-  @qvac/infer-base@0.4.2
-    https://github.com/tetherto/qvac
-  @qvac/logging@0.1.1
-    https://github.com/tetherto/qvac
-  bare-env@3.0.0
-    https://github.com/holepunchto/bare-env
-  bare-events@2.9.1
-    https://github.com/holepunchto/bare-events
-  bare-os@3.9.3
-    https://github.com/holepunchto/bare-os
-  bare-path@3.0.1
-    https://github.com/holepunchto/bare-path
-  which-runtime@1.4.0
-    https://github.com/holepunchto/which-runtime
+----------------------------------------------------------------------
+Third-party components and provenance
+----------------------------------------------------------------------
 
+This package incorporates source code lifted, with adaptation, from the
+following projects. Each component retains its own license; the project
+links cited below contain the canonical license text.
 
-=========================================================================
-C++ Dependencies
-=========================================================================
+1. EasyOCR (Apache License 2.0)
+   https://github.com/JaidedAI/EasyOCR
+   The detection (CRAFT) and recognition (CRNN gen-2) pipeline shape,
+   pre/post-processing math, and language tables in
+   `addon/src/pipeline/*` and `addon/src/easyocr-ggml/*` are derived
+   from the upstream EasyOCR Python reference.
 
---- apache-2.0 (Apache License 2.0) ---
+2. EasyOcr-ggml (Apache License 2.0)
+   https://github.com/tetherto/easy-ocr-ggml
+   The GGML graph builders, GGUF weight loaders, and BN-folded weight
+   tables in `addon/src/ggml/*` and `addon/src/easyocr-ggml/*` are
+   lifted verbatim (with minor namespace adjustments) from this sibling
+   project.
 
-  opencl
-    https://github.com/KhronosGroup/OpenCL-ICD-Loader
-  opencv4
-    https://github.com/opencv/opencv
-  qvac-lib-inference-addon-cpp
-    https://github.com/tetherto/qvac
+3. ggml (MIT License)
+   https://github.com/ggml-org/ggml
+   Consumed at build time via `qvac-fabric`'s vcpkg port. The dynamic
+   backend shared libraries shipped under `prebuilds/` (CPU, Vulkan,
+   OpenCL, …) are ggml's outputs and inherit ggml's MIT license.
 
---- mit (MIT License) ---
+4. OpenCV (Apache License 2.0)
+   https://github.com/opencv/opencv
+   Consumed at build time via vcpkg's `opencv4` port. Used for image
+   decode, geometric transforms, and connected-component analysis in
+   the detection / bounding-box pipeline.
 
-  qvac-fabric
-    https://github.com/tetherto/qvac-fabric-llm.cpp
+5. @qvac/inference-addon-cpp (Apache License 2.0)
+   https://github.com/tetherto/qvac-lib-inference-addon-cpp
+   Provides the `IModel`, `JsInterface`, and output-handler base
+   classes that the C++ side of this addon inherits from.
 
---- Unknown ---
+6. @qvac/translation-nmtcpp (Apache License 2.0)
+   https://github.com/tetherto/qvac/tree/main/packages/translation-nmtcpp
+   Build / vcpkg / triplet / bare-module plumbing in this package is
+   adapted from the sibling translation addon.
 
-  qvac-lint-cpp
-
+7. @qvac/ocr-onnx (Apache License 2.0)
+   https://github.com/tetherto/qvac/tree/main/packages/ocr-onnx
+   The JS-side public surface (constructor shape, image-decode
+   convention, output row schema) is modelled after this sibling so
+   downstream callers can swap engines transparently.
