@@ -343,6 +343,8 @@ Third-Party Model Licenses
     https://huggingface.co/ChristianAzinn/gte-large-gguf
   gte-large-gguf
     https://huggingface.co/ChristianAzinn/gte-large-gguf
+  lavasr-enhancer-f16
+    https://huggingface.co/spaces/YatharthS
   pt-tiny-ggml-model-f16
     https://huggingface.co/DavyCosta701/whisper-tiny-pt-bpra
   tiny_acft_q8_0
@@ -623,13 +625,15 @@ JavaScript Dependencies
     https://github.com/holepunchto/hyperswarm-secret-stream
   @qvac/decoder-audio@0.5.0
     https://github.com/tetherto/qvac
-  @qvac/diagnostics@0.1.1
+  @qvac/diagnostics@0.1.2
+    https://github.com/tetherto/qvac
   @qvac/error@0.1.1
-  @qvac/infer-base@0.4.1
+  @qvac/infer-base@0.4.2
     https://github.com/tetherto/qvac
   @qvac/langdetect-text@0.1.2
     https://github.com/tetherto/qvac
-  @qvac/logging@0.1.0
+  @qvac/logging@0.1.1
+    https://github.com/tetherto/qvac
   @qvac/rag@0.6.4
     https://github.com/tetherto/qvac
   @qvac/registry-client@0.6.1
@@ -650,7 +654,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/bare-ansi-escapes
   bare-assert@1.2.0
     https://github.com/holepunchto/bare-assert
-  bare-buffer@3.6.0
+  bare-buffer@3.6.1
     https://github.com/holepunchto/bare-buffer
   bare-crypto@1.15.3
     https://github.com/holepunchto/bare-crypto
@@ -658,17 +662,15 @@ JavaScript Dependencies
     https://github.com/holepunchto/bare-dns
   bare-env@3.0.0
     https://github.com/holepunchto/bare-env
-  bare-events@2.4.2
-    https://github.com/holepunchto/bare-events
-  bare-events@2.8.3
+  bare-events@2.9.1
     https://github.com/holepunchto/bare-events
   bare-fetch@3.0.1
     https://github.com/holepunchto/bare-fetch
-  bare-ffmpeg@1.2.2
+  bare-ffmpeg@1.3.0
     https://github.com/holepunchto/bare-ffmpeg
   bare-form-data@1.2.2
     https://github.com/holepunchto/bare-form-data
-  bare-fs@4.7.1
+  bare-fs@4.7.2
     https://github.com/holepunchto/bare-fs
   bare-hrtime@2.1.1
     https://github.com/holepunchto/bare-hrtime
@@ -686,39 +688,41 @@ JavaScript Dependencies
     https://github.com/holepunchto/bare-module-resolve
   bare-net@2.3.2
     https://github.com/holepunchto/bare-net
-  bare-os@3.9.1
+  bare-os@3.9.3
     https://github.com/holepunchto/bare-os
   bare-path@3.0.1
     https://github.com/holepunchto/bare-path
-  bare-pipe@4.1.5
+  bare-pipe@4.2.2
     https://github.com/holepunchto/bare-pipe
-  bare-process@4.4.1
+  bare-posix@1.0.1
+    https://github.com/holepunchto/bare-posix
+  bare-process@4.5.0
     https://github.com/holepunchto/bare-process
-  bare-rpc@1.3.2
+  bare-rpc@1.3.3
     https://github.com/holepunchto/bare-rpc
-  bare-semver@1.0.3
+  bare-semver@1.1.0
     https://github.com/holepunchto/bare-semver
   bare-signals@4.2.0
     https://github.com/holepunchto/bare-signals
   bare-stdio@1.0.2
     https://github.com/holepunchto/bare-stdio
-  bare-stream@2.13.1
+  bare-stream@2.13.3
     https://github.com/holepunchto/bare-stream
   bare-tcp@2.5.1
     https://github.com/holepunchto/bare-tcp
   bare-tls@3.1.7
     https://github.com/holepunchto/bare-tls
-  bare-tty@5.1.0
+  bare-tty@5.1.1
     https://github.com/holepunchto/bare-tty
   bare-type@1.1.0
     https://github.com/holepunchto/bare-type
-  bare-url@2.4.3
+  bare-url@2.4.5
     https://github.com/holepunchto/bare-url
-  bare-zlib@1.3.3
+  bare-zlib@1.4.0
     https://github.com/holepunchto/bare-zlib
   blind-relay@1.6.1
     https://github.com/holepunchto/blind-relay
-  compact-encoding@3.1.0
+  compact-encoding@3.3.0
     https://github.com/holepunchto/compact-encoding
   compact-encoding-bitfield@1.1.0
     https://github.com/compact-encoding/compact-encoding-bitfield
@@ -728,11 +732,11 @@ JavaScript Dependencies
     https://github.com/holepunchto/device-file
   events-universal@1.0.1
     https://github.com/holepunchto/events-universal
-  fd-lock@2.1.1
+  fd-lock@2.2.0
     https://github.com/holepunchto/fd-lock
   fs-native-extensions@1.5.0
     https://github.com/holepunchto/fs-native-extensions
-  hyperblobs@2.12.0
+  hyperblobs@2.12.1
     https://github.com/holepunchto/hyperblobs
   hypercore-errors@1.5.0
     https://github.com/holepunchto/hypercore-errors
@@ -740,7 +744,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/hypercore-id-encoding
   hypercore-stats@2.4.0
     https://github.com/holepunchto/hypercore-stats
-  hypercore-storage@2.9.0
+  hypercore-storage@3.1.2
     https://github.com/holepunchto/hypercore-storage
   hyperdb@6.7.0
     https://github.com/holepunchto/hyperdb
@@ -754,7 +758,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/hyperdrive
   hyperschema@1.21.0
     https://github.com/holepunchto/hyperschema
-  hyperswarm-stats@1.3.0
+  hyperswarm-stats@1.3.1
     https://github.com/holepunchto/hyperswarm-stats
   index-encoder@3.5.0
     https://github.com/holepunchto/index-encoder
@@ -780,7 +784,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/require-addon
   resource-on-exit@1.0.0
     https://github.com/holepunchto/bare-teardown
-  rocksdb-native@3.15.1
+  rocksdb-native@3.17.0
     https://github.com/holepunchto/rocksdb-native
   scope-lock@1.2.4
     https://github.com/holepunchto/scope-lock
@@ -790,7 +794,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/sub-encoder
   text-decoder@1.2.7
     https://github.com/holepunchto/text-decoder
-  udx-native@1.19.2
+  udx-native@1.20.7
     https://github.com/holepunchto/udx-native
   unslab@1.3.0
     https://github.com/holepunchto/unslab
@@ -807,7 +811,7 @@ JavaScript Dependencies
     https://github.com/chm-diederichs/noise-curve-ed
   quickbit-universal@2.2.0
     https://github.com/holepunchto/quickbit-universal
-  semver@7.8.1
+  semver@7.8.5
     https://github.com/npm/node-semver
   simdle-universal@1.1.2
     https://github.com/holepunchto/simdle-universal
@@ -822,7 +826,7 @@ JavaScript Dependencies
     https://github.com/mafintosh/bogon
   codecs@3.1.0
     https://github.com/mafintosh/codecs
-  corestore@7.9.2
+  corestore@7.11.0
     https://github.com/holepunchto/corestore
   debounceify@1.1.0
     https://github.com/mafintosh/debounceify
@@ -840,7 +844,7 @@ JavaScript Dependencies
     https://github.com/mafintosh/generate-string
   hyperbee@2.27.3
     https://github.com/holepunchto/hyperbee
-  hypercore@11.30.2
+  hypercore@11.33.5
     https://github.com/holepunchto/hypercore
   hypercore-crypto@3.7.0
     https://github.com/mafintosh/hypercore-crypto
@@ -892,7 +896,7 @@ JavaScript Dependencies
     https://github.com/holepunchto/sodium-universal
   speedometer@1.1.0
     https://github.com/mafintosh/speedometer
-  streamx@2.26.0
+  streamx@2.28.0
     https://github.com/mafintosh/streamx
   tar-stream@3.2.0
     https://github.com/mafintosh/tar-stream

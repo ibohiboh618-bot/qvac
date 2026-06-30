@@ -1,42 +1,74 @@
 @qvac/classification-ggml
-Copyright 2026 Tether Operations Limited
+Copyright 2026 Tether Data, S.A. de C.V.
 
-This product includes software developed by Tether Operations Limited
-(https://tether.io/).
+This product includes third-party components under their
+respective licenses. @qvac/classification-ggml itself is licensed under
+Apache-2.0; bundled dependencies are governed by the licenses
+listed below.
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may
-not use this file except in compliance with the License. You may obtain
-a copy of the License at
+=========================================================================
+JavaScript Dependencies
+=========================================================================
 
-    http://www.apache.org/licenses/LICENSE-2.0
+--- apache-2.0 (Apache License 2.0) ---
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+  @qvac/diagnostics@0.1.2
+    https://github.com/tetherto/qvac
+  @qvac/error@0.1.1
+  @qvac/infer-base@0.4.2
+    https://github.com/tetherto/qvac
+  @qvac/logging@0.1.1
+    https://github.com/tetherto/qvac
+  b4a@1.8.1
+    https://github.com/holepunchto/b4a
+  bare-env@3.0.0
+    https://github.com/holepunchto/bare-env
+  bare-events@2.9.1
+    https://github.com/holepunchto/bare-events
+  bare-fs@4.7.2
+    https://github.com/holepunchto/bare-fs
+  bare-os@3.9.3
+    https://github.com/holepunchto/bare-os
+  bare-path@3.0.1
+    https://github.com/holepunchto/bare-path
+  bare-stream@2.13.3
+    https://github.com/holepunchto/bare-stream
+  bare-url@2.4.5
+    https://github.com/holepunchto/bare-url
+  events-universal@1.0.1
+    https://github.com/holepunchto/events-universal
+  text-decoder@1.2.7
+    https://github.com/holepunchto/text-decoder
+  which-runtime@1.4.0
+    https://github.com/holepunchto/which-runtime
 
-================================================================================
+--- mit (MIT License) ---
 
-This product bundles the following third-party components:
+  fast-fifo@1.3.2
+    https://github.com/mafintosh/fast-fifo
+  streamx@2.28.0
+    https://github.com/mafintosh/streamx
+  teex@1.0.1
+    https://github.com/mafintosh/teex
 
---------------------------------------------------------------------------------
-ggml — a tensor library for machine learning
-Copyright (c) 2022-2025 Georgi Gerganov
-Licensed under the MIT License.
-Source: https://github.com/ggerganov/ggml
 
---------------------------------------------------------------------------------
-stb_image.h / stb_image_resize2.h — Sean Barrett's public-domain image library
-Licensed under the MIT License / Public Domain (dual).
-Source: https://github.com/nothings/stb
+=========================================================================
+C++ Dependencies
+=========================================================================
 
---------------------------------------------------------------------------------
-MobileNetV3-Small (Howard et al., 2019) — reference architecture
-Weights shipped in this package are a 3-class fine-tune of the PyTorch /
-torchvision reference model. Original torchvision model and code are
-Copyright (c) Meta Platforms / PyTorch Contributors, BSD-3-Clause licensed.
-Paper: "Searching for MobileNetV3" (arXiv:1905.02244).
+--- apache-2.0 (Apache License 2.0) ---
 
-The fine-tuned weight file (weights/mobilenetv3_3class_v3_fp16.gguf) is
-released under the Apache-2.0 license, same as this package.
+  qvac-lib-inference-addon-cpp
+    https://github.com/tetherto/qvac
+
+--- mit (MIT License) ---
+
+  qvac-fabric
+    https://github.com/tetherto/qvac-fabric-llm.cpp
+  stb
+    https://github.com/nothings/stb
+
+--- Unknown ---
+
+  qvac-lint-cpp
+

@@ -37,6 +37,14 @@ Third-Party Model Licenses
 
   dolphin-mixtral-2x7b-dop-Q2_K-00001-of-00005
     https://huggingface.co/jmb95/laser-dolphin-mixtral-2x7b-dpo-GGUF
+  gemma-4-E2B-it-GGUF
+    https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF
+  google_gemma-4-31B-it-GGUF
+    https://huggingface.co/bartowski/google_gemma-4-31B-it-GGUF
+  google_gemma-4-E2B-it-GGUF
+    https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF
+  google_gemma-4-E4B-it-GGUF
+    https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF
   gpt-oss-120b-Q4_K_M-00001-of-00002
     https://huggingface.co/unsloth/gpt-oss-120b-GGUF
   gpt-oss-20b-GGUF
@@ -47,6 +55,10 @@ Third-Party Model Licenses
     https://huggingface.co/noctrex/LightOnOCR-2-1B-ocr-soup-GGUF
   Llama_3.2_1B_Intruct_Tool_Calling_V2-GGUF
     https://huggingface.co/mav23/Llama_3.2_1B_Intruct_Tool_Calling_V2-GGUF
+  MedPsy-1.7B-GGUF
+    https://huggingface.co/qvac/MedPsy-1.7B-GGUF
+  MedPsy-4B-GGUF
+    https://huggingface.co/qvac/MedPsy-4B-GGUF
   Qwen3-0.6B-GGUF
     https://huggingface.co/unsloth/Qwen3-0.6B-GGUF
   Qwen3-1.7B-GGUF
@@ -61,12 +73,32 @@ Third-Party Model Licenses
     https://huggingface.co/Qwen/Qwen3-8B-GGUF
   Qwen3-VL-2B-Instruct-GGUF
     https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF
+  Qwen3.5-0.8B-GGUF
+    https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF
+  Qwen3.5-0.8B-GGUF
+    https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF
+  Qwen3.5-2B-GGUF
+    https://huggingface.co/unsloth/Qwen3.5-2B-GGUF
+  Qwen3.5-2B-GGUF
+    https://huggingface.co/mradermacher/Qwen3.5-2B-GGUF
+  Qwen3.5-4B-GGUF
+    https://huggingface.co/unsloth/Qwen3.5-4B-GGUF
+  Qwen3.5-4B-GGUF
+    https://huggingface.co/mradermacher/Qwen3.5-4B-GGUF
+  Qwen3.5-9B-GGUF
+    https://huggingface.co/unsloth/Qwen3.5-9B-GGUF
+  Qwen3.6-27B-GGUF
+    https://huggingface.co/unsloth/Qwen3.6-27B-GGUF
+  Qwen3.6-35B-A3B-GGUF
+    https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF
   salamandrata_2b_inst_q4-00001-of-00003
     https://huggingface.co/BSC-LT/salamandraTA-2B-instruct-GGUF
   salamandrata_2b_inst_q8-00001-of-00004
     https://huggingface.co/BSC-LT/salamandraTA-2B-instruct-GGUF
   salamandraTA-2B-instruct-GGUF
     https://huggingface.co/BSC-LT/salamandraTA-2B-instruct-GGUF
+  SmolLM2-360M-Instruct-GGUF
+    https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF
   SmolVLM2-500M-Video-Instruct-GGUF
     https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF
 
@@ -119,53 +151,41 @@ JavaScript Dependencies
 
 --- apache-2.0 (Apache License 2.0) ---
 
-  @qvac/diagnostics@0.1.1
-  @qvac/error@0.1.1
-  @qvac/infer-base@0.4.1
+  @qvac/diagnostics@0.1.2
     https://github.com/tetherto/qvac
-  @qvac/logging@0.1.0
+  @qvac/error@0.1.1
+  @qvac/infer-base@0.4.2
+    https://github.com/tetherto/qvac
+  @qvac/logging@0.1.1
+    https://github.com/tetherto/qvac
   b4a@1.8.1
     https://github.com/holepunchto/b4a
-  bare-abort@2.0.13
-    https://github.com/holepunchto/bare-abort
   bare-env@3.0.0
     https://github.com/holepunchto/bare-env
-  bare-events@2.4.2
+  bare-events@2.9.1
     https://github.com/holepunchto/bare-events
-  bare-events@2.8.2
-    https://github.com/holepunchto/bare-events
-  bare-fs@4.7.1
+  bare-fs@4.7.2
     https://github.com/holepunchto/bare-fs
-  bare-hrtime@2.1.1
-    https://github.com/holepunchto/bare-hrtime
-  bare-os@3.9.1
+  bare-os@3.9.3
     https://github.com/holepunchto/bare-os
-  bare-path@3.0.0
+  bare-path@3.0.1
     https://github.com/holepunchto/bare-path
-  bare-pipe@4.1.5
-    https://github.com/holepunchto/bare-pipe
-  bare-process@4.4.1
-    https://github.com/holepunchto/bare-process
-  bare-signals@4.2.0
-    https://github.com/holepunchto/bare-signals
-  bare-stdio@1.0.2
-    https://github.com/holepunchto/bare-stdio
-  bare-stream@2.13.1
+  bare-stream@2.13.3
     https://github.com/holepunchto/bare-stream
-  bare-tty@5.1.0
-    https://github.com/holepunchto/bare-tty
-  bare-url@2.4.3
+  bare-url@2.4.5
     https://github.com/holepunchto/bare-url
   events-universal@1.0.1
     https://github.com/holepunchto/events-universal
   text-decoder@1.2.7
     https://github.com/holepunchto/text-decoder
+  which-runtime@1.4.0
+    https://github.com/holepunchto/which-runtime
 
 --- mit (MIT License) ---
 
   fast-fifo@1.3.2
     https://github.com/mafintosh/fast-fifo
-  streamx@2.25.0
+  streamx@2.28.0
     https://github.com/mafintosh/streamx
   teex@1.0.1
     https://github.com/mafintosh/teex
@@ -218,12 +238,6 @@ C++ Dependencies
     https://github.com/KhronosGroup/OpenCL-ICD-Loader
   qvac-lib-inference-addon-cpp
     https://github.com/tetherto/qvac
-  qvac-lint-cpp
-
---- apache-2.0-with-llvm-exception ---
-
-  libc++ (LLVM C++ Standard Library)
-    https://github.com/llvm/llvm-project
 
 --- bsd-2-clause (BSD 2-Clause License) ---
 
@@ -232,8 +246,14 @@ C++ Dependencies
 
 --- mit (MIT License) ---
 
+  concurrentqueue
+    https://github.com/cameron314/concurrentqueue
   nlohmann-json
     https://github.com/nlohmann/json
   qvac-fabric
     https://github.com/tetherto/qvac-fabric-llm.cpp
+
+--- Unknown ---
+
+  qvac-lint-cpp
 
