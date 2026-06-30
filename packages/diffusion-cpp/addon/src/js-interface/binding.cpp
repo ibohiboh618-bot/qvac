@@ -31,7 +31,6 @@ js_value_t* qvacLibInferenceAddonSdExports(js_env_t* env, js_value_t* exports) {
   V("releaseLogger", qvac_lib_inference_addon_cpp::JsInterface::releaseLogger)
   V("getExpectedEsrganBackendDevice",
     qvac_lib_inference_addon_sd::getExpectedEsrganBackendDevice)
-  V("getBackendDevicesJson", qvac_lib_inference_addon_sd::getBackendDevicesJson)
 
 #undef V
   return exports;

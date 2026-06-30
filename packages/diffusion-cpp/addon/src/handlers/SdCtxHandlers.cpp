@@ -2,6 +2,10 @@
 
 #include <cstddef>
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+
 #include <inference-addon-cpp/Errors.hpp>
 
 #include "utils/BackendSelection.hpp"
