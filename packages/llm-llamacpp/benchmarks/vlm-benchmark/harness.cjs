@@ -298,9 +298,6 @@ function runModel (spec) {
           // null leaves the addon's per-platform default untouched. No-op on
           // the cpu device leg (no GPU to offload the projector to).
           ...(mmproj ? { 'mmproj-use-gpu': mmproj === 'gpu' ? 'true' : 'false' } : {}),
-          // QVAC-21320: force the qwen3vl multi-tile BATCHED mode (encode all tiles in
-          // one forward) instead of the temp-9341 default 'sequential' (one-by-one).
-          'image-tile-mode': 'batched',
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
