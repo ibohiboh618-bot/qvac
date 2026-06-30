@@ -166,6 +166,11 @@ endif()
 
 if (VCPKG_TARGET_IS_ANDROID AND BUILD_GPU_BACKENDS)
   list(APPEND PLATFORM_OPTIONS -DGGML_OPENCL=ON)
+  # QVAC-21297 Phase 6 PROFILER build only: per-kernel OpenCL device timing
+  # (emits `CLPROF kernel=<name> total_ms=… calls=…` to logcat) to locate the
+  # non-FA softmax/mul_mat headroom on Adreno. Adds queue-profiling overhead —
+  # never ship this; the perf/quality numbers come from the profiler-off runs.
+  list(APPEND PLATFORM_OPTIONS -DGGML_OPENCL_PROFILING=ON)
 endif()
 
 if(BUILD_GPU_BACKENDS AND NOT VCPKG_TARGET_IS_OSX AND NOT VCPKG_TARGET_IS_IOS)
