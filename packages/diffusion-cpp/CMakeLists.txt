@@ -46,6 +46,46 @@ find_path(QVAC_LIB_INFERENCE_ADDON_CPP_INCLUDE_DIRS "inference-addon-cpp/JsInter
 
 # stable-diffusion.cpp – uses the CMake config installed by the registry port
 find_package(stable-diffusion-cpp CONFIG REQUIRED)
+find_path(STABLE_DIFFUSION_COMPAT_INCLUDE_DIR "stable-diffusion.h" REQUIRED)
+
+include(CheckCXXSourceCompiles)
+set(_QVAC_PREV_REQUIRED_INCLUDES "${CMAKE_REQUIRED_INCLUDES}")
+set(CMAKE_REQUIRED_INCLUDES "${STABLE_DIFFUSION_COMPAT_INCLUDE_DIR}")
+
+check_cxx_source_compiles("
+#include <stable-diffusion.h>
+int main() {
+  sd_ctx_params_t params{};
+  params.backend = nullptr;
+  return 0;
+}
+" QVAC_SD_HAS_CTX_BACKEND)
+
+check_cxx_source_compiles("
+#include <stable-diffusion.h>
+int main() {
+  sd_image_t* frames = nullptr;
+  int frame_count = 0;
+  sd_audio_t* audio = nullptr;
+  bool ok = generate_video(nullptr, nullptr, &frames, &frame_count, &audio);
+  free_sd_audio(audio);
+  return ok ? 0 : 0;
+}
+" QVAC_SD_HAS_AUDIO_VIDEO_API)
+
+set(CMAKE_REQUIRED_INCLUDES "${_QVAC_PREV_REQUIRED_INCLUDES}")
+unset(_QVAC_PREV_REQUIRED_INCLUDES)
+
+message(STATUS "stable-diffusion.cpp ctx backend API: ${QVAC_SD_HAS_CTX_BACKEND}")
+message(STATUS "stable-diffusion.cpp audio video API: ${QVAC_SD_HAS_AUDIO_VIDEO_API}")
+
+if(QVAC_SD_HAS_CTX_BACKEND)
+  add_compile_definitions(QVAC_SD_HAS_CTX_BACKEND)
+endif()
+
+if(QVAC_SD_HAS_AUDIO_VIDEO_API)
+  add_compile_definitions(QVAC_SD_HAS_AUDIO_VIDEO_API)
+endif()
 
 # ggml is installed alongside stable-diffusion.cpp as separate static libs.
 # stable-diffusion.a references ggml symbols externally, so we must link them.
