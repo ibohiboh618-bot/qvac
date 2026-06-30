@@ -10,7 +10,7 @@ vcpkg_from_github(
   # + the tag SHA512 in the registry PR (Phase B1), and delete this overlay from
   # the consumers in the landing PR (Phase B2).
   REF fac41ec3512604688f32ddbc4b04a82ba208aa81
-  SHA512 0
+  SHA512 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
