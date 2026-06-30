@@ -16,6 +16,7 @@ const HERE = __dirname
 const INTEG = path.resolve(HERE, '..', '..', 'test', 'integration')
 const ASSETS = path.resolve(HERE, '..', '..', 'test', 'mobile', 'testAssets')
 const IMAGES = path.join(HERE, 'images')
+const MEDIA = path.resolve(HERE, '..', '..', 'media') // committed addon test images
 
 // The entry + the modules it requires must sit together in test/integration so the
 // entry's `./harness.cjs` / harness's `./config.cjs` `./fixture.data.cjs` resolve.
@@ -28,12 +29,28 @@ for (const f of CODE) {
   fs.copyFileSync(path.join(HERE, f), path.join(INTEG, f))
   console.log(`staged -> test/integration/${f}`)
 }
-// Images aren't in git — CI syncs them from the fixture object store (URI configured
-// in the benchmark workflow) into images/ before this runs. Fail loudly if skipped.
-const imgs = fs.existsSync(IMAGES) ? fs.readdirSync(IMAGES).filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)) : []
-if (!imgs.length) throw new Error(`No images in ${IMAGES} — sync the fixture image store into it first`)
-for (const f of imgs) fs.copyFileSync(path.join(IMAGES, f), path.join(ASSETS, f))
-console.log(`staged ${imgs.length} images -> test/mobile/testAssets`)
+// QVAC-21320: this branch benchmarks two COMMITTED addon test images (elephant +
+// fruit-plate) from packages/llm-llamacpp/media/, not the lmms-eval fixture store. Stage
+// ONLY the images referenced by the fixture: source each from media/ (the committed
+// source of truth — deterministic, independent of the CI S3 sync) and fall back to
+// images/ only if not in media/; mirror into images/ + testAssets. Fail loudly if a
+// referenced image is in neither.
+const fixture = require('./fixture.data.cjs')
+const referenced = [...new Set(fixture.items.map(it => it.image))]
+fs.mkdirSync(IMAGES, { recursive: true })
+let staged = 0
+for (const name of referenced) {
+  const inImages = path.join(IMAGES, name)
+  const inMedia = path.join(MEDIA, name)
+  const src = fs.existsSync(inMedia) ? inMedia : (fs.existsSync(inImages) ? inImages : null)
+  if (!src) throw new Error(`Benchmark image '${name}' not found in ${MEDIA} or ${IMAGES}`)
+  if (src !== inImages) fs.copyFileSync(src, inImages) // ensure present in images/
+  fs.copyFileSync(inImages, path.join(ASSETS, name))
+  console.log(`staged image -> test/mobile/testAssets/${name} (from ${src === inMedia ? 'media' : 'images'})`)
+  staged++
+}
+if (!staged) throw new Error('No fixture images to stage (fixture.items empty?)')
+console.log(`staged ${staged} images -> test/mobile/testAssets`)
 
 // Register the test in test-groups.json so the mobile generator's per-platform grouping
 // validation passes (it requires EVERY test to be in a group, on every platform). This

@@ -123,7 +123,9 @@ module.exports = {
   //   QVAC_VLM_SAMPLES→samplesPerTask · QVAC_VLM_REPEATS→repeats
   //   QVAC_VLM_DEVICES→devices (csv) · QVAC_VLM_TASKS→tasks (csv)
   // `devices: null` = CPU + GPU where applicable; `tasks: null` = all fixture tasks.
-  defaultPreset: 'base',
+  // QVAC-21320 (2-image branch): mobile reads defaultPreset verbatim, so point it at the
+  // two-image preset below; the fixture holds exactly the elephant + fruit-plate items.
+  defaultPreset: 'twoImg',
 
   presets: {
     // smoke — 1 task, 1 image, 1 repeat: a single inference per config (wiring check).
@@ -131,6 +133,9 @@ module.exports = {
     // base — DEFAULT eval: 5 tasks × 3 samples × 1 repeat.
     base: { tasks: TASKS, samplesPerTask: 3, repeats: 1, devices: null },
     // full — 5 tasks × 5 samples × 1 repeat (the complete fixture).
-    full: { tasks: TASKS, samplesPerTask: 5, repeats: 1, devices: null }
+    full: { tasks: TASKS, samplesPerTask: 5, repeats: 1, devices: null },
+    // QVAC-21320 — two addon test images only (elephant + fruit-plate), single
+    // synthetic task 'describe', 2 samples. Speed + CPU-vs-GPU neutrality (no lmms-eval %).
+    twoImg: { tasks: ['describe'], samplesPerTask: 2, repeats: 1, devices: null }
   }
 }
