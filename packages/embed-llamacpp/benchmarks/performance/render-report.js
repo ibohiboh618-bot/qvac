@@ -649,6 +649,14 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
     'Each mobile shard is one (model, quant, batch size, flash-attn) cell and sweeps device x input mode.'
   )
   lines.push('')
+  lines.push(
+    '> **Note on mobile batch size:** unlike the desktop sweep (which sizes each input to the batch, ' +
+    'so batch size is a scaled-work throughput curve), the mobile inputs are fixed (one sentence for ' +
+    '`single`, five for `array`) across every batch size. Mobile `bs` is therefore a runtime-capacity / ' +
+    'configuration axis, not a scaled-work axis — its ppTPS/latency are not directly comparable to the ' +
+    'desktop throughput-vs-batch numbers.'
+  )
+  lines.push('')
 
   for (const l of mobileCoverageLines(rows, devices, meta.expectedShards)) lines.push(l)
 
@@ -940,17 +948,25 @@ function main () {
   }
 
   // Optional cross-run regression compare: load the baseline run's reports and
-  // key them so the renderer can show Δ columns against the current run.
+  // key them so the renderer can show Δ columns against the current run. A
+  // comparison was explicitly requested, so the absence of baseline benchmark
+  // rows (e.g. the baseline run only uploaded a run-meta.json, or the run id was
+  // wrong / its artifacts expired) is a HARD failure — rendering a report with no
+  // Δ columns would silently look like a normal run and hide the missing compare.
   let baselineMap = null
   let baseline = null
-  if (args.compareDir && fs.existsSync(args.compareDir)) {
-    const { rows: baseRows } = loadDir(args.compareDir, args.device)
-    if (baseRows.length) {
-      baselineMap = buildBaselineMap(baseRows)
-      baseline = { runId: args.baselineRunId, runNumber: args.baselineRunNumber, runUrl: args.baselineRunUrl }
-    } else {
-      process.stderr.write(`compare: no baseline rows found in ${args.compareDir}; rendering without Δ columns\n`)
+  if (args.compareDir) {
+    const { rows: baseRows } = fs.existsSync(args.compareDir)
+      ? loadDir(args.compareDir, args.device)
+      : { rows: [] }
+    if (!baseRows.length) {
+      const msg = `compare: --compare-dir ${args.compareDir} has no baseline benchmark rows; a comparison was requested but cannot be produced.\n`
+      process.stderr.write(`::error::${msg}`)
+      process.exitCode = 1
+      return
     }
+    baselineMap = buildBaselineMap(baseRows)
+    baseline = { runId: args.baselineRunId, runNumber: args.baselineRunNumber, runUrl: args.baselineRunUrl }
   }
 
   const md = render(rows, meta, args.addonVersion, args.chartsUrl, baselineMap, baseline)

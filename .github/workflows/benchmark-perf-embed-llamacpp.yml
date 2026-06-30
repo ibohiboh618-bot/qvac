@@ -1,9 +1,12 @@
 name: Benchmark Performance — Embed Parameter Sweep
 
-# Manually-triggered embed performance benchmark (no sweep inputs — the matrix is
-# in the scripts). Embedding is prefill-only (a single forward pass, no decode),
-# so the headline metric is prefill throughput (ppTPS) alongside per-embedding
-# latency.
+# Manually-triggered embed performance benchmark. The official sweep matrix lives
+# in the scripts; the dispatch inputs only toggle/narrow a run (run_desktop,
+# run_mobile, models + repeats for a quick DESKTOP-only check — narrowed runs are
+# flagged in the report, summarize_only/artifact_run_id to re-render a prior run,
+# and compare_run_id for cross-run Δ columns). Embedding is prefill-only (a single
+# forward pass, no decode), so the headline metric is prefill throughput (ppTPS)
+# alongside per-embedding latency.
 #
 # Desktop: bare benchmarks/performance/embed-parameter-sweep.js on the self-hosted
 #          Linux GPU runner (downloads the prebuild artifacts the integration
