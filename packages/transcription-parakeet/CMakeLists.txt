@@ -12,6 +12,11 @@ find_package(cmake-vcpkg REQUIRED PATHS node_modules/cmake-vcpkg)
 
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets;${CMAKE_CURRENT_SOURCE_DIR}/../../vcpkg-overlays/triplets;${VCPKG_OVERLAY_TRIPLETS}")
 
+# TEMPORARY CI OVERLAY (do not merge): build parakeet-cpp from the PR #74 commit
+# (ggml_backend_sched per-op CPU fallback) instead of the registry port. Drop this
+# line + vcpkg-overlay-ports/ once PR #74 merges and the registry port lands.
+set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg-overlay-ports;${VCPKG_OVERLAY_PORTS}")
+
 set(VCPKG_INSTALL_OPTIONS --clean-after-build)
 
 project(qvac_lib_infer_parakeet
