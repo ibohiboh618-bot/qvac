@@ -237,30 +237,37 @@ TEST_F(TuneConfigMapTest, NotOpenCl_NonBitnet_FlashAttnDefaultsOn) {
 
 // ---- Tier 2: OpenCL allows q4_0/q8_0 (fabric FA kernels), rejects the rest --
 
-TEST_F(TuneConfigMapTest, OpenCl_AllowsQ8_0KCache) {
+TEST_F(TuneConfigMapTest, OpenCl_RejectsQ8_0KCache) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
 
-  EXPECT_NO_THROW(
+  // QVAC-21318: quantized KV on OpenCL is rejected — q8_0 K aborts in
+  // llama_kv_cache::update on a KV-cache shift on Adreno (no ggml-opencl
+  // F32->quantized requantize kernel).
+  EXPECT_THROW(
       LlamaModel::tuneConfigMap(
           configFilemap_,
           meta,
           std::nullopt,
           FtOverrides{},
-          /*isOpenCl=*/true));
+          /*isOpenCl=*/true),
+      qvac_errors::StatusError);
 }
 
-TEST_F(TuneConfigMapTest, OpenCl_AllowsQ4_0VCacheUnderscore) {
+TEST_F(TuneConfigMapTest, OpenCl_RejectsQ4_0VCacheUnderscore) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache_type_v"] = "q4_0";
 
-  EXPECT_NO_THROW(
+  // QVAC-21318: q4_0 hits the same shift crash as q8_0 on Adreno OpenCL
+  // (CI-confirmed, run 28448086915) — rejected too.
+  EXPECT_THROW(
       LlamaModel::tuneConfigMap(
           configFilemap_,
           meta,
           std::nullopt,
           FtOverrides{},
-          /*isOpenCl=*/true));
+          /*isOpenCl=*/true),
+      qvac_errors::StatusError);
 }
 
 TEST_F(TuneConfigMapTest, OpenCl_RejectsUnsupportedQuantizedKCache) {
@@ -780,18 +787,40 @@ TEST_F(TuneConfigMapTest, AdrenoVulkan_QuantizedVCache_FlashAttnOff_Allowed) {
           /*isGpu=*/true));
 }
 
-TEST_F(TuneConfigMapTest, AdrenoOpenCl_QuantizedKCache_Allowed) {
+TEST_F(TuneConfigMapTest, AdrenoOpenCl_QuantizedKCache_Rejected) {
   MockModelMetaData meta(false, "llama");
   configFilemap_["cache-type-k"] = "q8_0";
 
-  // Adreno on OpenCL routes to the working OpenCL FA path -> allowed (Tier 2).
-  EXPECT_NO_THROW(
+  // QVAC-21318: quantized KV on Adreno OpenCL is rejected — the KV-cache shift
+  // requantize copy has no ggml-opencl kernel and aborts in
+  // llama_kv_cache::update (true for q8_0 and q4_0).
+  EXPECT_THROW(
       LlamaModel::tuneConfigMap(
           configFilemap_,
           meta,
           830,
           FtOverrides{},
           /*isOpenCl=*/true,
+          /*isMetal=*/false,
+          /*isGpu=*/true),
+      qvac_errors::StatusError);
+}
+
+// QVAC-21318: mixed/asymmetric K!=V with a quantized side is a WARNING, not an
+// error — the call still succeeds (callers may opt in). Non-OpenCL so the
+// OpenCL guard doesn't fire first.
+TEST_F(TuneConfigMapTest, MixedQuantizedAsymmetric_WarnsButAllowed) {
+  MockModelMetaData meta(false, "llama");
+  configFilemap_["cache-type-k"] = "q8_0";
+  configFilemap_["cache-type-v"] = "q4_0";
+
+  EXPECT_NO_THROW(
+      LlamaModel::tuneConfigMap(
+          configFilemap_,
+          meta,
+          std::nullopt,
+          FtOverrides{},
+          /*isOpenCl=*/false,
           /*isMetal=*/false,
           /*isGpu=*/true));
 }

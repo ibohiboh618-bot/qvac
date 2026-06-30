@@ -180,6 +180,17 @@ const config = {
 | split-mode        | `"none"`, `"layer"`, or `"row"`             | `"none"`                     | How to split the model across GPUs ([details](./docs/multi-gpu.md)) |
 | tensor-split      | comma-separated proportions (e.g. `"1,1"`)  | —                            | GPU split ratios for layer/row parallelism ([details](./docs/multi-gpu.md)) |
 | parallel          | integer                                     | 1                            | Concurrent sequence slots for continuous batching. Values `>= 2` enable batch `run()` and split the KV cache uniformly across slots ([details](./docs/continuous-batching.md)) |
+| cache-type-k      | `f16`, `f32`, `bf16`, `q8_0`, `q4_0`, …      | auto (see below)             | KV-cache **key** quantization type. Unset = auto-default (see KV-cache type below) |
+| cache-type-v      | `f16`, `f32`, `bf16`, `q8_0`, `q4_0`, …      | auto (see below)             | KV-cache **value** quantization type. Quantizing V requires `flash-attn` on |
+
+
+#### KV-cache type & auto-default
+
+The addon picks a safe KV-cache type when `cache-type-k`/`cache-type-v` are unset, and validates any explicit choice per backend:
+
+- **Auto-default:** on a **Metal / Vulkan GPU** (with flash attention on) both K and V default to **`q8_0`** — quality-neutral vs `f16` and ~47% smaller KV cache. **CPU** and **OpenCL (Adreno)** keep **`f16`** (ARM CPU `q8_0` has a quality/throughput cost; quantized KV is unsafe on OpenCL — see below). Finetuning manages its own KV types and is left untouched.
+- **OpenCL (Adreno) rejects quantized KV:** an explicit `q8_0`/`q4_0` (or any quantized type) on the OpenCL backend throws — a quantized K cache aborts in `llama_kv_cache::update` on a KV-cache *shift* (sliding context / context management) because ggml-opencl has no `F32→quantized` requantize kernel. Use `f16`/`f32`/`bf16`, or a Vulkan GPU / CPU.
+- **Mixed K≠V is a warning, not an error:** if K and V differ and at least one is quantized, the addon logs a warning (asymmetric quantized K/V falls off the fused flash-attention path — a notable GPU decode penalty — for no quality benefit, and is unsupported on Adreno OpenCL) but proceeds. Prefer a symmetric type. (This may be relaxed once qvac-fabric handles asymmetric quantized K/V efficiently.)
 
 
 #### IGPU/GPU  selection logic:

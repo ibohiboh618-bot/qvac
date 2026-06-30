@@ -8,8 +8,9 @@
 //   - On CPU (or when device:gpu falls back to CPU), the default is left
 //     untouched (llama.cpp uses f16) — ARM q8_0 has a quality/throughput cost.
 //   - On OpenCL (Adreno), the default also stays f16 — quantized KV-cache shifts
-//     abort on Adreno, so q8_0 is opt-in only there.
-//   - An explicit user cache type is always respected over the default.
+//     abort on Adreno, so quantized KV is REJECTED there (q8_0 and q4_0 alike).
+//   - An explicit user cache type is respected over the default on CPU/Vulkan/
+//     Metal; on OpenCL an explicit quantized type is rejected with a clear error.
 //
 // The effective cache type is not exposed to JS, so these tests assert on the
 // `llama_kv_cache: ... K (<type>): ... V (<type>): ...` line emitted by native
@@ -129,14 +130,27 @@ safeTest('CPU keeps KV-cache at f16 when unset', { timeout: 900_000 }, async t =
 })
 
 safeTest('GPU respects an explicit cache type over the default', { timeout: 900_000 }, async t => {
-  // Explicit q4_0 with a short single run (no context shift) is safe on every
-  // backend, so this runs everywhere and must be honoured verbatim.
-  const { output, kvTypes } = await loadWithConfig({
-    device: 'gpu',
-    'cache-type-k': 'q4_0',
-    'cache-type-v': 'q4_0'
-  })
+  // QVAC-21318: explicit q4_0 is honoured verbatim on CPU / Vulkan / Metal. On
+  // OpenCL (Adreno) quantized KV is now REJECTED (it aborts on a KV-cache shift),
+  // so load() throws a clear StatusError instead — accept whichever applies to
+  // the backend the CI runner selected.
+  let result
+  try {
+    result = await loadWithConfig({
+      device: 'gpu',
+      'cache-type-k': 'q4_0',
+      'cache-type-v': 'q4_0'
+    })
+  } catch (err) {
+    const msg = err?.message || String(err)
+    t.ok(
+      /opencl/i.test(msg) && /quantized|not supported/i.test(msg),
+      `quantized KV rejected on OpenCL with a clear error: "${msg.slice(0, 160)}"`
+    )
+    return
+  }
 
+  const { output, kvTypes } = result
   t.ok(output.length > 0, 'GPU run produced output')
   t.ok(kvTypes, 'KV-cache allocation line was logged')
   t.is(kvTypes.k, 'q4_0', 'user cache-type-k respected (not defaulted to q8_0)')
