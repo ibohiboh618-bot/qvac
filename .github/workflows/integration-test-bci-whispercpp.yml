@@ -74,10 +74,15 @@ jobs:
             platform: darwin
             arch: x64
             no_gpu: 'true'
+          # Use the GPU runner: the prebuilt Windows addon is a Vulkan build that
+          # links against the Vulkan loader (vulkan-1.dll), which only exists on
+          # qvac-win25-x64-gpu (Vulkan SDK preinstalled at C:\VulkanSDK). On the
+          # plain qvac-win25-x64 runner the addon fails to load with Win32 error
+          # 126 (ADDON_NOT_FOUND). Mirrors transcription-whispercpp / vla.
           - os: windows-2025
             platform: win32
             arch: x64
-            runner: qvac-win25-x64
+            runner: qvac-win25-x64-gpu
             no_gpu: 'true'
 
     steps:
