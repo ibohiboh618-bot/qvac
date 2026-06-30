@@ -98,14 +98,20 @@ const GEMMA4_KV = {
 }
 
 // The KV-cache-type axis for kv-sweep mode. Each entry is one report cell ("kv-<label>"
-// appended to the model). flashAttn is forced ON for symmetric quant + the mixed combo
-// (V-quant requires Flash Attention); the f16 baseline keeps it on too so the only
-// variable is the cache type. The last entry is the asymmetric mixed K/V (k=q8_0/v=q4_0).
+// appended to the model). QVAC-21318: focused on the MIXED f16/q8 K/V setup — both
+// orientations vs the f16 baseline. flashAttn is forced ON for every cell (V-quant
+// requires Flash Attention; the f16 baseline keeps it on too so the only variable is the
+// cache type). The two mixed cells are asymmetric:
+//   kf16v8 — K=f16 (full) / V=q8_0 (quant): K is never requantized on a cache shift, so
+//            it is the crash-free way to get V-cache savings on Adreno OpenCL.
+//   k8vf16 — K=q8_0 (quant) / V=f16 (full): the K cache goes through the quantized RoPE
+//            cache-shift (dequant→rope→requant), which aborts on Adreno OpenCL.
+// On mobile each cell runs as its OWN Device Farm process (per-cell test files +
+// test-groups), so a k8vf16 abort never affects the f16 / kf16v8 results.
 const KV_SWEEP = [
   { label: 'f16', k: 'f16', v: 'f16', flashAttn: 'on' },
-  { label: 'q8_0', k: 'q8_0', v: 'q8_0', flashAttn: 'on' },
-  { label: 'q4_0', k: 'q4_0', v: 'q4_0', flashAttn: 'on' },
-  { label: 'k8v4', k: 'q8_0', v: 'q4_0', flashAttn: 'on' }
+  { label: 'kf16v8', k: 'f16', v: 'q8_0', flashAttn: 'on' },
+  { label: 'k8vf16', k: 'q8_0', v: 'f16', flashAttn: 'on' }
 ]
 
 // ════════════════════ THE MODEL FOR SOURCE COMPARISON (several-sources mode) ════════════════════

@@ -245,14 +245,16 @@ const MMPROJ_COMPARE = MMPROJ_GPU === 'both'
 // A "leg" = one test() = one (model device-backend, projector backend) combo.
 // Normal modes: one leg per device, projector follows MMPROJ_GPU (single/auto).
 // mmproj-compare: GPU model backend, projector cpu vs gpu → two labelled cells.
-function legsFor (spec) {
+function legsFor (spec, kvTypes) {
   const baseAxis = MODE === 'several-sources' ? SOURCE : spec.label
   // QVAC-21318 kv-sweep: one leg per (device × KV-cache type); the projector stays on
-  // the addon's per-platform default so the only variable is the KV cache type.
+  // the addon's per-platform default so the only variable is the KV cache type. An
+  // explicit kvTypes list (from a per-cell entry file) overrides the env/config set so
+  // mobile — which has no env passthrough — can isolate one cell per Device Farm run.
   if (KV_SWEEP) {
     const legs = []
     for (const device of devicesToRun()) {
-      for (const kv of KV_TYPES) {
+      for (const kv of (kvTypes || KV_TYPES)) {
         legs.push({
           device,
           mmproj: null,
@@ -280,12 +282,12 @@ function legsFor (spec) {
   }))
 }
 
-function runModel (spec) {
+function runModel (spec, kvTypes) {
   if (!ENABLED) {
     test(`vlm-matrix ${spec.label} (disabled; set QVAC_VLM_MATRIX=1)`, t => t.pass('disabled'))
     return
   }
-  for (const leg of legsFor(spec)) {
+  for (const leg of legsFor(spec, kvTypes)) {
     const { device, mmproj, cell, dev, kv } = leg
     test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: 30 * 60 * 1000 }, async t => {
       const [mainName, dir] = await ensureBlob(spec.llm)
@@ -391,12 +393,19 @@ function runModel (spec) {
 // mmproj-compare loads ONE model (config.mmprojModel) and varies the projector
 // backend; two-models loads MODEL_1 then MODEL_2; several-sources loads the one
 // sourcesModel (other engines run via cli-fixture-runner.cjs into the same log).
-function runAll () {
+// QVAC-21318: opts.kvLabels restricts the kv-sweep to the named cells — the per-cell
+// entry files (vlm-matrix-kv-*.test.js) pass a single label so each mobile test
+// function (→ Device Farm run/process) covers exactly ONE KV cell, isolating a native
+// abort in one cell from the others. No opts => the full config.kvSweep (desktop).
+function runAll (opts = {}) {
   // QVAC-21318 kv-sweep takes precedence: run the KV-cache-type axis across the
   // dedicated kv-sweep models (qwen3.5 + gemma4).
   if (KV_SWEEP) {
     const models = config.kvSweepModels || config.models
-    for (const spec of models) runModel(spec)
+    const kvTypes = opts.kvLabels
+      ? (config.kvSweep || []).filter(kv => opts.kvLabels.includes(kv.label))
+      : null
+    for (const spec of models) runModel(spec, kvTypes)
     return
   }
   if (MMPROJ_COMPARE) { runModel(config.mmprojModel || config.models[1]); return }

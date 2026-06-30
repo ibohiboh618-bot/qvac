@@ -404,9 +404,9 @@ jobs:
 
   # ── Matrix mode: Samsung S25 (AWS Device Farm) ─────────────────────
   # Reuses the Android-only mobile workflow to run the SAME matrix harness
-  # on-device. qvac_perf_only restricts the run to perf-tests.json
-  # (runVlmMatrixTest) → only the vlmMatrix group is scheduled. The active
-  # preset on-device is config.defaultPreset (Device Farm forwards no custom
+  # on-device. QVAC-21318: the test_groups override below schedules one Device Farm
+  # run PER KV cell (f16 / kf16v8 / k8vf16) so a native abort in one cell is isolated.
+  # The active preset on-device is config.defaultPreset (Device Farm forwards no custom
   # env), so config.cjs defaultPreset governs the S25 set. The
   # raw on-device log (bare_console.log) carries the [VLMROW] markers and is
   # uploaded by collect-and-upload-logs as console-logs-llamacpp-llm-Android.
@@ -445,7 +445,11 @@ jobs:
       # on-device config.defaultPreset governs. Set matrix_samples=5 for a full-preset
       # quality pass (5 samples × 5 tasks) without changing the committed default.
       qvac_perf_runs: ${{ inputs.matrix_samples }}
-      test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
+      # QVAC-21318: ONE group per KV cell → upload-to-devicefarm schedules one Device
+      # Farm run (process) per cell, so a native abort in the k8vf16 cell on Adreno
+      # OpenCL cannot affect the f16 / kf16v8 cells' runs. stage.cjs registers these
+      # three groups in test-groups.json at launch.
+      test_groups: '[{"name":"vlmMatrixF16","grep":"runVlmMatrixKvF16Test"},{"name":"vlmMatrixKf16v8","grep":"runVlmMatrixKvKf16v8Test"},{"name":"vlmMatrixK8vf16","grep":"runVlmMatrixKvK8vf16Test"}]'
 
   # ── Matrix mode: iOS (AWS Device Farm) ─────────────────────────────
   # QVAC-21318: the iOS counterpart of matrix-s25 — runs the SAME kv-sweep harness
@@ -466,7 +470,11 @@ jobs:
       platforms: iOS
       qvac_perf_only: false
       qvac_perf_runs: ${{ inputs.matrix_samples }}
-      test_groups: '[{"name":"vlmMatrix","grep":"runVlmMatrixTest"}]'
+      # QVAC-21318: ONE group per KV cell → upload-to-devicefarm schedules one Device
+      # Farm run (process) per cell, so a native abort in the k8vf16 cell on Adreno
+      # OpenCL cannot affect the f16 / kf16v8 cells' runs. stage.cjs registers these
+      # three groups in test-groups.json at launch.
+      test_groups: '[{"name":"vlmMatrixF16","grep":"runVlmMatrixKvF16Test"},{"name":"vlmMatrixKf16v8","grep":"runVlmMatrixKvKf16v8Test"},{"name":"vlmMatrixK8vf16","grep":"runVlmMatrixKvK8vf16Test"}]'
 
   # ── Matrix mode: combine ───────────────────────────────────────────
   # Aggregates [VLMROW]/[VLMSEG]/[VLMMETA] markers from every matrix log
