@@ -23,20 +23,44 @@ function backendDevices () {
   return JSON.parse(binding.getBackendDevicesJson(BACKENDS_DIR))
 }
 
-function pickNonDefaultVulkanGpu (devices) {
-  return devices
-    .filter((dev) =>
-      (dev.type === 'GPU' || dev.type === 'IGPU') &&
-      typeof dev.name === 'string' &&
-      /^Vulkan\d+$/.test(dev.name) &&
-      dev.gpuIndex > 0
-    )
-    .find((dev) => !dev.totalBytes || dev.totalBytes >= MIN_TARGET_VRAM_BYTES)
+function isVulkanGpu (dev) {
+  return (
+    (dev.type === 'GPU' || dev.type === 'IGPU') &&
+    typeof dev.name === 'string' &&
+    /^Vulkan\d+$/.test(dev.name)
+  )
 }
 
-test('main-gpu selects a non-default Vulkan GPU when multiple GPUs are visible', { timeout: 600000 }, async (t) => {
-  if (os.platform() !== 'linux' || os.arch() !== 'x64') {
-    t.pass('main-gpu multi-GPU integration is linux-x64 only')
+function looksIntegrated (dev) {
+  const label = `${dev.description || ''} ${dev.name || ''}`.toLowerCase()
+  return (
+    label.includes('intel') ||
+    label.includes('uhd') ||
+    label.includes('iris') ||
+    label.includes('integrated')
+  )
+}
+
+function hasEnoughMemory (dev) {
+  return !dev.totalBytes || dev.totalBytes >= MIN_TARGET_VRAM_BYTES
+}
+
+function pickMainGpuTarget (devices) {
+  const vulkanGpus = devices.filter(isVulkanGpu)
+  if (os.platform() === 'win32') {
+    const integrated = vulkanGpus.find((dev) =>
+      dev.gpuIndex >= 0 && looksIntegrated(dev) && hasEnoughMemory(dev)
+    )
+    if (integrated) return integrated
+  }
+
+  return vulkanGpus.find((dev) => dev.gpuIndex > 0 && hasEnoughMemory(dev))
+}
+
+test('main-gpu pins an explicit Vulkan GPU when multiple GPUs are visible', { timeout: 600000 }, async (t) => {
+  const isSupportedDesktop = (os.platform() === 'linux' || os.platform() === 'win32') && os.arch() === 'x64'
+  if (!isSupportedDesktop) {
+    t.pass('main-gpu multi-GPU integration is desktop x64 only')
     return
   }
   if (proc.env && proc.env.NO_GPU === 'true') {
@@ -61,9 +85,9 @@ test('main-gpu selects a non-default Vulkan GPU when multiple GPUs are visible',
       return
     }
 
-    const target = pickNonDefaultVulkanGpu(devices)
+    const target = pickMainGpuTarget(devices)
     if (!target) {
-      t.pass('No non-default Vulkan GPU with enough reported memory; skipping main-gpu selection assertion')
+      t.pass('No suitable Vulkan GPU target with enough reported memory; skipping main-gpu selection assertion')
       return
     }
 
