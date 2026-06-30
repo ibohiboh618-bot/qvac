@@ -7,18 +7,26 @@ on:
 permissions:
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   label-community-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Apply community-contribution label if external contributor
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           APP_ID: ${{ secrets.APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
         with:
           script: |
             const crypto = require('crypto');
+
+            // Skip bot authors — they are not external human contributors
+            if (context.payload.pull_request.user.type === 'Bot') return;
 
             // Build a JWT to authenticate as the GitHub App
             const now = Math.floor(Date.now() / 1000);
@@ -39,12 +47,20 @@ jobs:
               `https://api.github.com/repos/${context.repo.owner}/${context.repo.repo}/installation`,
               { headers: ghHeaders(jwt) }
             );
+            if (!installRes.ok) {
+              core.setFailed(`Installation lookup failed: ${installRes.status}`);
+              return;
+            }
             const { id: installationId } = await installRes.json();
 
             const tokenRes = await fetch(
               `https://api.github.com/app/installations/${installationId}/access_tokens`,
               { method: 'POST', headers: ghHeaders(jwt) }
             );
+            if (!tokenRes.ok) {
+              core.setFailed(`Token exchange failed: ${tokenRes.status}`);
+              return;
+            }
             const { token } = await tokenRes.json();
 
             // Check org membership using the installation token (needs read:org scope)
@@ -54,11 +70,17 @@ jobs:
               { headers: ghHeaders(token) }
             );
 
-            if (memberRes.status === 404) {
+            if (memberRes.status === 204) {
+              // Confirmed org member — do nothing
+              return;
+            } else if (memberRes.status === 404) {
+              // Confirmed non-member — apply label
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.pull_request.number,
                 labels: ['community-contribution']
               });
+            } else {
+              core.setFailed(`Unexpected membership response: ${memberRes.status}`);
             }
