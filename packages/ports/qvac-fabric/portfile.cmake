@@ -5,12 +5,11 @@ vcpkg_from_github(
   # test/QVAC-21297-opencl-vision-encoder = temp-9341 (e9ad5fc9f) + PR #170's
   # OpenCL vision-encoder fixes ONLY (tree-identical to PR #170 head; NO
   # QVAC-21320 / PR #174 Mali Vulkan opts), ahead of publishing to the registry.
-  # SHA512 below is a placeholder — it is finalized on the first overlay build
-  # (vcpkg reports the actual hash for this REF). Replace with `REF v${VERSION}`
-  # + the tag SHA512 in the registry PR (Phase B1), and delete this overlay from
-  # the consumers in the landing PR (Phase B2).
+  # SHA512 is the GitHub source-tarball hash for this REF. Replace with
+  # `REF v${VERSION}` + the tag SHA512 in the registry PR (Phase B1), and delete
+  # this overlay from the consumers in the landing PR (Phase B2).
   REF fac41ec3512604688f32ddbc4b04a82ba208aa81
-  SHA512 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+  SHA512 a6a0e0f2cb90d03d1fef2953a8e3268a5e7b2a6fc2afa630eabbe895e92ae41caf10a548cc4002fe4821806dba54e8bed7b99e108814757ac23efd3278ce7241
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
