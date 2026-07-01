@@ -244,6 +244,49 @@ Tuning lives in `config.cjs` `methodology`.
   in `mmatrix` (must exist in the Device-Farm fleet). No harness change.
 - **Tune the scorers** — `node score-check.cjs <report-or-log>` re-scores REAL predictions
   with the current scorers (no inference), so you can iterate on quality metrics offline.
+- **Compare image-tiling variants (Qwen3.5-VL grid-select)** — the catalog ships three
+  variants of the same model differing only in `image_tile_mode`: `qwen3.5-seq`
+  (sequential, default), `qwen3.5-batched` (single collapsed attention pass), and
+  `qwen3.5-tiles-off` (disabled). A model spec's `imageConfig` map (see `config.cjs`
+  `tileVariant()`) is spread into the addon config by `harness.cjs`; add
+  `image_max_tokens`/`image_min_tokens` there too. `image_max_tiles` is CLI-only today —
+  the addon doesn't parse it yet, so it can't be benchmarked without addon plumbing.
+
+## 9 · Grid-select feature runs (worked commands)
+
+The grid-select rewrite lives in a candidate build, so build the addon from your branch
+(`addon@candidate` + `-f ref=<branch>`) — the published `addon` lacks it.
+
+```bash
+# 1) tile_mode seq vs batched vs disabled, on high-MP docs (grid selection produces
+#    multiple tiles). All 3 appear in the speed/quality tables with absolute numbers;
+#    the Δ% highlight is pairwise (first two: seq vs batched).
+gh workflow run benchmark-vlm-model-comparison.yml --ref <benchmark-branch> \
+  -f matrix_mode=two-models -f matrix_preset=ocr5pages \
+  -f matrix_models=qwen3.5-seq,qwen3.5-batched,qwen3.5-tiles-off \
+  -f matrix_sources=addon@candidate -f ref=tetherto/feat/qwen3vl-grid-select-rollout \
+  -f matrix_desktop=linux-gpu,macos-gpu
+
+# 2) candidate vs baseline — net effect of the whole grid-select rewrite, same knobs.
+gh workflow run benchmark-vlm-model-comparison.yml --ref <benchmark-branch> \
+  -f matrix_mode=several-sources \
+  -f matrix_sources=addon@candidate,addon@baseline \
+  -f ref=tetherto/feat/qwen3vl-grid-select-rollout \
+  -f matrix_models=qwen3.5-0.8b-q8 -f matrix_preset=ocr5pages -f matrix_desktop=linux-gpu
+
+# 3) grid-select quality on high-res (single build, confirm no regression on multi-tile).
+gh workflow run benchmark-vlm-model-comparison.yml --ref <benchmark-branch> \
+  -f matrix_mode=two-models -f matrix_preset=ocr5pages \
+  -f matrix_models=qwen3.5-seq -f matrix_sources=addon@candidate \
+  -f ref=tetherto/feat/qwen3vl-grid-select-rollout
+```
+
+Local (desktop, against your locally-built candidate addon):
+```bash
+QVAC_VLM_MATRIX=1 QVAC_VLM_MODE=two-models QVAC_VLM_PRESET=ocr5pages \
+QVAC_VLM_MODELS=qwen3.5-seq,qwen3.5-batched,qwen3.5-tiles-off QVAC_VLM_SAMPLES=2 \
+bare test/integration/vlm-matrix.test.js
+```
 
 ---
 

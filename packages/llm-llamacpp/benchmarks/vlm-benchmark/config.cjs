@@ -99,6 +99,22 @@ const SOURCES_MODEL = {
     { license: 'Apache-2.0', link: 'https://huggingface.co/mradermacher/Qwen3.5-0.8B-GGUF' })
 }
 
+// ════════════════════ IMAGE-TILING VARIANTS (Qwen3.5-VL grid-select) ════════════════════
+// Same model (SOURCES_MODEL blobs), differing ONLY in the image_tile_mode knob, so
+// two-models mode compares the grid-select multi-tile encode paths head-to-head
+// (Δ% speed + quality). image_tile_mode: 'sequential' (default) encodes tiles one at
+// a time; 'batched' collapses them into one attention pass; 'disabled' turns off
+// multi-tile splitting. Run these on a high-MP preset (ocr5pages) so grid selection
+// actually produces multiple tiles. Requires the candidate build (grid-select code):
+//   -f matrix_models=qwen3.5-seq,qwen3.5-batched -f matrix_preset=ocr5pages
+// and, to test the branch, build it as the addon (see §candidate dispatch in README).
+function tileVariant (label, name, tileMode) {
+  return { ...SOURCES_MODEL, label, name, imageConfig: { image_tile_mode: tileMode } }
+}
+const QWEN_TILE_SEQ = tileVariant('qwen3.5-seq', 'Qwen3.5-0.8B · tile=sequential', 'sequential')
+const QWEN_TILE_BATCHED = tileVariant('qwen3.5-batched', 'Qwen3.5-0.8B · tile=batched', 'batched')
+const QWEN_TILE_OFF = tileVariant('qwen3.5-tiles-off', 'Qwen3.5-0.8B · tile=disabled', 'disabled')
+
 // Scenario definitions (the workload axis — which fixture tasks run, how they
 // are scored) live in their own file (scenarios.cjs). The task lists live there too.
 const SCENARIOS = require('./scenarios.cjs')
@@ -129,7 +145,11 @@ module.exports = {
     'qwen3.5-f16': MODEL_1,
     'qwen3.5-q8': MODEL_2,
     'qwen3.5-0.8b-q8': SOURCES_MODEL,
-    'gemma4-q4': GEMMA4_Q4
+    'gemma4-q4': GEMMA4_Q4,
+    // Image-tiling variants (grid-select): same model, differ only in image_tile_mode.
+    'qwen3.5-seq': QWEN_TILE_SEQ,
+    'qwen3.5-batched': QWEN_TILE_BATCHED,
+    'qwen3.5-tiles-off': QWEN_TILE_OFF
   },
   // What runs when matrix_models is empty (two-models mode).
   defaultModels: ['qwen3.5-f16', 'qwen3.5-q8'],
