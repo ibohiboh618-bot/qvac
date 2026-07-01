@@ -1,9 +1,10 @@
 # TEMPORARY CI OVERLAY -- do not merge.
 #
 # Mirrors the registry parakeet-cpp port verbatim except the source fetch, which
-# is repointed at the qvac-ext-lib-whisper.cpp PR #74 head commit (6420f0c0):
-# route parakeet-cpp compute through ggml_backend_sched with per-op CPU fallback
-# (cached-encoder-graph restore + Sortformer head-backend safety included).
+# is repointed at the qvac-ext-lib-whisper.cpp PR #74 head commit (bea8c918):
+# route parakeet-cpp compute through ggml_backend_sched with per-op CPU fallback;
+# the cached encoder graph uses a persistent gallocr (Adreno OpenCL/Vulkan reuse fix)
+# with reuse-determinism + shared-sched-lifecycle regression tests.
 # This overlay validates that branch on device-farm CI ahead of merge; drop it
 # (the dir + the VCPKG_OVERLAY_PORTS line in ../../CMakeLists.txt) and bump the
 # registry version>= once PR #74 merges and the registry port lands.
@@ -14,8 +15,8 @@ set(VCPKG_BUILD_TYPE release)
 vcpkg_from_github(
     OUT_SOURCE_PATH WHISPER_CPP_SRC
     REPO tetherto/qvac-ext-lib-whisper.cpp
-    REF 6420f0c06d35f3e0815949352eb161483be157a7
-    SHA512 7cbfb8ea945f89991719f509c0e8251ec734fe6ac7244606718775f8c53988b1de254bd37eaac9e61de02e791842fed30a40eea733c6c3a8ff7a0f8e37cd342f
+    REF bea8c918fe95a191d3703dd65a77b569f6f3ea38
+    SHA512 d8cd58eb97b131e4f646cf21fbf53107f24befce02d764fe402e8720289e00ba392500990d278d5b5884b72fc937454f3a29b9efb048ebaba3cdbe5d821a03d6
     HEAD_REF master
 )
 
