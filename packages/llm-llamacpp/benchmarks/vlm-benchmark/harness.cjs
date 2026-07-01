@@ -68,6 +68,14 @@ if (!PRESET) {
 const MODE = env('QVAC_VLM_MODE') || config.mode || 'two-models'
 const SOURCE = env('QVAC_VLM_ENGINE') || config.engine || 'addon'
 
+// QVAC-21257: which backend runs the multimodal projector (vision encoder).
+// QVAC_VLM_MMPROJ_GPU > config.mmprojGpu > 'auto'. 'auto' leaves the addon's
+// per-platform default; 'cpu'/'gpu' set the addon's mmproj-use-gpu key; 'both'
+// runs the mmproj CPU-vs-GPU comparison (legsFor below). No env passthrough on
+// mobile, so config.mmprojGpu governs the on-device run.
+const MMPROJ_GPU = (env('QVAC_VLM_MMPROJ_GPU') || config.mmprojGpu || 'auto').toLowerCase()
+const MMPROJ_COMPARE = MMPROJ_GPU === 'both'
+
 // Active scenario (CONTRACT.md §2): the workload definition — its task list is
 // the task universe for this run. The runner executes the FIRST CSV token;
 // multi-scenario runs are reserved. Unknown/fixtureless scenarios fail fast.
@@ -309,18 +317,39 @@ function peakRssMb () {
   return null
 }
 
+// QVAC-21257: a "leg" = one test() = one (model device-backend, projector backend)
+// combo. Normal modes: one leg per device, projector follows MMPROJ_GPU (single/auto)
+// — identical to the pre-existing device loop (cell == the prior axis). mmproj-compare
+// ('both'): GPU model backend, projector cpu vs gpu → two labelled cells the report
+// renders side by side.
+function legsFor (spec) {
+  const baseAxis = MODE === 'several-sources' ? SRC_ID : spec.label
+  if (MMPROJ_COMPARE) {
+    return ['cpu', 'gpu'].map(m => ({
+      device: 'gpu',
+      mmproj: m, // forces the addon's mmproj-use-gpu key
+      cell: `mmproj-${m}`, // distinct report column per projector backend
+      dev: `GPU·mmproj=${m}`
+    }))
+  }
+  return devicesToRun().map(device => ({
+    device,
+    mmproj: (MMPROJ_GPU === 'cpu' || MMPROJ_GPU === 'gpu') ? MMPROJ_GPU : null,
+    cell: baseAxis,
+    dev: device.toUpperCase()
+  }))
+}
+
 function runModel (spec) {
-  // Marker axis (the report's comparison column): in several-sources the axis is the
-  // SOURCE IDENTITY (source_id) — so build comparisons (addon@candidate vs
-  // addon@baseline, same engine) get distinct columns, not just engine comparisons
-  // (addon vs fabric-cli vs upstream-cli). In two-models it's the model label.
-  const axis = MODE === 'several-sources' ? SRC_ID : spec.label
   if (!ENABLED) {
     test(`vlm-matrix ${spec.label} (disabled; set QVAC_VLM_MATRIX=1)`, t => t.pass('disabled'))
     return
   }
-  for (const device of devicesToRun()) {
-    const dev = device.toUpperCase()
+  for (const leg of legsFor(spec)) {
+    const { device, mmproj, cell, dev } = leg
+    // Marker column: per-leg — 'mmproj-cpu'/'mmproj-gpu' in mmproj-compare mode, else
+    // the model/source axis (unchanged from the previous per-device behaviour).
+    const axis = cell
     test(`vlm-matrix ${spec.label} [${dev}]`, { timeout: TEST_TIMEOUT_MIN * 60 * 1000 }, async t => {
       const [mainName, dir] = await ensureBlob(spec.llm)
       const [projName] = await ensureBlob(spec.mmproj)
@@ -344,6 +373,10 @@ function runModel (spec) {
         config: {
           device,
           gpu_layers: device === 'cpu' ? '0' : '98',
+          // QVAC-21257: force the projector backend only when explicitly set (cpu/gpu
+          // or mmproj-compare); null (the 'auto' default) leaves the addon's
+          // per-platform default untouched, so normal runs are unchanged.
+          ...(mmproj ? { 'mmproj-use-gpu': mmproj === 'gpu' ? 'true' : 'false' } : {}),
           temp: '0.0',
           seed: '42',
           ctx_size: spec.ctx_size,
@@ -385,6 +418,9 @@ function runModel (spec) {
             ms: r.ms,
             decode_tps: st.TPS != null ? st.TPS : null,
             ttft_ms: st.TTFT != null ? st.TTFT : null,
+            // QVAC-21257: isolated vision-encoder (mmproj) ms from addon stats —
+            // reliable on Android (logcat doesn't carry the native timing line).
+            vision_ms: st.VisionEncodeMs != null ? st.VisionEncodeMs : null,
             gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
             prompt_tokens: st.promptTokens != null ? st.promptTokens : null
           }, 0))
@@ -433,6 +469,9 @@ function runModel (spec) {
               ms: r.ms,
               decode_tps: st.TPS != null ? st.TPS : null,
               ttft_ms: st.TTFT != null ? st.TTFT : null,
+              // QVAC-21257: isolated vision-encoder (mmproj) ms from addon stats —
+              // reliable on Android (logcat doesn't carry the native timing line).
+              vision_ms: st.VisionEncodeMs != null ? st.VisionEncodeMs : null,
               gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
               prompt_tokens: st.promptTokens != null ? st.promptTokens : null
             }))
@@ -453,6 +492,10 @@ function runModel (spec) {
 // falling back to the committed config.models pair; several-sources loads the one
 // sourcesModel (the other engines run via cli-fixture-runner.cjs, same log).
 function runAll () {
+  // QVAC-21257: mmproj-compare runs ONE model (config.mmprojModel) with the projector
+  // backend as the axis (legsFor yields the cpu/gpu cells); bypass the model-list /
+  // scheduler paths below, which drive the two-models / several-sources axes.
+  if (MMPROJ_COMPARE) { runModel(config.mmprojModel || config.models[1]); return }
   const models = MODE === 'several-sources'
     ? [config.sourcesModel]
     : parseModels(env('QVAC_VLM_MODELS'), config.catalog, config.models)

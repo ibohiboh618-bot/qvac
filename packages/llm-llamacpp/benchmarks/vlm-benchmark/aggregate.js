@@ -256,8 +256,14 @@ const fmtPct = x => x == null ? '—' : (100 * x).toFixed(1)
 const fmtNum = (x, d = 1) => x == null ? '—' : Number(x).toFixed(d)
 
 function build (rows, vision, meta, provText, title, opts = {}) {
-  const base = opts.base || 'model_1'
-  const candidate = opts.candidate || 'model_2'
+  // QVAC-21257 mmproj-compare: cells are 'mmproj-cpu' / 'mmproj-gpu' (one model, the
+  // projector backend varies). Render via the existing two-models tables, using those
+  // as the base/candidate columns. Detected by --mode mmproj or the cell naming.
+  const cellSet = [...new Set(rows.map(r => r.cell))]
+  const isMmproj = opts.mode === 'mmproj' ||
+    (cellSet.length > 0 && cellSet.every(c => /^mmproj-/.test(String(c))))
+  const base = isMmproj ? 'mmproj-cpu' : (opts.base || 'model_1')
+  const candidate = isMmproj ? 'mmproj-gpu' : (opts.candidate || 'model_2')
   // Warmup blocks (block 0) are excluded from every stat per CONTRACT.md — the first pass
   // after a model load carries the JIT/shader spike. Legacy v1 rows (no block field) stay.
   rows = rows.filter(r => r.block !== 0)
@@ -301,6 +307,9 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     const rs = byKey[key]
     if (!rs) return null
     const okRows = rs.filter(r => !r.error)
+    // QVAC-21257: prefer the per-row vision_ms from addon stats (reliable on Android)
+    // over the stderr-parsed [VLMSEG] encode time; fall back to the latter.
+    const rowVe = mean(okRows.map(r => r.vision_ms).filter(v => v != null))
     const perTask = vqaTasks.map(t => {
       const sc = rs.filter(r => r.task === t && !r.error).map(r => score(r.metric, r.pred, r.gold))
       return mean(sc)
@@ -311,7 +320,10 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       errs: rs.length - okRows.length,
       perTask,
       overall: mean(perTask.filter(v => v != null)),
-      ve: visMean(key),
+      // Only mmproj-compare prefers the addon vision_ms (reliable on Android, where the
+      // stderr encode line isn't in logcat); normal runs keep the stderr-parsed visMean
+      // unchanged, so main's existing desktop/mobile reports are byte-for-byte the same.
+      ve: (isMmproj && rowVe != null) ? rowVe : visMean(key),
       sl: visSlices(key),
       ttft: mean(okRows.map(r => r.ttft_ms).filter(v => v != null)),
       tps: mean(okRows.map(r => r.decode_tps).filter(v => v != null)),
@@ -337,11 +349,26 @@ function build (rows, vision, meta, provText, title, opts = {}) {
   }
   const OCR_ROWS = [{ k: 'cer', label: 'CER ↓' }, { k: 'wer', label: 'WER ↓' }, { k: 'bleu', label: 'BLEU ↑' }]
 
+  // QVAC-21257: split rows into small/large image buckets by pixel area (median area =
+  // split point) and report mean vision-encode per bucket — the parity-vs-resolution
+  // curve, from the images already run (no extra inferences).
+  const areasAll = rows.filter(r => !r.error && r.img_w && r.img_h).map(r => r.img_w * r.img_h).sort((a, b) => a - b)
+  const areaSplit = areasAll.length ? areasAll[Math.floor(areasAll.length / 2)] : null
+  function bucketStats (key) {
+    const rs = (byKey[key] || []).filter(r => !r.error && r.vision_ms != null && r.img_w && r.img_h)
+    if (!rs.length || areaSplit == null) return { small: null, large: null }
+    const small = rs.filter(r => r.img_w * r.img_h < areaSplit).map(r => r.vision_ms)
+    const large = rs.filter(r => r.img_w * r.img_h >= areaSplit).map(r => r.vision_ms)
+    return { small: mean(small), large: mean(large) }
+  }
+
   const L = []
   L.push(`## ${title}\n`)
   const modeLabel = opts.mode === 'several-sources'
     ? 'several sources (engine varies; model fixed)'
-    : `two models (${base} vs ${candidate}; engine fixed)`
+    : isMmproj
+      ? 'mmproj projector backend (CPU vs GPU; one model, GPU model-backend)'
+      : `two models (${base} vs ${candidate}; engine fixed)`
   L.push(`**Mode:** ${modeLabel}  ·  **Engine:** ${opts.engine || 'addon'}\n`)
   if (opts.preset) L.push(`**Preset:** \`${opts.preset}\` _(task set + samples per leg)_\n`)
   const severalSources = opts.mode === 'several-sources'
@@ -498,6 +525,21 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       }
     }
     L.push('')
+    // QVAC-21257: mmproj-encode by image-size bucket (parity-vs-resolution curve).
+    if (isMmproj && areaSplit != null) {
+      L.push('### Speed by image size — mmproj enc (ms), small vs large\n')
+      L.push(`_split at median image area (${areaSplit.toLocaleString()} px); GPU vs CPU parity is ` +
+        'resolution-dependent (closer at high resolution)._\n')
+      L.push('| Config | host | small enc (ms) | large enc (ms) |')
+      L.push('|---|---|---|---|')
+      for (const k of keys) {
+        const [host, cell, dev] = k.split('|')
+        const b = bucketStats(k)
+        if (b.small == null && b.large == null) continue
+        L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${fmtNum(b.small, 1)} | ${fmtNum(b.large, 1)} |`)
+      }
+      L.push('')
+    }
     // OCR comparison (only when OCR tasks ran): avg of each metric per model + Δ.
     if (ocrTasks.length) {
       L.push(`### OCR — avg CER/WER/BLEU: ${base} vs ${candidate} (CER/WER lower better · BLEU higher better)\n`)
