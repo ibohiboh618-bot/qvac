@@ -108,24 +108,46 @@ const DEVICES = (isDarwinX64 || isLinuxArm64) ? ['cpu'] : PARAMETER_SWEEP.device
 
 // Synthetic filler sized to the batch, so batch size is a real scaled-work
 // throughput axis rather than a fixed tiny input in a bigger buffer. This is a
-// SPEED benchmark, so only the token count matters, not the content; pad by
-// characters as a rough proxy (models tokenize differently, so a single ratio
-// can't be exact) and target a margin UNDER the batch, because the addon rejects
-// a sequence whose token count reaches the batch/context. The run records the
-// real inputTokens. Mirrors the desktop case-runner's filler. Every mobile batch
-// (<= 2048) is <= both models' trained context, so one near-batch sentence fully
-// fills the batch (no multi-sentence packing needed as on desktop's 4096/8192).
-const CHARS_PER_TOKEN = 4.1 // conservative; the filler measures ~4.2
+// SPEED benchmark, so only the token count matters, not the content. The
+// chars/token needed to hit a target is measured per model against the addon
+// tokenizer (measureCharsPerToken), and the filler targets a margin UNDER the
+// batch, because the addon rejects a sequence whose token count reaches the
+// batch/context. The run records the real inputTokens. Mirrors the desktop
+// case-runner's filler. Every mobile batch (<= 2048) is <= both models' trained
+// context, so one near-batch sentence fully fills the batch (no multi-sentence
+// packing needed as on desktop's 4096/8192).
+// DEFAULT is the fallback used only if the tokenizer measurement fails.
+const DEFAULT_CHARS_PER_TOKEN = 4.1
 const TOKEN_SAFETY_MARGIN = 16
 const FILLER_HEAD = 'Some input. '
 const FILLER_UNIT = 'Some more input. '
 
-function inputForBatch (batchSize) {
-  const targetTokens = Math.max(1, batchSize - TOKEN_SAFETY_MARGIN)
-  const targetChars = Math.round(targetTokens * CHARS_PER_TOKEN)
+function buildFiller (targetChars) {
   let s = FILLER_HEAD
-  while (s.length < targetChars) s += FILLER_UNIT
-  return s.slice(0, targetChars)
+  while (s.length < Math.max(1, targetChars)) s += FILLER_UNIT
+  return s.slice(0, Math.max(1, targetChars))
+}
+
+function inputForBatch (batchSize, charsPerToken) {
+  return buildFiller(Math.round(Math.max(1, batchSize - TOKEN_SAFETY_MARGIN) * charsPerToken))
+}
+
+// Run a rough batch-sized filler through the loaded model and read total_tokens
+// to get this model's real chars/token, so the batch-filling input is sized
+// against the actual tokenizer rather than a hardcoded ratio. The probe uses the
+// conservative default ratio so it stays under the batch/ctx (the model is loaded
+// with ctx_size = batchSize); it is the first run on the model, so total_tokens is
+// exactly the probe's token count. Returns the fallback on failure.
+async function measureCharsPerToken (addon, batchSize) {
+  try {
+    const probe = inputForBatch(batchSize, DEFAULT_CHARS_PER_TOKEN)
+    const r = await addon.run(probe)
+    await r.await()
+    const tokens = r.stats && r.stats.total_tokens
+    return typeof tokens === 'number' && tokens > 0 ? probe.length / tokens : DEFAULT_CHARS_PER_TOKEN
+  } catch (_) {
+    return DEFAULT_CHARS_PER_TOKEN
+  }
 }
 
 function modelSpec (modelName, quant) {
@@ -236,6 +258,9 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
       // Cosine baseline: the first successful config's embeddings (reads ~1.0
       // against itself); later configs compare their embeddings to it.
       let baselineEmbeddings = null
+      // chars/token is a tokenizer (model) property, so measure it once per shard
+      // on the first successful load and reuse it across devices.
+      let charsPerToken = null
 
       for (const device of DEVICES) {
         let addon = null
@@ -253,6 +278,8 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
           continue
         }
 
+        if (charsPerToken == null) charsPerToken = await measureCharsPerToken(addon)
+
         const label = labelFor(spec, device, batchSize, flashAttn)
         try {
           // total_time_ms / total_tokens are CUMULATIVE for the loaded model's
@@ -265,7 +292,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
 
           // Input is sized to fill the batch, so batch size measures real
           // scaled work (single run per config, matching the desktop sweep).
-          const input = inputForBatch(batchSize)
+          const input = inputForBatch(batchSize, charsPerToken)
 
           // Warm up per loaded backend (discarded, never a measured rep) to
           // prime GPU kernels/caches so rep 1 isn't a cold-start outlier, and
