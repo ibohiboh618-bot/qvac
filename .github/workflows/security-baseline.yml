@@ -1,0 +1,54 @@
+name: Security baseline
+
+# Canonical security baseline (TruffleHog secret scan + CodeQL static analysis)
+# rolled out to Tier-1 repos per QVAC-21550. This is a thin caller that
+# delegates to the org's reusable workflow (authored under QVAC-19055); its
+# inputs and behavior are documented in
+# tetherto/qvac-actions/docs/security-baseline.md.
+#
+# Uses plain `pull_request` (never `pull_request_target`): fork PRs run with a
+# read-only token and no secrets, and this baseline needs none of the
+# privileged context (`codeql-upload: never` below), so the "pwn request"
+# surface of `pull_request_target` buys nothing here.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    # Pinned to the 0.1.0 tag's immutable commit SHA per the org freeze-and-pin
+    # convention for reusable workflows (never `@main`).
+    uses: tetherto/qvac-actions/.github/workflows/public-reusable-security.yml@38693d9315c5fb6bba1354d8d1ef9823bf6c10a3 # 0.1.0
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      actions: read
+    with:
+      # Explicit language list: CodeQL autodetect frequently misses C/C++ in
+      # mixed repos. C/C++ coverage is intentionally deferred for this first
+      # rollout (CodeQL autobuild needs the clang/vcpkg/bare-make toolchain) and
+      # is tracked as a follow-up; this caller covers the JS/TS + Python surface.
+      languages: javascript-typescript,python
+      severity-threshold: high
+      # qvac uses GitHub "Default setup" for code scanning, which rejects SARIF
+      # from advanced workflows. Skip the upload here; the severity gate and
+      # TruffleHog still run (SARIF is written locally for the gate to read).
+      codeql-upload: never
+      paths-exclude: |
+        **/node_modules/**
+        **/prebuilds/**
+        **/build/**
+        **/dist/**
+    secrets: inherit
