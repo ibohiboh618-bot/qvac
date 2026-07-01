@@ -165,8 +165,10 @@ jobs:
 
       # The prebuilt Windows addon is a Vulkan build that links against the
       # Vulkan loader (vulkan-1.dll), which ships in C:\VulkanSDK\Bin on the
-      # qvac-win25-x64-gpu runner. Exporting VULKAN_SDK is not enough: the DLL
-      # must be on PATH at addon load time, otherwise the .bare fails to load
+      # qvac-win25-x64-gpu runner. We export VULKAN_SDK / add its Bin to PATH,
+      # but that alone is not enough for bci-whispercpp (see the "stage Vulkan
+      # loader next to addon" step below): the .bare statically imports
+      # vulkan-1.dll and bare's loader does not search PATH for it, so it fails
       # with Win32 error 126 (ADDON_NOT_FOUND). Mirrors integration-test-vla.yml.
       - if: ${{ matrix.os == 'windows-2025' }}
         name: Set Vulkan SDK Path on Windows Server 2025
@@ -174,6 +176,41 @@ jobs:
         run: |
           echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
           echo "C:\VulkanSDK\Bin" >> $Env:GITHUB_PATH
+
+      # Diagnostic: dump the prebuilt addon's DLL import table so we can see
+      # exactly which dependency LoadLibrary is missing when the addon fails to
+      # load (Win32 error 126). `dumpbin` ships with the VS Build Tools that the
+      # qvac-win25-x64-gpu runner has installed. Mirrors integration-test-vla.yml.
+      - if: ${{ matrix.platform == 'win32' }}
+        name: Windows - dump addon DLL imports (diagnostic)
+        working-directory: ${{ inputs.workdir }}
+        shell: powershell
+        run: |
+          $addon = Get-ChildItem -Recurse -Filter 'qvac__bci-whispercpp*.bare' prebuilds/ | Select-Object -First 1
+          if (-not $addon) { Write-Host "no .bare in prebuilds/"; exit 0 }
+          Write-Host "addon: $($addon.FullName)"
+          $dumpbin = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Filter dumpbin.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dumpbin) { Write-Host "dumpbin not found"; exit 0 }
+          & $dumpbin.FullName /dependents $addon.FullName
+
+      # Unlike vla-ggml (which builds ggml with dynamic backends, so ggml-vulkan
+      # and its vulkan-1.dll dependency are only loaded lazily when the GPU is
+      # used), bci-whispercpp statically links whisper/ggml with Vulkan, so the
+      # .bare has a HARD import on vulkan-1.dll that must resolve at load time.
+      # bare's addon loader does not resolve that static import via PATH, so we
+      # place the Vulkan loader in the addon's own directory (Windows always
+      # searches the loaded module's own directory first).
+      - if: ${{ matrix.platform == 'win32' }}
+        name: Windows - stage Vulkan loader next to addon
+        working-directory: ${{ inputs.workdir }}
+        shell: powershell
+        run: |
+          $vk = Get-ChildItem -Path "C:\VulkanSDK" -Filter vulkan-1.dll -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $vk) { Write-Host "vulkan-1.dll not found under C:\VulkanSDK"; exit 1 }
+          $dir = Get-ChildItem -Recurse -Filter 'qvac__bci-whispercpp*.bare' prebuilds/ | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+          if (-not $dir) { Write-Host "no .bare dir in prebuilds/"; exit 1 }
+          Write-Host "copying $($vk.FullName) -> $dir"
+          Copy-Item -Path $vk.FullName -Destination $dir -Force
 
       - name: Download models (registry)
         working-directory: ${{ inputs.workdir }}
