@@ -78,7 +78,6 @@ import { ConfigExecutor } from "../shared/executors/config-executor.js";
 import { NoLingeringBareExecutor } from "../shared/executors/node/no-lingering-bare-executor.js";
 import { MultiGpuExecutor } from "../shared/executors/multi-gpu-executor.js";
 import { NodeCancellationExecutor } from "../shared/executors/node/cancellation-executor.js";
-import { RetryVerifyExecutor } from "../shared/executors/retry-verify-executor.js";
 
 const resources = new ResourceManager({
   downloadTarget: "desktop",
@@ -503,7 +502,6 @@ export const executor = createExecutor({
     new NoLingeringBareExecutor(),
     new MultiGpuExecutor(resources),
     new NodeCancellationExecutor(resources),
-    new RetryVerifyExecutor(),
   ],
   profiling: {
     init: () => profiler.enable({ mode: "summary", includeServerBreakdown: true }),

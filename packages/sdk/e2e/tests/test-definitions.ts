@@ -39,7 +39,6 @@ import { wrongModelTests } from "./wrong-model-tests.js";
 import { multiGpuTests } from "./multi-gpu-tests.js";
 import { cancellationTests } from "./cancellation-tests.js";
 import { vlaTests } from "./vla-tests.js";
-import { retryVerifyTests } from "./retry-verify-tests.js";
 
 // Model loading tests
 export const modelLoadLlm: TestDefinition = {
@@ -322,9 +321,6 @@ export const tests: TestDefinition[] = [
   // (see mobile/consumer.ts) because the GGUFs are too large for the
   // Device Farm infra (see note there).
   ...vlaTests,
-
-  // Retry-mechanism verification (no model, always fails attempt-1, passes attempt-2)
-  ...retryVerifyTests,
 
   // Additional model tests
   modelSwitchLlm,

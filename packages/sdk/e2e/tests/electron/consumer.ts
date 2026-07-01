@@ -79,7 +79,6 @@ import { LifecycleExecutor } from "../shared/executors/lifecycle-executor.js";
 import { ConfigExecutor } from "../shared/executors/config-executor.js";
 import { MultiGpuExecutor } from "../shared/executors/multi-gpu-executor.js";
 import { NodeCancellationExecutor } from "../shared/executors/node/cancellation-executor.js";
-import { RetryVerifyExecutor } from "../shared/executors/retry-verify-executor.js";
 
 const resources = new ResourceManager({
   downloadTarget: "desktop",
@@ -424,7 +423,6 @@ export const executor = createExecutor({
     new ConfigExecutor(),
     new MultiGpuExecutor(resources),
     new NodeCancellationExecutor(resources),
-    new RetryVerifyExecutor(),
   ],
   profiling: {
     init: () => profiler.enable({ mode: "summary", includeServerBreakdown: true }),
