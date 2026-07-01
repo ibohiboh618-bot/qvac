@@ -193,9 +193,7 @@ export const modelLifecycleNmt: TestDefinition = {
 };
 
 // Export all tests as array
-// TEMP (temp branch): force retryOnFailure on every test to surface flaky
-// failures in CI — see the .map() at the end of this array.
-export const tests: TestDefinition[] = [
+export const tests = [
   // Model tests (first section)
   modelLoadLlm,
   modelLoadEmbedding,
@@ -330,4 +328,4 @@ export const tests: TestDefinition[] = [
 
   // NMT model lifecycle test
   modelLifecycleNmt,
-].map((test) => ({ ...test, retryOnFailure: true }));
+];
