@@ -49,7 +49,6 @@ const PARAMETER_SWEEP = {
   batchSize: [256, 512, 1024, 2048],
   flashAttn: ['off', 'on']
 }
-const INPUT_MODES = ['single', 'array']
 
 // Cross-product of the 4 base (model x quant) download cells with the
 // reload-heavy axes batchSize (4) x flashAttn (2) = 32 cells, preserving order
@@ -148,6 +147,5 @@ module.exports = {
   runFunctionName,
   shardContents,
   workflowBatches,
-  PARAMETER_SWEEP,
-  INPUT_MODES
+  PARAMETER_SWEEP
 }

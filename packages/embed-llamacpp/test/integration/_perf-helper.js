@@ -176,7 +176,7 @@ function _num (v) {
  * the numbers also show up in the brittle TAP output.
  *
  * @param {string} label Row identifier, e.g.
- *   "[Qwen3-embedding-0.6B q=Q8_0] [gpu] [bs=512] [fa=on] [input=array]".
+ *   "[Qwen3-embedding-0.6B q=Q8_0] [gpu] [bs=512] [fa=on]".
  * @param {Object} extra
  * @param {string} [extra.deviceId]  'cpu'|'gpu' if the caller knows it.
  * @param {number} [extra.ppTps]     mean prefill tokens/sec across the config's repeats.

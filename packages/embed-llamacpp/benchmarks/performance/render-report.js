@@ -491,10 +491,10 @@ function uniformInputTokens (rows) {
 }
 
 // Shard key for a mobile row, parsed from its
-// "[<model> q=<quant>] [<device>] [bs=<N>] [fa=<on|off>] [input=...]" label, to
-// match _benchmark-matrix.js mobileShardKey (<model>|<quant>|bs<N>|fa<on|off>).
-// batchSize and flashAttn are the shard key; device and inputMode are swept
-// within a shard, so they are excluded from the key.
+// "[<model> q=<quant>] [<device>] [bs=<N>] [fa=<on|off>]" label, to match
+// _benchmark-matrix.js mobileShardKey (<model>|<quant>|bs<N>|fa<on|off>).
+// batchSize and flashAttn are the shard key; device is swept within a shard, so
+// it is excluded from the key.
 function shardKeyOf (config) {
   const m = /^\[([^\]]+?)\s+q=([^\]]+)\]/.exec(config)
   if (!m) return null
@@ -644,17 +644,10 @@ function renderMobile (rows, meta, addonVersionArg, heading = '# Embed Benchmark
   )
   lines.push('')
   lines.push(
-    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>] [input=<single|array>]`, ' +
-    'where `single` embeds one sequence and `array` embeds several in one call. ' +
-    'Each mobile shard is one (model, quant, batch size, flash-attn) cell and sweeps device x input mode.'
-  )
-  lines.push('')
-  lines.push(
-    '> **Note on mobile batch size:** unlike the desktop sweep (which sizes each input to the batch, ' +
-    'so batch size is a scaled-work throughput curve), the mobile inputs are fixed (one sentence for ' +
-    '`single`, five for `array`) across every batch size. Mobile `bs` is therefore a runtime-capacity / ' +
-    'configuration axis, not a scaled-work axis — its ppTPS/latency are not directly comparable to the ' +
-    'desktop throughput-vs-batch numbers.'
+    'Config labels read `[model q=<quant>] [gpu|cpu] [bs=<batch>] [fa=<on|off>]`. Each mobile shard is ' +
+    'one (model, quant, batch size, flash-attn) cell and sweeps device. The per-config input is sized ' +
+    'to fill the batch (single run per config), so batch size is a real scaled-work axis, matching the ' +
+    'desktop sweep. A large filled batch that exceeds a tight device\'s memory shows as Crashed for that config.'
   )
   lines.push('')
 
