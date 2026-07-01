@@ -129,10 +129,10 @@ module.exports = {
   // Desktop overrides this with QVAC_VLM_MMPROJ_GPU; on mobile (no env passthrough)
   // this default governs the on-device run. Default 'auto' leaves normal runs
   // unchanged; the vlm-benchmark skill sets 'both' for the Android projector A/B.
-  mmprojGpu: 'auto',
+  mmprojGpu: 'both',
   // Single VLM used by mmproj-compare (mmprojGpu='both'). Defaults to MODEL_2
   // (Qwen3.5-q8); set to GEMMA4_Q4 to benchmark Gemma's vision encoder instead.
-  mmprojModel: MODEL_2,
+  mmprojModel: GEMMA4_Q4,
 
   // ════════════════════════ MODEL CATALOG — known-good short names ════════════════════════
   // Convenience only — the matrix_models launch param also accepts ad-hoc
