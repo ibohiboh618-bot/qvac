@@ -278,7 +278,7 @@ function benchmarkModel (modelName, quant, batchSize, flashAttn) {
           continue
         }
 
-        if (charsPerToken == null) charsPerToken = await measureCharsPerToken(addon)
+        if (charsPerToken == null) charsPerToken = await measureCharsPerToken(addon, batchSize)
 
         const label = labelFor(spec, device, batchSize, flashAttn)
         try {
