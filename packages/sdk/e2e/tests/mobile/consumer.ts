@@ -64,6 +64,7 @@ import { DelegatedInferenceExecutor } from "../shared/executors/delegated-infere
 import { LifecycleExecutor } from "../shared/executors/lifecycle-executor.js";
 import { ConfigExecutor } from "../shared/executors/config-executor.js";
 import { MobileCancellationExecutor } from "./executors/cancellation-executor.js";
+import { RetryVerifyExecutor } from "../shared/executors/retry-verify-executor.js";
 
 const resources = new ResourceManager({
   downloadTarget: "mobile",
@@ -486,6 +487,7 @@ export const executor = createExecutor({
     new LifecycleExecutor(resources),
     new ConfigExecutor(),
     new MobileCancellationExecutor(resources),
+    new RetryVerifyExecutor(),
   ],
   profiling: {
     init: () => profiler.enable({ mode: "summary", includeServerBreakdown: true }),

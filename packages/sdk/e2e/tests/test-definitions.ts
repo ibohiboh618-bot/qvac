@@ -39,6 +39,7 @@ import { wrongModelTests } from "./wrong-model-tests.js";
 import { multiGpuTests } from "./multi-gpu-tests.js";
 import { cancellationTests } from "./cancellation-tests.js";
 import { vlaTests } from "./vla-tests.js";
+import { retryVerifyTests } from "./retry-verify-tests.js";
 
 // Model loading tests
 export const modelLoadLlm: TestDefinition = {
@@ -193,7 +194,9 @@ export const modelLifecycleNmt: TestDefinition = {
 };
 
 // Export all tests as array
-export const tests = [
+// TEMP (temp branch): force retryOnFailure on every test to surface flaky
+// failures in CI — see the .map() at the end of this array.
+export const tests: TestDefinition[] = [
   // Model tests (first section)
   modelLoadLlm,
   modelLoadEmbedding,
@@ -320,6 +323,9 @@ export const tests = [
   // Device Farm infra (see note there).
   ...vlaTests,
 
+  // Retry-mechanism verification (no model, always fails attempt-1, passes attempt-2)
+  ...retryVerifyTests,
+
   // Additional model tests
   modelSwitchLlm,
   modelReloadAfterError,
@@ -328,4 +334,4 @@ export const tests = [
 
   // NMT model lifecycle test
   modelLifecycleNmt,
-];
+].map((test) => ({ ...test, retryOnFailure: true }));
