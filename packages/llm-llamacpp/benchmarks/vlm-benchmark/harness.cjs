@@ -350,6 +350,12 @@ function runModel (spec) {
           n_predict: String(nPredict),
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
           'reasoning-budget': '0', // disable Qwen3.5 thinking -> clean direct answers
+          // Per-model image-tiling knobs (Qwen3.5-VL). A model spec may carry an
+          // `imageConfig` map (e.g. { image_tile_mode: 'sequential' | 'batched' |
+          // 'disabled', image_max_tokens, image_min_tokens }); it is spread into the
+          // addon config so two catalog variants differing ONLY in tiling can be
+          // compared in two-models mode (grid-select rewrite: seq vs batched encode).
+          ...(spec.imageConfig || {}),
           ...(BACKENDS_DIR ? { backendsDir: BACKENDS_DIR } : {}) // candidate/baseline build swap (scheduler)
         },
         logger: console,
