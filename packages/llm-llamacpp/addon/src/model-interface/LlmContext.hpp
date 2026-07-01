@@ -334,6 +334,13 @@ public:
   virtual void resetThinkingBlockDiscards() {}
 
   /**
+   * QVAC-21257: total image-chunk (mmproj / vision-encoder) eval time in
+   * milliseconds for the most recent prefill. 0 for text-only contexts.
+   * Used to isolate the projector cost from total TTFT in benchmarks.
+   */
+  [[nodiscard]] virtual double getLastVisionEncodeMs() const { return 0.0; }
+
+  /**
    * The load media method. It loads the media from memory buffer.
    * Default implementation does nothing (for text-only contexts).
    * Override in multimodal contexts to provide media loading functionality.

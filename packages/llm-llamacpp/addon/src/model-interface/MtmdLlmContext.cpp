@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 
@@ -263,6 +264,8 @@ void MtmdLlmContext::initVisionContext() {
       }
     }
   }
+  // QVAC-21257 iter 1: mtmd warmup=true was tried and showed no improvement on Pixel
+  // (the penalty is steady-state, not first-encode shader compile) — left at default.
   ctxVision_.reset(mtmd_init_from_file(clipPath, modelCtx_.model, mparams));
   if (ctxVision_.get() == nullptr) {
     std::string errorMsg = string_format(
@@ -532,6 +535,10 @@ bool MtmdLlmContext::evalMessageWithTools(
 
   llama_pos nPastLocal = current_.pos;
 
+  // QVAC-21257: accumulate image-chunk (vision-encoder) eval time for this
+  // prefill so it can be surfaced separately from total TTFT. Reset per call.
+  double visionMs = 0.0;
+
   for (size_t i = 0; i < nChunks; i++) {
     bool chunkLogitsLast = (i == nChunks - 1 && !prefill);
     const auto* chunk = mtmd_input_chunks_get(chunksPtr, i);
@@ -579,6 +586,12 @@ bool MtmdLlmContext::evalMessageWithTools(
       stopGeneration_.store(false);
       return false;
     }
+    const bool isImageChunk =
+        mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE;
+    // QVAC-21257 iter 2: capping the image-chunk encode batch to 128 was tried and
+    // made the encode slower (more, smaller GPU dispatches) — reverted to the
+    // configured batch. The encode is dispatch/launch-overhead-bound on Mali.
+    const auto chunkStart = std::chrono::steady_clock::now();
     int32_t res = mtmd_helper_eval_chunk_single(
         visionContext(),
         modelCtx_.lctx,
@@ -588,6 +601,11 @@ bool MtmdLlmContext::evalMessageWithTools(
         params_.n_batch,
         chunkLogitsLast,
         &nPastLocal);
+    if (isImageChunk) {
+      visionMs += std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - chunkStart)
+                      .count();
+    }
     if (res != 0) {
       std::string errorMsg =
           "[MtmdLlm] failed to eval chunk " + std::to_string(i);
@@ -595,6 +613,7 @@ bool MtmdLlmContext::evalMessageWithTools(
           ADDON_ID, toString(EncoderFailed), errorMsg);
     }
   }
+  visionEncodeMs_ = visionMs;
   current_.pos = nPastLocal;
   refreshCurrentCacheTokensFromMemory();
 
