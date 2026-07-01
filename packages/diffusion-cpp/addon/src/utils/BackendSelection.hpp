@@ -42,6 +42,7 @@ struct GpuCandidate {
   std::string name;
   GpuClass cls;
   size_t totalVram;
+  std::string description;
 };
 
 /**
@@ -59,7 +60,9 @@ std::optional<std::string> selectMainGpuName(
  * "Vulkan1") suitable for `sd_ctx_params_t.backend`. Enumerates ggml devices
  * into GpuCandidates and defers the pick to selectMainGpuName:
  *   - Dedicated  -> the GGML_BACKEND_DEVICE_TYPE_GPU device with the most VRAM
+ *                   (except OpenCL Adreno devices, which ggml reports as GPU)
  *   - Integrated -> the GGML_BACKEND_DEVICE_TYPE_IGPU device with the most VRAM
+ *                   or an OpenCL Adreno device reported as GPU
  *   - Index      -> the nth GPU/iGPU device, if in range
  * Returns nullopt when no matching device exists (caller leaves backend unset
  * and the default preference applies — never forces an empty device set).
@@ -94,8 +97,7 @@ int threadsFromMap(
  * available ggml devices at runtime.
  *
  * Priority:
- *   Adreno 800+  -> GPU (OpenCL will be selected by init_backend)
- *   Adreno 600/700 -> CPU (OpenCL works but is slow; force CPU)
+ *   Android Adreno -> CPU (OpenCL is unstable in native generation)
  *   Everything else -> GPU (Vulkan or other backend via init_backend)
  *
  * Returns the resolved BackendDevice.
@@ -104,9 +106,10 @@ BackendDevice resolveBackendForDevice(BackendDevice preferred);
 
 /**
  * Returns true when runtime device probing indicates that OpenCL should be
- * preferred for Adreno 800+ GPUs.
+ * preferred for Adreno GPUs.
  *
- * This only applies when preferred is GPU. CPU preference always returns false.
+ * This only applies when preferred is GPU. CPU preference always returns false,
+ * and Android returns false because the OpenCL generation path is unstable.
  */
 bool shouldPreferOpenClForAdreno(BackendDevice preferred);
 
@@ -129,8 +132,7 @@ preferredEsrganBackendForConfigDevice(const std::string& device);
 /**
  * Expected EsrganRuntimeStats.backendDevice ("cpu" or "gpu") after ESRGAN load
  * when config.device is @p device. On Android, gpu always expects "cpu".
- * Elsewhere mirrors resolveBackendForDevice(): Adreno 600/700 + gpu -> "cpu";
- * Adreno 800+ and other GPUs -> "gpu".
+ * Elsewhere mirrors resolveBackendForDevice().
  */
 std::string expectedEsrganBackendDeviceForConfig(const std::string& device);
 

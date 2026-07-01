@@ -178,6 +178,22 @@ TEST_F(SdBackendSelectionTest, SelectMainGpuByIndexAndType) {
   EXPECT_EQ(integrated.value(), "iGPU");
 }
 
+TEST_F(SdBackendSelectionTest, SelectMainGpuIntegratedCanPickOpenClAdrenoGpu) {
+  const std::vector<GpuCandidate> devices{
+      {"CPU", GpuClass::Other, 0},
+      {"GPUOpenCL", GpuClass::Dedicated, 0, "QUALCOMM Adreno(TM) 840"},
+      {"Vulkan0", GpuClass::Dedicated, 8000},
+  };
+
+  const auto integrated = selectMainGpuName(devices, kIntegrated);
+  ASSERT_TRUE(integrated.has_value());
+  EXPECT_EQ(integrated.value(), "GPUOpenCL");
+
+  const auto dedicated = selectMainGpuName(devices, kDedicated);
+  ASSERT_TRUE(dedicated.has_value());
+  EXPECT_EQ(dedicated.value(), "Vulkan0");
+}
+
 TEST_F(SdBackendSelectionTest, SelectMainGpuNoMatchingClassIsNullopt) {
   const std::vector<GpuCandidate> devices{{"CPU", GpuClass::Other, 0}};
   EXPECT_FALSE(selectMainGpuName(devices, kDedicated).has_value());
