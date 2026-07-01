@@ -52,6 +52,11 @@ on:
         required: false
         type: string
         default: ""
+      matrix_mmproj_gpu:
+        description: "  mmproj (vision encoder) backend: auto | cpu | gpu (QVAC-21257). Desktop legs only; mobile uses config.cjs mmprojGpu."
+        required: false
+        type: string
+        default: "auto"
       matrix_mobile:
         description: "  mobile (AWS Device Farm) legs, comma-sep <device>[-<backend>]: s26,s25,pixel9,iphone16,iphone17,iphone17pro, e.g. 's26-cpu,s26-gpu,iphone17' (bare device = cpu+gpu in one session; empty = no mobile)"
         required: false
@@ -374,10 +379,13 @@ jobs:
   # A2: build the addon from the dispatched ref so addon@candidate can be compared
   # against the published addon@baseline. Uses the standard reusable prebuild workflow,
   # which uploads per-platform `llama-cpp-<platform>-<arch>` artifacts the desktop legs
-  # (and the mobile candidate session) consume. Only runs when a candidate is requested.
+  # (and, on mixed desktop+mobile runs, the mobile candidate session) consume.
+  # QVAC-21257: runs whenever DESKTOP legs are present (it builds the full platform matrix,
+  # incl. android-arm64 for a mixed run's mobile leg). A MOBILE-ONLY run instead uses the
+  # targeted android-only prebuild below, to avoid building all 9 platforms for one phone.
   prebuild-candidate:
     needs: context
-    if: ${{ contains(inputs.matrix_sources, 'addon@candidate') && (needs.context.outputs.desktop_count != '0' || needs.context.outputs.mobile_count != '0') }}
+    if: ${{ contains(inputs.matrix_sources, 'addon@candidate') && needs.context.outputs.desktop_count != '0' }}
     permissions:
       contents: write
       pull-requests: write
@@ -386,6 +394,27 @@ jobs:
     with:
       ref: ${{ needs.context.outputs.ref }}
       repository: ${{ needs.context.outputs.repository }}
+    secrets: inherit
+
+  # QVAC-21257: mobile-ONLY runs (no desktop legs) build just android-arm64 via the
+  # targeted reusable prebuild instead of the full 9-platform matrix above — it uploads the
+  # same `llama-cpp-android-arm64` artifact the mobile session consumes, at a fraction of
+  # the CI. Mutually exclusive with prebuild-candidate (gated on desktop_count == '0').
+  prebuild-candidate-mobile:
+    needs: context
+    if: ${{ contains(inputs.matrix_sources, 'addon@candidate') && needs.context.outputs.desktop_count == '0' && needs.context.outputs.mobile_count != '0' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/reusable-prebuild-targeted.yml
+    with:
+      ref: ${{ needs.context.outputs.ref }}
+      repository: ${{ needs.context.outputs.repository }}
+      targets: '[{"platform":"android","arch":"arm64","os":"ubuntu-24.04"}]'
+      workdir: packages/llm-llamacpp
+      artifact-name-prefix: llama-cpp-
+      include-vulkan-sdk: true
     secrets: inherit
 
   matrix-desktop:
@@ -548,6 +577,7 @@ jobs:
           QVAC_VLM_PRESET: ${{ inputs.matrix_preset }}
           QVAC_VLM_ENGINE: addon # this leg is always the 'addon' source
           QVAC_VLM_SAMPLES: ${{ inputs.matrix_samples }} # '' → use the preset's value
+          QVAC_VLM_MMPROJ_GPU: ${{ inputs.matrix_mmproj_gpu }} # QVAC-21257: auto = addon per-platform default (desktop legs)
           QVAC_VLM_DEVICES: ${{ matrix.backend }}
           QVAC_VLM_MODELS: ${{ inputs.matrix_models }} # '' → config defaults (CONTRACT.md §3)
           QVAC_VLM_SOURCES: ${{ inputs.matrix_sources }} # addon-type sources scheduled here; CLI sources run in the native-CLI step below
@@ -748,11 +778,13 @@ jobs:
   # the S25's logcat / the iPhone's bare_console.log (no logcat on iOS),
   # uploaded as console-logs-…-<platform>-<token>.
   matrix-mobile:
-    # prebuild-candidate is skipped unless a candidate is requested; the status-function
-    # gate keeps this job running when that need is skipped (only a real failure blocks it).
-    # The candidate mobile session bundles its freshly-built prebuild artifact.
-    needs: [context, prebuild-candidate]
-    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' }}
+    # The candidate prebuild is one of two jobs: the full-matrix prebuild-candidate (desktop
+    # or mixed runs) or the targeted prebuild-candidate-mobile (mobile-only runs) — exactly one
+    # runs, the other is skipped. Both upload the same `llama-cpp-android-arm64` artifact this
+    # session consumes. The status-function gate keeps this job running past the skipped one
+    # (only a real failure of whichever prebuild DID run blocks it).
+    needs: [context, prebuild-candidate, prebuild-candidate-mobile]
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prebuild-candidate-mobile.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:

@@ -120,6 +120,20 @@ module.exports = {
   base: MODEL_1.label,
   candidate: MODEL_2.label,
 
+  // ════════════════════════ mmproj projector backend ════════════════════════
+  // QVAC-21257: which backend runs the multimodal projector (vision encoder).
+  //   'auto' — leave the addon's per-platform default (Android CPU, desktop/iOS GPU)
+  //   'cpu' / 'gpu' — force the projector backend via the addon's mmproj-use-gpu key
+  //   'both' — mmproj-compare: run ONE model (mmprojModel) on the GPU model-backend
+  //            with the projector on CPU vs GPU as the two report columns.
+  // Desktop overrides this with QVAC_VLM_MMPROJ_GPU; on mobile (no env passthrough)
+  // this default governs the on-device run. Default 'auto' leaves normal runs
+  // unchanged; the vlm-benchmark skill sets 'both' for the Android projector A/B.
+  mmprojGpu: 'auto',
+  // Single VLM used by mmproj-compare (mmprojGpu='both'). Defaults to MODEL_2
+  // (Qwen3.5-q8); set to GEMMA4_Q4 to benchmark Gemma's vision encoder instead.
+  mmprojModel: MODEL_2,
+
   // ════════════════════════ MODEL CATALOG — known-good short names ════════════════════════
   // Convenience only — the matrix_models launch param also accepts ad-hoc
   // <llm-url>|<mmproj-url> pairs for ANY model with no catalog entry (see
