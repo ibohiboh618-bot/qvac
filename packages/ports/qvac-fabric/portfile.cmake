@@ -2,16 +2,17 @@ vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
   REPO tetherto/qvac-fabric-llm.cpp
   # QVAC-21297 VALIDATION OVERLAY — pinned to the qvac-fabric PR #170 head
-  # feat/opencl-vision-encoder-qwen3vl-s25 @ 1acc1c187 = temp-9341 (e9ad5fc9f) +
+  # feat/opencl-vision-encoder-qwen3vl-s25 @ 19c175590 = temp-9341 (e9ad5fc9f) +
   # PR #170's OpenCL vision-encoder fixes + the PR-review follow-ups: the
   # flash-attn tile-loop barrier/divergence fix ported to the f16 & f32_f16
   # sibling kernels (the f32_f16 kernel the Qwen3-VL vision tower dispatches) +
-  # null-mask/zero-dim hardening asserts. NO QVAC-21320 / PR #174 Mali Vulkan
-  # opts. SHA512 is the GitHub source-tarball hash for this REF. Replace with
-  # `REF v${VERSION}` + the tag SHA512 in the registry PR (Phase B1), and delete
-  # this overlay from the consumers in the landing PR (Phase B2).
-  REF 1acc1c187acf356c89f7cb63aa82c76187b09d6f
-  SHA512 2a7d995dd60d5090011d4bb1bf4da54b992c7d905204feb22ba9c409f2f8e3bb1115966495f85dc8eeefefe7221c8b94f1afb08caa536f7786eaced58ef236c8
+  # the ggml_cl_upscale zero-source-dim guard. (The earlier null-mask FA assert
+  # was dropped — it aborts the legitimate bidirectional encoder.) NO QVAC-21320
+  # / PR #174 Mali Vulkan opts. SHA512 is the GitHub source-tarball hash for this
+  # REF. Replace with `REF v${VERSION}` + the tag SHA512 in the registry PR
+  # (Phase B1), and delete this overlay from the consumers in the landing PR (Phase B2).
+  REF 19c1755908e85cef36b6a87097855e4e80f856f3
+  SHA512 ff6d0d9f1f7cb631e155e98b5afa533c03a11ae9259bf53d9b8f189bd30cc013e2b365547d85a6b95901a17aa73ccd41efa37df4c33fe6998fc65229662b5c6d
 )
 
 # Upstream CMake options only — passed through to vcpkg_cmake_configure.
