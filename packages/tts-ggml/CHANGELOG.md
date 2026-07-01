@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `example:chatterbox-adjust-speed` npm script), C++ WSOLA unit tests, and a JS
   integration test.
 
+### Changed
+
+- **Swap the ARM Mali GPU policy: Chatterbox→GPU, Supertonic→CPU (QVAC-20557).**
+  The campaign proved the Mali allowlist was backwards: Supertonic miscomputes on
+  Mali/Vulkan (Valhall driver bugs in the text-encoder value-matmul + ConvNeXt
+  im2col — two unfixable-upstream), while Chatterbox is correct on Mali once S3Gen
+  runs on Vulkan with a `CONV_TRANSPOSE_1D`→CPU gate (T3 stays on CPU). The addon
+  now flags the Mali policy-CPU fallback on **Supertonic** (`gpuUnsupported`) and
+  asserts GPU for **Chatterbox** on every GPU-capable platform incl. Mali; the
+  gpu-smoke policy-CPU allowance moved Chatterbox→Supertonic accordingly. The
+  behavioural decline itself lives in `tts-cpp` (`allow_arm_mali`) + `ggml-speech`
+  (the conv_transpose gate); this consumer change lands fully once `vcpkg.json` is
+  bumped to the swapped port-versions.
+
 ## Pull Requests
 
 - [#2782](https://github.com/tetherto/qvac/pull/2782) - QVAC-21119: add Chatterbox speaking-rate (`speed`) control

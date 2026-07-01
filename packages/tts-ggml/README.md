@@ -11,8 +11,8 @@ loaded once and reused across every synthesis call.  GPU acceleration
 (Metal on macOS/iOS, Vulkan / OpenCL on Linux/Windows)
 is **opt-in** via `config: { useGPU: true }`; the default is CPU.  On
 Android `useGPU` flows through to `tts-cpp`, which picks the GPU
-backend per its own per-vendor allowlist (Supertonic on Adreno/OpenCL,
-Xclipse/Vulkan, Mali/Vulkan; Chatterbox on Adreno/Xclipse, declined to
+backend per its own per-vendor allowlist (Chatterbox on Adreno/OpenCL,
+Xclipse/Vulkan, Mali/Vulkan; Supertonic on Adreno/Xclipse, declined to
 CPU on Mali) (see
 [Backends & GPU acceleration](#backends--gpu-acceleration)).
 
@@ -217,10 +217,11 @@ host's policy:
 | Android — Mali / others | Vulkan                                       |
 | Everything else / CPU-only build | CPU                                 |
 
-> **Chatterbox on ARM Mali** is the one exception to the table: `tts-cpp`
-> declines Mali for the Chatterbox / S3Gen graph (`allow_arm_mali=false`) and
-> runs it on CPU there (reported via `stats.gpuUnsupported`).  Supertonic runs
-> on Mali via Vulkan.
+> **Supertonic on ARM Mali** is the one exception to the table: `tts-cpp`
+> declines Mali for the Supertonic graph (`allow_arm_mali=false` — the Valhall
+> driver miscomputes its text-encoder value-matmul + ConvNeXt im2col) and runs
+> it on CPU there (reported via `stats.gpuUnsupported`).  Chatterbox runs on
+> Mali via Vulkan (S3Gen on the GPU; T3 on CPU).
 
 ### Android: dynamic backend loading
 
@@ -258,7 +259,7 @@ backend persist its compiled program cache across launches.
 | `backendsDir`             | string     | `path.join(__dirname, 'prebuilds')` | Root dir the addon scans for dynamically-loaded ggml backend `.so` files.  Required on Android (host should pass `path.join(__dirname, 'prebuilds')`); ignored on platforms that statically link the backend |
 | `openclCacheDir`          | string     | unset      | Android-only: directory where the OpenCL backend persists its compiled program-binary cache.  Setting it across runs avoids re-JITing the kernels on every fresh process |
 | `config.language`         | string     | `"en"`     | Chatterbox MTL accepts `es/fr/de/pt/it/zh/ja/ko/...`; turbo & Supertonic are English |
-| `config.useGPU`           | boolean    | `false`    | Set to `true` to route through Metal / Vulkan / CUDA / OpenCL if available.  Honored for both engines on GPU-capable hosts, including Android, where `tts-cpp` selects the GPU backend per its per-vendor allowlist (Chatterbox falls back to CPU on Mali) |
+| `config.useGPU`           | boolean    | `false`    | Set to `true` to route through Metal / Vulkan / CUDA / OpenCL if available.  Honored for both engines on GPU-capable hosts, including Android, where `tts-cpp` selects the GPU backend per its per-vendor allowlist (Supertonic falls back to CPU on Mali) |
 | `config.outputSampleRate` | number     | 24000      | Resample native 24 kHz output |
 | `opts.stats`              | boolean    | `false`    | Populate `response.stats` with RTF, `backendDevice` (0=CPU, 1=GPU), `backendId` (0=CPU, 1=Metal, 3=Vulkan, 4=OpenCL, 99=other) etc. |
 | `opts.exclusiveRun`       | boolean    | `false`    | Serialize overlapping streaming runs |

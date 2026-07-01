@@ -84,7 +84,7 @@ function assertGpuBackend (t, engineTag, stats, allowPolicyCpu = false) {
     return
   }
 
-  // Engines tts-cpp declines on a given vendor (e.g. Chatterbox on Mali,
+  // Engines tts-cpp declines on a given vendor (e.g. Supertonic on Mali,
   // allow_arm_mali=false) legitimately fall back to CPU and flag it via
   // stats.gpuUnsupported. That is the correct result there, not a GPU regression.
   if (allowPolicyCpu && dev === 0 && stats.gpuUnsupported) {
@@ -180,7 +180,7 @@ test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
     console.log(result.output)
     t.ok(result.passed, 'Chatterbox/GPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Chatterbox/GPU produced audio')
-    assertGpuBackend(t, 'Chatterbox', result.data.stats, /* allowPolicyCpu */ true)
+    assertGpuBackend(t, 'Chatterbox', result.data.stats, /* allowPolicyCpu */ false)
     recordSmoke(t, 'chatterbox gpu-smoke', result, wallMs)
   } finally {
     try { await model.unload() } catch (_e) {}
@@ -189,8 +189,10 @@ test('Chatterbox GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
 
 test('Supertonic GPU smoke - useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
   // Supertonic GPU: Metal on Apple, Vulkan/CUDA on desktop, Vulkan/OpenCL on
-  // Android (Adreno/Xclipse/Mali, validated under QVAC-20557 / tts-cpp 2026-06-18).
-  // The strict assertion runs on every GPU-capable platform including Android.
+  // Android Adreno/Xclipse. ARM Mali is declined by policy (allow_arm_mali=false
+  // — Valhall driver miscomputes the text-encoder value-matmul + ConvNeXt im2col),
+  // so allowPolicyCpu=true accepts a flagged Mali→CPU fallback here while every
+  // other GPU-capable platform must still engage the GPU (QVAC-20557).
   const baseDir = getBaseDir()
   const modelsDir = path.join(baseDir, 'models')
 
@@ -220,7 +222,7 @@ test('Supertonic GPU smoke - useGPU=true must engage the GPU backend on GPU-capa
     console.log(result.output)
     t.ok(result.passed, 'Supertonic/GPU produced expected sample count')
     t.ok(result.data.sampleCount > 0, 'Supertonic/GPU produced audio')
-    assertGpuBackend(t, 'Supertonic', result.data.stats)
+    assertGpuBackend(t, 'Supertonic', result.data.stats, /* allowPolicyCpu */ true)
     recordSmoke(t, 'supertonic gpu-smoke', result, wallMs)
   } finally {
     try { await model.unload() } catch (_e) {}
