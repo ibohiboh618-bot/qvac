@@ -46,9 +46,4 @@ jobs:
       # from advanced workflows. Skip the upload here; the severity gate and
       # TruffleHog still run (SARIF is written locally for the gate to read).
       codeql-upload: never
-      paths-exclude: |
-        **/node_modules/**
-        **/prebuilds/**
-        **/build/**
-        **/dist/**
     secrets: inherit
