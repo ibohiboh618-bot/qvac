@@ -1,0 +1,82 @@
+{
+  "name": "tts-cpp",
+  "version-date": "2026-06-19",
+  "port-version": 0,
+  "description": "LOCAL-PATH OVERLAY (DO NOT MERGE) of tts-cpp built from the local worktree _wt-whisper-mali-verify/tts-cpp (branch QVAC-20557-chatterbox-mali-verify, off master a85a4444). QVAC-20557 Mali/Vulkan GPU-VERIFY build: allow_arm_mali=true admits Chatterbox T3+S3Gen onto ARM Mali Vulkan; per-stage [gpu-diag] trace via __android_log (gated $TTS_CPP_GPU_TRACE) for Supertonic + Chatterbox; env-toggled Mali GEMM output-pad ($TTS_CPP_MALI_PAD 0=raw/1=padded) for the raw-vs-padded Chatterbox runs. Throwaway; never publish to the registry.",
+  "homepage": "https://github.com/tetherto/qvac-ext-lib-whisper.cpp/tree/master/tts-cpp",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "ggml-speech",
+      "version>=": "2026-06-04"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ],
+  "default-features": [
+    {
+      "name": "metal",
+      "platform": "osx | ios"
+    },
+    {
+      "name": "opencl",
+      "platform": "android"
+    },
+    {
+      "name": "vulkan",
+      "platform": "windows | linux | android"
+    }
+  ],
+  "features": {
+    "cuda": {
+      "description": "Enable CUDA GPU acceleration",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "cuda"
+          ]
+        }
+      ]
+    },
+    "metal": {
+      "description": "Enable Metal GPU acceleration (macOS / iOS)",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "metal"
+          ]
+        }
+      ]
+    },
+    "opencl": {
+      "description": "Enable OpenCL GPU acceleration (Android / Adreno)",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "opencl"
+          ]
+        }
+      ]
+    },
+    "vulkan": {
+      "description": "Enable Vulkan GPU acceleration",
+      "dependencies": [
+        {
+          "name": "ggml-speech",
+          "features": [
+            "vulkan"
+          ]
+        }
+      ]
+    }
+  }
+}

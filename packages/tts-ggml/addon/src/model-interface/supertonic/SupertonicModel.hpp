@@ -94,6 +94,8 @@ private:
 
   int backendDevice_ = 0;
   int backendId_ = 0;
+  // DEBUG (QVAC-20557): 1 when a GPU was present but tts-cpp declined it to CPU.
+  int gpuUnsupported_ = 0;
   std::string backendName_ = "CPU";
 };
 

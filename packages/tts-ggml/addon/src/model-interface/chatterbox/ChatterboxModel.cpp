@@ -15,7 +15,6 @@
 #include "addon/TTSErrors.hpp"
 #include "model-interface/BackendUtils.hpp"
 #include "inference-addon-cpp/Errors.hpp"
-#include "inference-addon-cpp/Logger.hpp"
 
 namespace qvac::ttsggml::chatterbox {
 
@@ -25,7 +24,6 @@ using qvac_errors::createTTSError;
 using qvac_errors::StatusError;
 using qvac_errors::tts_error::TTSErrorCode;
 namespace general_error = qvac_errors::general_error;
-namespace logger = qvac_lib_inference_addon_cpp::logger;
 
 // Default T3 context cap (EngineOptions::n_ctx) when the host doesn't pass
 // `nCtx`.  tts-cpp's library default (0 = uncapped) takes the GGUF's own
@@ -234,24 +232,9 @@ void ChatterboxModel::reload() {
 void ChatterboxModel::loadLocked() {
   if (engine_) return;
 
-  // Force useGPU to false on Android until Vulkan (Mali) and OpenCL (Adreno)
-  // stabilize for the Chatterbox graph.
-#ifdef __ANDROID__
-  {
-    const bool wantsGpu =
-        cfg_.useGpu.value_or(false) ||
-        (cfg_.nGpuLayers.has_value() && *cfg_.nGpuLayers != 0);
-    if (wantsGpu) {
-      QLOG(logger::Priority::WARNING,
-           "Chatterbox: useGPU=true is currently ignored on Android "
-           "(GPU backends disabled at engine boundary pending Vulkan/Mali "
-           "and OpenCL/Adreno driver fixes); falling back to CPU.");
-    }
-    cfg_.useGpu     = false;
-    cfg_.nGpuLayers = 0;
-  }
-#endif
-
+  // DEBUG (QVAC-20557, DO-NOT-MERGE): the #ifdef __ANDROID__ CPU-fallback guard
+  // is removed so useGPU flows to tts-cpp on Android. tts-cpp's measurement build
+  // admits Chatterbox onto Mali Vulkan (allow_arm_mali=true) for the remote kit.
   try {
     engine_ = std::make_shared<tts_cpp::chatterbox::Engine>(toEngineOptions(cfg_));
   } catch (const std::exception& e) {
@@ -264,6 +247,7 @@ void ChatterboxModel::loadLocked() {
   backendName_   = engine_->backend_name();
   backendDevice_ = backendDeviceCode(engine_->backend_device());
   backendId_     = backendIdFromName(backendName_);
+  gpuUnsupported_ = engine_->gpu_unsupported();
 }
 
 void ChatterboxModel::unloadLocked() {
@@ -410,6 +394,7 @@ qvac_lib_inference_addon_cpp::RuntimeStats ChatterboxModel::runtimeStats() const
   stats.emplace_back("totalSamples", totalSamples_);
   stats.emplace_back("backendDevice", static_cast<int64_t>(backendDevice_));
   stats.emplace_back("backendId",     static_cast<int64_t>(backendId_));
+  stats.emplace_back("gpuUnsupported", static_cast<int64_t>(gpuUnsupported_));
   return stats;
 }
 
