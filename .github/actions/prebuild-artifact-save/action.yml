@@ -1,0 +1,31 @@
+name: 'Prebuild artifact save'
+description: >
+  Shared prebuild-reuse marker for the addon caching workflows. Tags this
+  successful prebuild run with a tiny marker artifact named
+  prebuilds-cache-pr-<num>-<hash>. A later no-native-change push
+  (prebuild-artifact-reuse) finds the marker and reuses THIS run's `prebuilds`
+  artifact instead of rebuilding. Replaces actions/cache/save (which can't write
+  on pull_request_target). Single source of truth — do NOT inline per workflow.
+
+inputs:
+  native-hash:
+    description: 'native_hash output of detect-native-changes'
+    required: true
+  pr-number:
+    description: 'github.event.pull_request.number'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write reuse marker
+      shell: bash
+      run: |
+        mkdir -p reuse-marker
+        echo "$GITHUB_RUN_ID" > reuse-marker/producing-run-id.txt
+    - name: Upload reuse marker (named with PR number + native hash)
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
+      with:
+        name: prebuilds-cache-pr-${{ inputs.pr-number }}-${{ inputs.native-hash }}
+        path: reuse-marker
+        retention-days: 14
