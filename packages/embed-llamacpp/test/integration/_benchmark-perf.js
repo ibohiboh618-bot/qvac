@@ -8,14 +8,13 @@
 //
 // batchSize and flashAttn are the reload-heavy axes (each needs a fresh
 // GGMLBert()+load()), so they are the shard key: one (batchSize, flashAttn) per
-// shard. Each shard sweeps only device(cpu,gpu) x inputMode(single,array)
-// INTERNALLY — device requires a fresh load (2 loads/session), inputMode is a
-// runtime-only re-run of the same loaded model (no reload). Embedding is a
-// single prefill-only forward pass, so each config records prefill throughput
-// (ppTPS), prefill latency (ms), and cosine similarity vs an in-run baseline
-// (the first successful config for the same input mode). The
-// axes and input modes come from the benchmark sweep grid, so the mobile sweep
-// never drifts from the desktop one.
+// shard. Each shard sweeps only device(cpu,gpu) INTERNALLY — device requires a
+// fresh load (2 loads/session). One measured run per config (single-run), with
+// the input sized to fill the batch. Embedding is a single prefill-only forward
+// pass, so each config records prefill throughput (ppTPS), prefill latency (ms),
+// and cosine similarity vs an in-run baseline (the first successful config in the
+// shard). The axes come from the benchmark sweep grid, so the mobile sweep never
+// drifts from the desktop one.
 
 const fs = require('bare-fs')
 const path = require('bare-path')
@@ -116,7 +115,7 @@ const DEVICES = (isDarwinX64 || isLinuxArm64) ? ['cpu'] : PARAMETER_SWEEP.device
 // real inputTokens. Mirrors the desktop case-runner's filler. Every mobile batch
 // (<= 2048) is <= both models' trained context, so one near-batch sentence fully
 // fills the batch (no multi-sentence packing needed as on desktop's 4096/8192).
-const CHARS_PER_TOKEN = 4.1
+const CHARS_PER_TOKEN = 4.1 // conservative; the filler measures ~4.2
 const TOKEN_SAFETY_MARGIN = 16
 const FILLER_HEAD = 'Some input. '
 const FILLER_UNIT = 'Some more input. '

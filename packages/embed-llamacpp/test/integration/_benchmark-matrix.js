@@ -10,12 +10,10 @@
 //
 // batchSize and flashAttn each need a fresh GGMLBert()+load(), so making them
 // the shard key keeps every shard to ONE (batchSize, flashAttn) pair — its
-// internal sweep is only device (2 loads) x inputMode (a runtime-only re-run of
-// the same loaded model, no reload). A coarser (model x quant) shard would load
-// the model up to 8 times per session; one (batchSize, flashAttn) per shard
+// internal sweep is only device (2 loads). A coarser (model x quant) shard would
+// load the model up to 8 times per session; one (batchSize, flashAttn) per shard
 // bounds each session to at most 2 loads (one per device), keeping per-session
-// peak device memory and runtime low. inputMode is the runtime-only axis swept
-// inside each shard.
+// peak device memory and runtime low.
 //
 // The cells are hardcoded here rather than read from the manifest because the
 // mobile Device Farm bundler only bundles test/integration, so this module
@@ -40,9 +38,9 @@ const CELLS = [
   { model: 'Qwen3-embedding-0.6B', quant: 'F16', repo: 'Qwen/Qwen3-Embedding-0.6B-GGUF', revision: 'main', file: 'Qwen3-Embedding-0.6B-f16.gguf' }
 ]
 
-// Sweep axes + input modes for the mobile sweep. The desktop copy of these
-// lives in benchmarks/performance/_sweep-grid.js; the small axis literals are
-// duplicated here so this module stays self-contained for the mobile bundler.
+// Sweep axes for the mobile sweep. The desktop copy of these lives in
+// benchmarks/performance/_sweep-grid.js; the small axis literals are duplicated
+// here so this module stays self-contained for the mobile bundler.
 const PARAMETER_SWEEP = {
   quantization: ['Q4_0', 'Q4_K_M', 'Q8_0', 'F16'],
   device: ['cpu', 'gpu'],
@@ -53,8 +51,7 @@ const PARAMETER_SWEEP = {
 // Cross-product of the 4 base (model x quant) download cells with the
 // reload-heavy axes batchSize (4) x flashAttn (2) = 32 cells, preserving order
 // (model/quant outer, batchSize middle, flashAttn inner) so the shard list and
-// workflow groups are stable. inputMode is NOT in the cell: it is swept inside
-// each shard at runtime against the already-loaded model.
+// workflow groups are stable.
 function matrix () {
   const out = []
   for (const cell of CELLS) {
@@ -93,9 +90,9 @@ function modelId (cell) {
 }
 
 // Stable per-shard key matching the renderer's
-// "[<modelId> q=<quant>] ... [bs=<N>] [fa=<on|off>] ..." row label, so coverage
-// can be reconciled against the matrix. inputMode and device are NOT in the key:
-// each shard emits the device x inputMode configs for its one (bs, fa) pair.
+// "[<modelId> q=<quant>] ... [bs=<N>] [fa=<on|off>]" row label, so coverage can
+// be reconciled against the matrix. device is NOT in the key: each shard emits
+// the per-device configs for its one (bs, fa) pair.
 function mobileShardKey (cell) {
   return `${modelId(cell)}|${cell.quant}|bs${cell.batchSize}|fa${cell.flashAttn}`
 }
