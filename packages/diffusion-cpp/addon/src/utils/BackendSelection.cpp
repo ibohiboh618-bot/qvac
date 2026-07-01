@@ -57,11 +57,12 @@ bool containsOpenClToken(const std::string& value) {
 bool isOpenClAdrenoDevice(
     const std::string& backendName, const std::string& description) {
   return containsOpenClToken(backendName) &&
-      (parseAdrenoModel(description) > 0 || parseAdrenoModel(backendName) > 0);
+         (parseAdrenoModel(description) > 0 ||
+          parseAdrenoModel(backendName) > 0);
 }
 
-sd_backend_selection::GpuClass normalizedGpuClass(
-    const sd_backend_selection::GpuCandidate& dev) {
+sd_backend_selection::GpuClass
+normalizedGpuClass(const sd_backend_selection::GpuCandidate& dev) {
   // Qualcomm's OpenCL backend reports Adreno as a generic GPU, while Vulkan
   // reports the same integrated hardware as IGPU. Keep main-gpu semantics tied
   // to the physical device class instead of ggml's backend-specific label.
