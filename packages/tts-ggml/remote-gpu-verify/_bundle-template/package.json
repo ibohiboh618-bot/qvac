@@ -1,0 +1,16 @@
+{
+  "name": "@qvac/tts-ggml",
+  "version": "0.3.0",
+  "private": true,
+  "addon": true,
+  "description": "Minimal manifest to run the @qvac/tts-ggml Supertonic addon + download its model. The name MUST stay @qvac/tts-ggml so bare's require.addon() resolves the qvac__tts-ggml.bare prebuild. Deps are all public on npm (no token needed for read).",
+  "dependencies": {
+    "@qvac/error": "^0.1.0",
+    "@qvac/infer-base": "^0.4.0",
+    "@qvac/logging": "^0.1.0",
+    "@qvac/registry-client": "^0.4.0",
+    "bare-fs": "^4.5.6",
+    "bare-os": "^3.8.0",
+    "bare-path": "^3.0.0"
+  }
+}
