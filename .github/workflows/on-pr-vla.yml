@@ -114,6 +114,9 @@ jobs:
       sha: ${{ github.event.pull_request.base.sha }}
       pr_head_sha: ${{ github.event.pull_request.head.sha }}
       workdir: packages/vla-ggml
+      # vla pulls qvac-fabric[hip-backend]; ggml-config find_dependency(hip)
+      # needs ROCm on the lint runner at configure time.
+      include-rocm-sdk: true
 
   cpp-tests:
     permissions:
