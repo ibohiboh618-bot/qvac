@@ -10,6 +10,7 @@
 //   * `infer()`'s overall composition + timing population
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -203,6 +204,16 @@ TEST(Pi05Integration, InferEndToEndMatchesPytorch) {
   EXPECT_GT(cos, 0.999f);
   EXPECT_LT(diff / std::max(max_abs, 1e-9f), 0.05f);
   EXPECT_GT(timing.total_ms, 0.0);
-  EXPECT_EQ(model->backendName(), "cpu");
+  // ggml names the CPU backend "CPU" (uppercase); compare case-insensitively,
+  // mirroring the JS integration test (pi05.test.js does
+  // `backendName.toLowerCase() === 'cpu'`). A strict `== "cpu"` here was a
+  // latent bug — the assertion is gated behind the parity fixtures, so CI
+  // (which runs without them, hitting GTEST_SKIP) never exercised it.
+  std::string backend_name_lower = model->backendName();
+  std::transform(
+      backend_name_lower.begin(), backend_name_lower.end(),
+      backend_name_lower.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  EXPECT_EQ(backend_name_lower, "cpu");
   EXPECT_FALSE(model->hasGpu());
 }

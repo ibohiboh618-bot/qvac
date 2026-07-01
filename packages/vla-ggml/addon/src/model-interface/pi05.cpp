@@ -179,6 +179,15 @@ struct ggml_tensor* pi05BuildSiglipBlockGraph(
   // SigLIP is full (non-causal) MHA, so the mask is null. F16 K/V with F32
   // accumulation. FA output is [head_dim, n_heads, n_patches, B] → reshape
   // straight to [hidden, n_patches, B].
+  //
+  // FA portability note (canonical for all three pi0.5 FA sites — VLM
+  // prefill block and expert block reference this one): ggml_flash_attn_ext
+  // here is benchmarked accuracy-neutral and faster than the unfused
+  // path on HIP/gfx1151 (Strix Halo, end-to-end cos 0.9994), and correct on
+  // Strix Vulkan (cos 0.9990) and CPU. It is NOT yet benchmarked on Intel
+  // Iris Xe / Adreno / Metal — where smolvla measured FA ~3× slower on Iris
+  // Xe Vulkan (see smolvla.cpp). pi0.5 is a desktop-class target, so FA is
+  // the right default here; revisit if a mobile GPU backend is added.
   struct ggml_tensor* kf16 = ggml_cast(ctx, k, GGML_TYPE_F16);
   struct ggml_tensor* vf16 = ggml_cast(ctx, v, GGML_TYPE_F16);
   struct ggml_tensor* attnOut = ggml_flash_attn_ext(
@@ -387,6 +396,9 @@ struct ggml_tensor* pi05BuildGemmaVlmBlockGraph(
   // cache, so we cast copies just for the kernel. F32 accumulation keeps the
   // numerics within the cos>0.999 bar. Output is [head_dim, n_heads, seq],
   // which reshapes straight back to [hidden, seq] — no permute needed.
+  // FA portability: see the canonical note at the SigLIP block FA site
+  // (accuracy-neutral + faster on HIP/gfx1151 & Vulkan & CPU; not yet
+  // benchmarked on Intel Iris Xe / Adreno / Metal; desktop-class target).
   const float scale = 1.0f / std::sqrt(static_cast<float>(headDim));
   struct ggml_tensor* kf16 = ggml_cast(ctx, k, GGML_TYPE_F16);
   struct ggml_tensor* vf16 = ggml_cast(ctx, v, GGML_TYPE_F16);
@@ -667,6 +679,13 @@ struct ggml_tensor* pi05BuildExpertBlockGraph(
       ctx, vBuf, headDim, nAct, nKvHeads, static_cast<size_t>(headDim) * es,
       static_cast<size_t>(jointLen) * headDim * es,
       static_cast<size_t>(prefixLen) * headDim * es);
+  // Ordering invariant: these tail writes must execute BEFORE this block's
+  // flash-attention reads kBuf/vBuf below. There is NO data-flow (DAG) edge
+  // from the cpy nodes to the FA node — FA reads kBuf/vBuf directly, not the
+  // cpy output — so ggml's topological sort cannot order them on its own.
+  // The caller guarantees it by `ggml_build_forward_expand`-ing every
+  // kvWrites entry FIRST (insertion order), then the final output. Do not
+  // reorder or drop that expansion or the prefix+stale-tail will be attended.
   kvWrites.push_back(ggml_cpy(ctx, kExp, kAct));
   kvWrites.push_back(ggml_cpy(ctx, vExp, vAct));
 
@@ -674,6 +693,9 @@ struct ggml_tensor* pi05BuildExpertBlockGraph(
   // [head_dim, prefix_len + n_act, n_kv_heads] (MQA broadcast inside FA).
   // F32 accumulation holds accuracy. Output is [head_dim, n_heads, n_act] →
   // reshape to [n_heads*head_dim, n_act].
+  // FA portability: see the canonical note at the SigLIP block FA site
+  // (accuracy-neutral + faster on HIP/gfx1151 & Vulkan & CPU; not yet
+  // benchmarked on Intel Iris Xe / Adreno / Metal; desktop-class target).
   const float scale = 1.0f / std::sqrt(static_cast<float>(headDim));
   struct ggml_tensor* attnOut = ggml_flash_attn_ext(
       ctx, q, kBuf, vBuf, /*mask=*/nullptr, scale, /*max_bias=*/0.0f,
@@ -1204,6 +1226,19 @@ static std::unique_ptr<Pi05ModelInternal> pi05LoadModel(
         " expert_n_kv_heads=" + std::to_string(m->expert_n_kv_heads) + ")");
   }
 
+  // The unified F16 KV cache writes the VLM prefix slice into the
+  // [0:prefix_len] head of each per-layer buffer assuming MQA — a single
+  // K/V head, so the prefix is contiguous at offset 0 with no per-head
+  // stride. A checkpoint with n_kv_heads > 1 would silently corrupt the
+  // layout (prefix bytes landing across head boundaries) and read past the
+  // intended region. Reject it explicitly rather than emit wrong actions.
+  if (m->expert_n_kv_heads != 1) {
+    throw std::runtime_error(
+        "pi05LoadModel: unified KV cache requires MQA (expert_n_kv_heads==1), "
+        "got expert_n_kv_heads=" +
+        std::to_string(m->expert_n_kv_heads));
+  }
+
   // GPU only: allocate a backend buffer and copy the GGUF data into
   // it. Required for GPU compute — without it the tensors' `data`
   // pointers stay NULL (no_alloc=true) and graph_compute segfaults
@@ -1326,6 +1361,32 @@ static std::unique_ptr<Pi05ModelInternal> pi05LoadModel(
     bw.mlp_gate_w = mustGet(b + ".mlp.gate.weight");
     bw.mlp_up_w = mustGet(b + ".mlp.up.weight");
     bw.mlp_down_w = mustGet(b + ".mlp.down.weight");
+  }
+
+  // adaRMSNorm modulation width sanity. The ODE precompute reads
+  // `modDim = expert_final_norm_ada_w->ne[1]` and `pi05AdaViewsFromMod`
+  // slices it into THREE `expert_hidden`-wide views (scale | shift | gate),
+  // and the host `addOneToScale` writes `expert_hidden` floats into the
+  // scale third. A modulation tensor narrower than 3*expert_hidden would
+  // make those slices/writes read or write out of bounds. Validate all ada
+  // weights (per-block pre-attn/pre-ffw + the final norm) up front.
+  const int64_t expectedModDim = static_cast<int64_t>(3) * m->expert_hidden;
+  if (m->expert_final_norm_ada_w->ne[1] != expectedModDim) {
+    throw std::runtime_error(
+        "pi05LoadModel: expert.final_norm.ada.weight has ne[1]=" +
+        std::to_string(m->expert_final_norm_ada_w->ne[1]) +
+        ", expected 3*expert_hidden=" + std::to_string(expectedModDim));
+  }
+  for (int i = 0; i < m->expert_n_layers; ++i) {
+    const auto& bw = m->expert_blocks[i];
+    if (bw.pre_attn_ada_w->ne[1] != expectedModDim ||
+        bw.pre_ffw_ada_w->ne[1] != expectedModDim) {
+      throw std::runtime_error(
+          "pi05LoadModel: expert.blk." + std::to_string(i) +
+          " ada modulation weight width mismatch (expected ne[1]=3*"
+          "expert_hidden=" +
+          std::to_string(expectedModDim) + ")");
+    }
   }
 
   // Projections
@@ -1754,10 +1815,10 @@ static bool pi05Inference(
   // and never re-touches the prefix. RAII guard frees the buffer on all exits.
   const int jointLen = prefixLen + m.action_horizon;
   ggml_backend_t kvBackend = m.has_gpu ? m.backend : m.backend_cpu;
-  struct KvBufGuard {
+  struct Pi05KvBufGuard {
     ggml_backend_buffer_t buf = nullptr;
     struct ggml_context* ctx = nullptr;
-    ~KvBufGuard() {
+    ~Pi05KvBufGuard() {
       if (buf) ggml_backend_buffer_free(buf);
       if (ctx) ggml_free(ctx);
     }
