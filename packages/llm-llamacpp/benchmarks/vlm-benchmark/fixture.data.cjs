@@ -13,7 +13,8 @@ module.exports = {
     "docvqa",
     "ai2d",
     "ocr-small",
-    "ocr-page"
+    "ocr-page",
+    "tiling-perf"
   ],
   "samplesPerTask": 5,
   "items": [
@@ -448,6 +449,102 @@ module.exports = {
       "image": "vlmx-ocrsmall_4.jpg",
       "width": 700,
       "height": 368
+    },
+    {
+      "id": "tiling-perf_0",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What fruits do you see on the plate? List each one you can identify.",
+      "gold": [
+        "apple, plum, raspberry, blackberry, blueberry"
+      ],
+      "image": "vlmx-tilingperf_0.jpg",
+      "width": 480,
+      "height": 640
+    },
+    {
+      "id": "tiling-perf_1",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What fruits do you see on the plate? List each one you can identify.",
+      "gold": [
+        "apple, plum, raspberry, blackberry, blueberry"
+      ],
+      "image": "vlmx-tilingperf_1.jpg",
+      "width": 1200,
+      "height": 1600
+    },
+    {
+      "id": "tiling-perf_2",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What fruits do you see on the plate? List each one you can identify.",
+      "gold": [
+        "apple, plum, raspberry, blackberry, blueberry"
+      ],
+      "image": "vlmx-tilingperf_2.jpg",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "tiling-perf_3",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What fruits do you see on the plate? List each one you can identify.",
+      "gold": [
+        "apple, plum, raspberry, blackberry, blueberry"
+      ],
+      "image": "vlmx-tilingperf_3.jpg",
+      "width": 2250,
+      "height": 3000
+    },
+    {
+      "id": "tiling-perf_4",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What is the headline of this newspaper article? Give the most prominent words.",
+      "gold": [
+        "Titanic sinks four hours after hitting iceberg"
+      ],
+      "image": "vlmx-tilingperf_4.jpg",
+      "width": 500,
+      "height": 350
+    },
+    {
+      "id": "tiling-perf_5",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What is the headline of this newspaper article? Give the most prominent words.",
+      "gold": [
+        "Titanic sinks four hours after hitting iceberg"
+      ],
+      "image": "vlmx-tilingperf_5.jpg",
+      "width": 1200,
+      "height": 840
+    },
+    {
+      "id": "tiling-perf_6",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What is the headline of this newspaper article? Give the most prominent words.",
+      "gold": [
+        "Titanic sinks four hours after hitting iceberg"
+      ],
+      "image": "vlmx-tilingperf_6.jpg",
+      "width": 1600,
+      "height": 1120
+    },
+    {
+      "id": "tiling-perf_7",
+      "task": "tiling-perf",
+      "metric": "vqa",
+      "prompt": "What is the headline of this newspaper article? Give the most prominent words.",
+      "gold": [
+        "Titanic sinks four hours after hitting iceberg"
+      ],
+      "image": "vlmx-tilingperf_7.jpg",
+      "width": 3200,
+      "height": 2240
     }
   ]
 }

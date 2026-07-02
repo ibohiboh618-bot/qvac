@@ -190,10 +190,20 @@ module.exports = {
     // ocr1page — a single light document-OCR check: just ocr-page_0 (fits the mobile session).
     ocr1page: { ids: ['ocr-page_0'], samplesPerTask: 5, repeats: 1, devices: null },
     // ocr5pages — the full high-MP document-OCR set: all 5 ocr-page docs (desktop-oriented;
-    // overruns the mobile Device-Farm session window).
-    ocr5pages: { ids: ['ocr-page_0', 'ocr-page_1', 'ocr-page_2', 'ocr-page_3', 'ocr-page_4'], samplesPerTask: 5, repeats: 1, devices: null },
+    // overruns the mobile Device-Farm session window at higher repeats — pair with a
+    // raised mobile_timeout_min dispatch input). repeats=3 so speed deltas report a
+    // mean + spread instead of a single noisy sample per doc.
+    ocr5pages: { ids: ['ocr-page_0', 'ocr-page_1', 'ocr-page_2', 'ocr-page_3', 'ocr-page_4'], samplesPerTask: 5, repeats: 3, devices: null },
     // full — cognitive + ocr-small + the one light ocr-page (ocr-page capped to its first
     // sample = ocr-page_0); the heavy ocr5pages docs are excluded.
-    full: { tasks: null, samplesPerTask: 5, taskSamples: { 'ocr-page': 1 }, repeats: 1, devices: null }
+    full: { tasks: null, samplesPerTask: 5, taskSamples: { 'ocr-page': 1 }, repeats: 1, devices: null },
+    // tiling-perf — SPEED-ONLY set, separate from the ocr5pages accuracy set (different
+    // images: fruitPlate/news-paper resized to 8 resolutions spanning the full grid
+    // progression dyn_size -> 1x2/2x1 -> 2x2, tile_px=768/max_tiles=4). Images are
+    // generated + uploaded to the fixture store by the workflow's prepare-tiling-fixture
+    // job (see benchmark-vlm-model-comparison.yml) — not part of the hand-curated S3 set.
+    // repeats=5 for a real mean + spread per resolution, matching the ask for "several
+    // repeats" + "images that actually force multi-tiling".
+    'tiling-perf': { ids: ['tiling-perf_0', 'tiling-perf_1', 'tiling-perf_2', 'tiling-perf_3', 'tiling-perf_4', 'tiling-perf_5', 'tiling-perf_6', 'tiling-perf_7'], samplesPerTask: 8, repeats: 5, devices: null }
   }
 }

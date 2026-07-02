@@ -388,12 +388,75 @@ jobs:
       repository: ${{ needs.context.outputs.repository }}
     secrets: inherit
 
+  # tiling-perf only: generate the 8 fruitPlate/news-paper resize variants (dyn_size ->
+  # 1x2/2x1 -> 2x2 grid progression, tile_px=768/max_tiles=4) and upload them to the SAME
+  # fixture object store under new vlmx-tilingperf_*.jpg keys — additive, never touches
+  # the existing hand-curated ocr-page/vqa files — so both the desktop S3 sync and the
+  # mobile bootstrap pick them up like any other fixture image. Uses the same OIDC role
+  # as the existing fixture download (S3 write on this prefix is unverified — if this
+  # step fails on permissions, the fixture never lands and both matrix jobs below fail
+  # loudly on the S3 sync/testAssets check rather than silently running stale images).
+  prepare-tiling-fixture:
+    needs: context
+    if: ${{ inputs.matrix_preset == 'tiling-perf' && (needs.context.outputs.desktop_count != '0' || needs.context.outputs.mobile_count != '0') }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout media
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          repository: ${{ needs.context.outputs.repository }}
+          ref: ${{ needs.context.outputs.ref }}
+          sparse-checkout: |
+            packages/llm-llamacpp/media
+          sparse-checkout-cone-mode: false
+
+      - name: Generate resize variants
+        shell: bash
+        run: |
+          python3 -m pip install --quiet --user pillow
+          python3 - <<'PYEOF'
+          import os
+          from PIL import Image
+          media = "packages/llm-llamacpp/media"
+          out = "tiling-fixture"
+          os.makedirs(out, exist_ok=True)
+
+          def resize(src, dst, w, h):
+              with Image.open(src) as im:
+                  im.convert("RGB").resize((w, h), Image.LANCZOS).save(dst, "JPEG", quality=92)
+                  print(f"{dst}: {w}x{h}")
+
+          resize(f"{media}/fruitPlate.png", f"{out}/vlmx-tilingperf_0.jpg", 480, 640)
+          resize(f"{media}/fruitPlate.png", f"{out}/vlmx-tilingperf_1.jpg", 1200, 1600)
+          resize(f"{media}/fruitPlate.png", f"{out}/vlmx-tilingperf_2.jpg", 1536, 2048)
+          resize(f"{media}/fruitPlate.png", f"{out}/vlmx-tilingperf_3.jpg", 2250, 3000)
+          resize(f"{media}/news-paper.jpg", f"{out}/vlmx-tilingperf_4.jpg", 500, 350)
+          resize(f"{media}/news-paper.jpg", f"{out}/vlmx-tilingperf_5.jpg", 1200, 840)
+          resize(f"{media}/news-paper.jpg", f"{out}/vlmx-tilingperf_6.jpg", 1600, 1120)
+          resize(f"{media}/news-paper.jpg", f"{out}/vlmx-tilingperf_7.jpg", 3200, 2240)
+          PYEOF
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Upload to fixture store (additive — new keys only)
+        shell: bash
+        run: |
+          aws s3 cp tiling-fixture/ s3://tether-ai-dev/vlm-benchmark/ --recursive
+          echo "uploaded:"; aws s3 ls s3://tether-ai-dev/vlm-benchmark/ | grep tilingperf
+
   matrix-desktop:
-    needs: [context, prebuild-candidate]
-    # prebuild-candidate is skipped unless a candidate is requested; a skipped need would
-    # otherwise skip this job too. !cancelled() overrides that implicit skip so the real
-    # gate is evaluated — bail only if a needed job actually failed.
-    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.desktop_count != '0' && needs.prebuild-candidate.result != 'failure' }}
+    needs: [context, prebuild-candidate, prepare-tiling-fixture]
+    # prebuild-candidate/prepare-tiling-fixture are skipped unless requested; a skipped
+    # need would otherwise skip this job too. !cancelled() overrides that implicit skip
+    # so the real gate is evaluated — bail only if a needed job actually failed.
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.desktop_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prepare-tiling-fixture.result != 'failure' }}
     name: vlm-matrix-${{ matrix.host }}-${{ matrix.backend }}
     runs-on: ${{ matrix.runner }}
     # `release` environment exposes AWS_OIDC_ROLE_ARN and satisfies the role's OIDC
@@ -748,11 +811,12 @@ jobs:
   # the S25's logcat / the iPhone's bare_console.log (no logcat on iOS),
   # uploaded as console-logs-…-<platform>-<token>.
   matrix-mobile:
-    # prebuild-candidate is skipped unless a candidate is requested; the status-function
-    # gate keeps this job running when that need is skipped (only a real failure blocks it).
-    # The candidate mobile session bundles its freshly-built prebuild artifact.
-    needs: [context, prebuild-candidate]
-    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' }}
+    # prebuild-candidate/prepare-tiling-fixture are skipped unless requested; the
+    # status-function gate keeps this job running when a need is skipped (only a real
+    # failure blocks it). The candidate mobile session bundles its freshly-built
+    # prebuild artifact.
+    needs: [context, prebuild-candidate, prepare-tiling-fixture]
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prepare-tiling-fixture.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
