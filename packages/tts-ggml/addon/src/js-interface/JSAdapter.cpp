@@ -116,6 +116,7 @@ chatterbox::ChatterboxConfig JSAdapter::buildChatterboxConfig(
   cfg.nCtx                    = readOptionalInt(configurationParams, env, "nCtx");
   cfg.kvCacheType             = readOptionalString(configurationParams, env, "kvCacheType");
   cfg.outputSampleRate        = readOptionalInt(configurationParams, env, "outputSampleRate");
+  cfg.speed = readOptionalFloat(configurationParams, env, "speed");
   cfg.streamChunkTokens       = readOptionalInt(configurationParams, env, "streamChunkTokens");
   cfg.streamFirstChunkTokens  = readOptionalInt(configurationParams, env, "streamFirstChunkTokens");
   cfg.streamCfmSteps          = readOptionalInt(configurationParams, env, "cfmSteps");
@@ -129,6 +130,9 @@ chatterbox::ChatterboxConfig JSAdapter::buildChatterboxConfig(
   cfg.openclCacheDir = readOptionalString(configurationParams, env, "openclCacheDir");
   cfg.mecabDictPath  = readOptionalString(configurationParams, env, "mecabDictPath");
   cfg.cangjieTsvPath = readOptionalString(configurationParams, env, "cangjieTsvPath");
+  // LavaSR neural enhancement: a non-empty GGUF path turns it on.
+  cfg.enhancerGgufPath =
+      readOptionalString(configurationParams, env, "lavasrEnhancerPath");
   return cfg;
 }
 
@@ -151,6 +155,9 @@ supertonic::SupertonicConfig JSAdapter::buildSupertonicConfig(
   cfg.noiseNpyPath      = readOptionalString(configurationParams, env, "noiseNpyPath");
   cfg.backendsDir       = readOptionalString(configurationParams, env, "backendsDir");
   cfg.openclCacheDir    = readOptionalString(configurationParams, env, "openclCacheDir");
+  // LavaSR neural enhancement: a non-empty GGUF path turns it on.
+  cfg.enhancerGgufPath =
+      readOptionalString(configurationParams, env, "lavasrEnhancerPath");
   return cfg;
 }
 
