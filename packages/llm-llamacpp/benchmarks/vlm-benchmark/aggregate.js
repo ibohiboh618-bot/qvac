@@ -311,7 +311,16 @@ function build (rows, vision, meta, provText, title, opts = {}) {
       errs: rs.length - okRows.length,
       perTask,
       overall: mean(perTask.filter(v => v != null)),
-      ve: visMean(key),
+      // Vision-encode (ms): prefer the native stderr "slice encoded in N ms"
+      // segments (desktop). Fall back to the addon's per-completion
+      // `visionEncodeMs` runtime stat, which is captured on EVERY platform —
+      // including mobile, where clip's native log never reaches logcat and the
+      // stderr path yields nothing.
+      ve: (() => {
+        const fromStderr = visMean(key)
+        if (fromStderr != null) return fromStderr
+        return mean(okRows.map(r => r.vision_enc_ms).filter(v => v != null))
+      })(),
       sl: visSlices(key),
       ttft: mean(okRows.map(r => r.ttft_ms).filter(v => v != null)),
       tps: mean(okRows.map(r => r.decode_tps).filter(v => v != null)),
@@ -643,9 +652,10 @@ function build (rows, vision, meta, provText, title, opts = {}) {
     L.push(`| \`${cell}\` · ${dev.toUpperCase()} | ${host || '—'} | ${g.n} | ${g.errs} | ${fmtNum(g.ve, 1)} | ${fmtNum(g.sl, 1)} | ${fmtNum(g.ttft, 0)} | ${fmtNum(g.encTps, 1)} | ${fmtNum(g.tps, 1)} | ${fmtNum(g.genMs, 0)} | ${fmtNum(g.wall, 0)} |`)
   }
   L.push('')
-  L.push('> **mmproj enc** is parsed from llama.cpp\'s native stderr. On mobile (Device Farm) that ' +
-    'stream is not captured (Android logcat / iOS console), so it shows `—` there; TTFT on mobile ' +
-    'already includes the vision-encode + prompt-eval time and is the cross-platform proxy. ' +
+  L.push('> **mmproj enc** is the pure ViT vision-encode time. On desktop it is parsed from ' +
+    'llama.cpp\'s native stderr (`slice encoded in N ms`); on mobile (Device Farm), where that ' +
+    'stream is not captured, it comes from the addon\'s `visionEncodeMs` runtime stat (same ViT ' +
+    'encode, measured in-process) so the column is now populated on every platform. ' +
     '**encode TPS** = prompt + image tokens ÷ TTFT (prefill ingest rate); **decode TPS** is the ' +
     'generation rate; **gen (ms)** = wall − TTFT (the response-generation/decode phase). encode TPS ' +
     'and gen (ms) are reported on every platform that emits token counts, `—` where it does not.\n')

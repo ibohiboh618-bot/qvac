@@ -706,6 +706,7 @@ std::string LlamaModel::processPromptImpl(const Prompt& prompt) {
   // Reset per-inference counters so they don't leak across runs.
   state_->llmContext_->resetNSlides();
   state_->llmContext_->resetThinkingBlockDiscards();
+  state_->llmContext_->resetVisionEncodeMs();
 
   // Prompt media (both hoisted byte buffers and inline paths) is loaded by
   // resolveChatAndTools in prompt-marker order; see computeMediaLoadOrder.
@@ -945,6 +946,7 @@ LlamaModel::batchRuntimeStatsLocked() const {
       {"promptTokens", stats.promptTokens},
       {"contextSlides", stats.contextSlides},
       {"thinkingBlockDiscards", stats.thinkingBlockDiscards},
+      {"visionEncodeMs", state_->llmContext_->getVisionEncodeMs()},
       {"avgConcurrentSeq", stats.avgConcurrentSeq()},
       {"backendDevice", runtimeBackendDevice_}};
 }
@@ -980,6 +982,7 @@ LlamaModel::singleRuntimeStatsLocked() const {
        static_cast<int64_t>(state_->llmContext_->getNSlides())},
       {"thinkingBlockDiscards",
        static_cast<int64_t>(state_->llmContext_->getThinkingBlockDiscards())},
+      {"visionEncodeMs", state_->llmContext_->getVisionEncodeMs()},
       {"avgConcurrentSeq", 1.0},
       {"backendDevice", runtimeBackendDevice_}};
 }

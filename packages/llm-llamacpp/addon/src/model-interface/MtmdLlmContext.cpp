@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 
@@ -579,15 +580,43 @@ bool MtmdLlmContext::evalMessageWithTools(
       stopGeneration_.store(false);
       return false;
     }
-    int32_t res = mtmd_helper_eval_chunk_single(
-        visionContext(),
-        modelCtx_.lctx,
-        chunk,
-        nPastLocal,
-        0,
-        params_.n_batch,
-        chunkLogitsLast,
-        &nPastLocal);
+    int32_t res;
+    if (mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+      // Time just the ViT encode (this matches the desktop "mmproj enc (ms)"
+      // metric, which parses clip's native "slice encoded in N ms" stderr
+      // line) so it can be surfaced in runtimeStats on EVERY platform —
+      // including mobile, where that native line is not captured. We then run
+      // the same image-token ingest the mtmd helper would: encode ->
+      // get_output_embd -> decode_image_chunk (all public mtmd APIs, same
+      // args mtmd_helper_eval_chunk_single passes internally).
+      const auto encT0 = std::chrono::steady_clock::now();
+      res = mtmd_encode_chunk(visionContext(), chunk);
+      visionEncodeMs_ += std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - encT0)
+                             .count();
+      if (res == 0) {
+        float* imageEmbd = mtmd_get_output_embd(visionContext());
+        res = mtmd_helper_decode_image_chunk(
+            visionContext(),
+            modelCtx_.lctx,
+            chunk,
+            imageEmbd,
+            nPastLocal,
+            0,
+            params_.n_batch,
+            &nPastLocal);
+      }
+    } else {
+      res = mtmd_helper_eval_chunk_single(
+          visionContext(),
+          modelCtx_.lctx,
+          chunk,
+          nPastLocal,
+          0,
+          params_.n_batch,
+          chunkLogitsLast,
+          &nPastLocal);
+    }
     if (res != 0) {
       std::string errorMsg =
           "[MtmdLlm] failed to eval chunk " + std::to_string(i);
@@ -969,6 +998,9 @@ void MtmdLlmContext::setNDiscarded(llama_pos nDiscarded) {
 int32_t MtmdLlmContext::getNSlides() const { return nSlides_; }
 void MtmdLlmContext::resetNSlides() { nSlides_ = 0; }
 
+double MtmdLlmContext::getVisionEncodeMs() const { return visionEncodeMs_; }
+void MtmdLlmContext::resetVisionEncodeMs() { visionEncodeMs_ = 0.0; }
+
 int32_t MtmdLlmContext::getThinkingBlockDiscards() const {
   return thinkingBlockDiscards_;
 }
@@ -1177,6 +1209,7 @@ void MtmdLlmContext::resetState(bool resetStats) {
   if (resetStats) {
     nSlides_ = 0;
     thinkingBlockDiscards_ = 0;
+    visionEncodeMs_ = 0.0;
   }
 
   thinkSpan_.reset();
@@ -1349,15 +1382,38 @@ llama_pos MtmdLlmContext::evalMediaSegment(size_t mediaIndex, llama_pos pos) {
 
   llama_pos newPos = pos;
   constexpr bool logitsLast = false;
-  const int32_t res = mtmd_helper_eval_chunk_single(
-      visionContext(),
-      modelCtx_.lctx,
-      chunk,
-      pos,
-      seqId_,
-      params_.n_batch,
-      logitsLast,
-      &newPos);
+  int32_t res;
+  if (mtmd_input_chunk_get_type(chunk) == MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+    // Pure ViT-encode timing (see evalMessageWithTools for rationale); the
+    // image-token ingest below mirrors mtmd_helper_eval_chunk_single.
+    const auto encT0 = std::chrono::steady_clock::now();
+    res = mtmd_encode_chunk(visionContext(), chunk);
+    visionEncodeMs_ += std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - encT0)
+                           .count();
+    if (res == 0) {
+      float* imageEmbd = mtmd_get_output_embd(visionContext());
+      res = mtmd_helper_decode_image_chunk(
+          visionContext(),
+          modelCtx_.lctx,
+          chunk,
+          imageEmbd,
+          pos,
+          seqId_,
+          params_.n_batch,
+          &newPos);
+    }
+  } else {
+    res = mtmd_helper_eval_chunk_single(
+        visionContext(),
+        modelCtx_.lctx,
+        chunk,
+        pos,
+        seqId_,
+        params_.n_batch,
+        logitsLast,
+        &newPos);
+  }
   if (res != 0) {
     std::string errorMsg = string_format(
         "[MtmdLlm] evalMediaSegment: failed to eval media chunk %zu "
