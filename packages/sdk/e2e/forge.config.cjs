@@ -12,11 +12,11 @@ const backupDir = path.join(projectDir, ".qvac-worker-backup");
 const backupWorkerDir = path.join(backupDir, "qvac");
 const backupConfigPath = path.join(backupDir, "qvac.config.json");
 
-// Electron overwrites the shared qvac/worker.entry.mjs + qvac.config.json to package
-// its own bundle. Snapshot what's there first and restore it in postPackage, so desktop
-// and Electron runs don't clobber each other's worker bundle locally.
+// Electron overwrites the shared worker bundle to package its own. Snapshot it first and
+// restore it after, so desktop/Electron runs don't clobber each other's bundle locally.
+// Skip if a backup already exists — a previous run left it there without restoring it.
 function snapshotExistingWorker() {
-  fs.rmSync(backupDir, { recursive: true, force: true });
+  if (fs.existsSync(backupDir)) return;
   if (!fs.existsSync(generatedWorkerDir) && !fs.existsSync(runtimeConfigPath)) return;
 
   fs.mkdirSync(backupDir, { recursive: true });
@@ -45,6 +45,22 @@ function ensureRuntimeConfig() {
   fs.copyFileSync(electronConfigPath, runtimeConfigPath);
 }
 
+// postPackage doesn't fire on interrupt/crash, so also restore on exit/SIGINT/SIGTERM.
+// Idempotent — a no-op if postPackage already restored (and removed backupDir).
+let restored = false;
+function restoreOnce() {
+  if (restored) return;
+  restored = true;
+  restorePreviousWorker();
+}
+process.once("exit", restoreOnce);
+for (const [signal, exitCode] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+  process.once(signal, () => {
+    restoreOnce();
+    process.exit(exitCode);
+  });
+}
+
 snapshotExistingWorker();
 ensureRuntimeConfig();
 
@@ -64,7 +80,7 @@ module.exports = {
   makers: [],
   hooks: {
     postPackage: async () => {
-      restorePreviousWorker();
+      restoreOnce();
     },
   },
   plugins: [
