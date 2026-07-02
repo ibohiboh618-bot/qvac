@@ -86,6 +86,13 @@ test('image_max_tokens + image_tile_mode: prompt token counts reflect cap overri
   const sequential = await runMode('sequential')
   t.comment(`sequential: promptTokens=${sequential.promptTokens}`)
 
+  // batched: encodes all tiles in one forward pass (ne[3] = tile batch dim) instead of
+  // one-by-one. Same tiles as sequential, so the token count must match — this exercises
+  // the batched-attention path on whichever backend runs (Metal / Vulkan / OpenCL) and
+  // catches an ne[3] mis-iteration (which would corrupt the encode → wrong token count).
+  const batched = await runMode('batched')
+  t.comment(`batched: promptTokens=${batched.promptTokens}`)
+
   // disabled with image_max_tokens=4096 must exceed the old 2048 cap
   t.ok(disabled.promptTokens > 3000,
     `disabled mode should encode >3000 prompt tokens (got ${disabled.promptTokens}); cap override not working if <= 2048`)
@@ -98,8 +105,14 @@ test('image_max_tokens + image_tile_mode: prompt token counts reflect cap overri
   t.ok(sequential.promptTokens < disabled.promptTokens,
     `sequential (${sequential.promptTokens}) should use fewer tokens than disabled (${disabled.promptTokens})`)
 
+  // batched must produce the same token count as sequential (identical tiling, only the
+  // encode strategy differs). A mismatch means the batched ne[3] path is broken on this backend.
+  t.ok(Math.abs(batched.promptTokens - sequential.promptTokens) <= 50,
+    `batched (${batched.promptTokens}) should match sequential (${sequential.promptTokens}) token count`)
+
   t.ok(disabled.output.length > 0, 'disabled mode produced output')
   t.ok(sequential.output.length > 0, 'sequential mode produced output')
+  t.ok(batched.output.length > 0, 'batched mode produced output')
 })
 
 setImmediate(() => {
