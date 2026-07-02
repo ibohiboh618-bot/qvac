@@ -435,7 +435,8 @@ function runModel (spec) {
               decode_tps: st.TPS != null ? st.TPS : null,
               ttft_ms: st.TTFT != null ? st.TTFT : null,
               gen_tokens: st.generatedTokens != null ? st.generatedTokens : null,
-              prompt_tokens: st.promptTokens != null ? st.promptTokens : null
+              prompt_tokens: st.promptTokens != null ? st.promptTokens : null,
+              vision_enc_ms: st.visionEncodeMs != null ? st.visionEncodeMs : null
             }))
             ok++
           } catch (e) {
