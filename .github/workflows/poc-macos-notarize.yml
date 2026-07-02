@@ -120,12 +120,26 @@ jobs:
           EOF
           clang -o "$RUNNER_TEMP/loadtest" "$RUNNER_TEMP/loadtest.c"
           set +e
-          "$RUNNER_TEMP/loadtest" "$BARE"
+          OUT=$("$RUNNER_TEMP/loadtest" "$BARE" 2>&1)
           RC=$?
           set -e
-          echo "loadtest exit code: $RC (42 = Gatekeeper blocked the dlopen)"
-          echo "NOTE: headless runners may not enforce the interactive scan; the"
-          echo "authoritative before/after signal is the codesign/notarization state above."
+          echo "$OUT"
+          echo "loadtest exit code: $RC"
+          # Distinguish causes: a Gatekeeper denial reads like "not valid for use
+          # in process" / "library load disallowed by system policy". A missing
+          # host symbol (e.g. _js_call_function, injected by the Bare runtime) is
+          # NOT a signing issue -- it just means this standalone clang process
+          # isn't the Bare host. Only the former proves a Gatekeeper block.
+          if echo "$OUT" | grep -qiE "disallowed by system policy|not valid for use in process|Gatekeeper"; then
+            echo "RESULT: Gatekeeper blocked the load."
+          elif echo "$OUT" | grep -qi "symbol not found"; then
+            echo "RESULT: load reached symbol resolution (past Gatekeeper mapping) and"
+            echo "        failed on a Bare host symbol -- NOT a signing/Gatekeeper block."
+          fi
+          echo "NOTE: headless CI runners do not enforce the interactive first-load"
+          echo "scan, so this step cannot reproduce the end-user dialog. The"
+          echo "authoritative before/after signal is the codesign/notarization"
+          echo "state above; the interactive dialog repro belongs on a real Mac."
 
       - name: Half B - Developer ID sign + notarize (auto-activates when creds exist)
         run: |
