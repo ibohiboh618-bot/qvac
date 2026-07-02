@@ -92,6 +92,10 @@ const SOURCES_MODEL = {
   label: 'qwen3.5-0.8b-q8',
   name: 'Qwen3.5-0.8B (mmproj Q8)',
   ctx_size: '4096',
+  // BATCHED-MODE VERIFICATION (throwaway bench branch): force image_tile_mode=batched so the
+  // several-sources candidate exercises the ne[3] batched-attention path on every backend
+  // (Metal / Vulkan-Android / OpenCL). Requires a multi-tile preset (ocr5pages). Not for release.
+  imageConfig: { image_tile_mode: 'batched' },
   llm: hf('reg-qwen-unsloth-Q8_0.gguf', `unsloth/Qwen3.5-0.8B-GGUF@${SHA.qwenUnsloth.slice(0, 10)}`,
     'unsloth/Qwen3.5-0.8B-GGUF', SHA.qwenUnsloth, 'Qwen3.5-0.8B-Q8_0.gguf', QWEN_REG),
   mmproj: hf('reg-qwen-mradermacher-mmproj-Q8_0.gguf', `mradermacher/Qwen3.5-0.8B-GGUF@${SHA.qwenMrader.slice(0, 10)} · mmproj-Q8_0`,
