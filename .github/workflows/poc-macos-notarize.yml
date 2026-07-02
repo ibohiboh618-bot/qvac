@@ -1,0 +1,187 @@
+# PoC: macOS Gatekeeper / notarization on the shipped llm-llamacpp .bare
+#
+# Purpose: prove why the quickstart triggers the "cannot verify free of malware"
+# dialog on macOS, and prove that Developer ID signing + notarization fixes it.
+#
+# Half A (no credentials): install the exact @qvac/llm-llamacpp@latest that
+#   quickstart users get, show its .bare is only ad-hoc signed / not notarized,
+#   and attempt the real dlopen-under-quarantine repro.
+# Half B (needs credentials): sign with Developer ID + notarize via notarytool,
+#   then re-inspect and show the addon now clears the notarization check.
+#
+# Half B activates automatically once these are provided (repo secrets, or the
+# `release` environment -- in which case add `environment: release` to the job):
+#   MACOS_CERT_P12_BASE64   base64 of the Developer ID Application .p12
+#   MACOS_CERT_PASSWORD     .p12 export password
+#   MACOS_SIGN_IDENTITY     e.g. "Developer ID Application: Tether ... (TEAMID)"
+#   MACOS_NOTARY_KEY_BASE64 base64 of the App Store Connect API key .p8
+#   MACOS_NOTARY_KEY_ID     API key id
+#   MACOS_NOTARY_ISSUER_ID  API key issuer id
+name: "PoC macOS notarize"
+
+on:
+  push:
+    branches:
+      - tmp-macos-notarize-poc
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  poc:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    name: darwin-${{ matrix.arch }}
+    env:
+      ARCH: ${{ matrix.arch }}
+      MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      MACOS_NOTARY_KEY_BASE64: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+    steps:
+      - name: Runner info
+        run: |
+          sw_vers
+          uname -m
+          xcrun notarytool --version || echo "notarytool unavailable"
+
+      - name: Install shipped @qvac/llm-llamacpp@latest (what quickstart users get)
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/poc" && cd "$RUNNER_TEMP/poc"
+          npm init -y >/dev/null 2>&1
+          # public npm scope (@qvac:registry=registry.npmjs.org) -- no auth needed
+          npm install @qvac/llm-llamacpp@latest --no-audit --no-fund
+          echo "installed version:"
+          node -e "console.log(require('@qvac/llm-llamacpp/package.json').version)"
+
+      - name: Locate the darwin prebuild dir and .bare
+        id: locate
+        run: |
+          set -euxo pipefail
+          BASE="$RUNNER_TEMP/poc/node_modules/@qvac/llm-llamacpp/prebuilds"
+          DIR="$BASE/darwin-$ARCH"
+          if [ ! -d "$DIR" ]; then
+            echo "prebuild dir $DIR not found; available:"
+            ls -la "$BASE" || true
+            exit 1
+          fi
+          BARE=$(find "$DIR" -maxdepth 1 -name '*.bare' | head -1)
+          if [ -z "$BARE" ]; then
+            echo "no .bare in $DIR:"; ls -la "$DIR"; exit 1
+          fi
+          echo "prebuild_dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "bare=$BARE" >> "$GITHUB_OUTPUT"
+          echo "Found: $BARE"
+          ls -la "$DIR"
+
+      - name: BEFORE - signature + notarization state
+        run: |
+          set -x
+          BARE='${{ steps.locate.outputs.bare }}'
+          echo "===== codesign -dvvv (expect Signature=adhoc, no Developer ID) ====="
+          codesign -dvvv "$BARE" 2>&1 || true
+          echo "===== codesign --verify (signature integrity) ====="
+          codesign --verify --verbose=2 "$BARE" 2>&1 || true
+          echo "===== notarization check via spctl (best-effort; dylib type may be unsupported) ====="
+          spctl -a -vvv -t install "$BARE" 2>&1 || true
+          spctl -a -vvv -t open "$BARE" 2>&1 || true
+          echo "===== current xattrs ====="
+          xattr -l "$BARE" 2>&1 || true
+
+      - name: BEFORE - real dlopen-under-quarantine repro (report-only)
+        run: |
+          set -x
+          DIR='${{ steps.locate.outputs.prebuild_dir }}'
+          BARE='${{ steps.locate.outputs.bare }}'
+          # simulate a download: quarantine the whole prebuild dir, as a browser/
+          # installer would, so Gatekeeper assessment can fire on first load.
+          xattr -rw com.apple.quarantine "0081;00000000;PoC;" "$DIR" || true
+          xattr -l "$BARE" || true
+          cat > "$RUNNER_TEMP/loadtest.c" <<'EOF'
+          #include <dlfcn.h>
+          #include <stdio.h>
+          int main(int argc, char** argv) {
+            void* h = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+            if (!h) { printf("DLOPEN_BLOCKED: %s\n", dlerror()); return 42; }
+            printf("DLOPEN_OK\n");
+            return 0;
+          }
+          EOF
+          clang -o "$RUNNER_TEMP/loadtest" "$RUNNER_TEMP/loadtest.c"
+          set +e
+          "$RUNNER_TEMP/loadtest" "$BARE"
+          RC=$?
+          set -e
+          echo "loadtest exit code: $RC (42 = Gatekeeper blocked the dlopen)"
+          echo "NOTE: headless runners may not enforce the interactive scan; the"
+          echo "authoritative before/after signal is the codesign/notarization state above."
+
+      - name: Half B - Developer ID sign + notarize (auto-activates when creds exist)
+        run: |
+          set -uo pipefail
+          BARE='${{ steps.locate.outputs.bare }}'
+          DIR='${{ steps.locate.outputs.prebuild_dir }}'
+          if [ -z "${MACOS_CERT_P12_BASE64:-}" ] || [ -z "${MACOS_NOTARY_KEY_BASE64:-}" ]; then
+            echo "::warning title=Half B pending::Signing/notary credentials not provisioned."
+            echo "----------------------------------------------------------------"
+            echo "PENDING: add the Developer ID cert + App Store Connect notary key"
+            echo "to the repo (or the 'release' environment) as the secrets named in"
+            echo "this workflow's header. The steps below will then run for real:"
+            echo
+            echo "  # import cert into a temp keychain"
+            echo "  security create-keychain -p <pw> poc.keychain-db"
+            echo "  security import cert.p12 -k poc.keychain-db -P <p12pw> -T /usr/bin/codesign"
+            echo "  # sign every native binary with hardened runtime + secure timestamp"
+            echo "  codesign --force --timestamp --options runtime \\"
+            echo "    --sign \"Developer ID Application: ... (TEAMID)\" <each .bare/.dylib>"
+            echo "  # notarize (loose .bare cannot be stapled -> online ticket lookup)"
+            echo "  ditto -c -k --keepParent <prebuild_dir> prebuilds.zip"
+            echo "  xcrun notarytool submit prebuilds.zip --key AuthKey.p8 \\"
+            echo "    --key-id <id> --issuer <issuer> --wait"
+            echo "----------------------------------------------------------------"
+            exit 0
+          fi
+          set -x
+          KEYCHAIN="$RUNNER_TEMP/poc.keychain-db"
+          KCPASS="poc-temp-pass"
+          security create-keychain -p "$KCPASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KCPASS" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          # sign every native binary in the prebuild dir
+          find "$DIR" \( -name '*.bare' -o -name '*.dylib' -o -name '*.so' \) -print0 |
+            while IFS= read -r -d '' f; do
+              codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$f"
+            done
+          # notarize the bundle
+          echo "$MACOS_NOTARY_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          ditto -c -k --keepParent "$DIR" "$RUNNER_TEMP/prebuilds.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/prebuilds.zip" \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$MACOS_NOTARY_KEY_ID" \
+            --issuer "$MACOS_NOTARY_ISSUER_ID" \
+            --wait
+
+      - name: AFTER - signature + notarization state (meaningful once Half B ran)
+        if: ${{ env.MACOS_CERT_P12_BASE64 != '' }}
+        run: |
+          set -x
+          BARE='${{ steps.locate.outputs.bare }}'
+          echo "===== codesign -dvvv (expect Authority=Developer ID Application) ====="
+          codesign -dvvv "$BARE" 2>&1 || true
+          echo "===== spctl notarization assessment (expect accepted) ====="
+          spctl -a -vvv -t install "$BARE" 2>&1 || true
