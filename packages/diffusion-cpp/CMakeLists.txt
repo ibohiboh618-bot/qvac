@@ -57,15 +57,6 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 check_cxx_source_compiles("
 #include <stable-diffusion.h>
 int main() {
-  sd_ctx_params_t params{};
-  params.backend = nullptr;
-  return 0;
-}
-" QVAC_SD_HAS_CTX_BACKEND)
-
-check_cxx_source_compiles("
-#include <stable-diffusion.h>
-int main() {
   sd_image_t* frames = nullptr;
   int frame_count = 0;
   sd_audio_t* audio = nullptr;
@@ -80,12 +71,7 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_QVAC_PREV_TRY_COMPILE_TARGET_TYPE}")
 unset(_QVAC_PREV_REQUIRED_INCLUDES)
 unset(_QVAC_PREV_TRY_COMPILE_TARGET_TYPE)
 
-message(STATUS "stable-diffusion.cpp ctx backend API: ${QVAC_SD_HAS_CTX_BACKEND}")
 message(STATUS "stable-diffusion.cpp audio video API: ${QVAC_SD_HAS_AUDIO_VIDEO_API}")
-
-if(QVAC_SD_HAS_CTX_BACKEND)
-  add_compile_definitions(QVAC_SD_HAS_CTX_BACKEND)
-endif()
 
 if(QVAC_SD_HAS_AUDIO_VIDEO_API)
   add_compile_definitions(QVAC_SD_HAS_AUDIO_VIDEO_API)

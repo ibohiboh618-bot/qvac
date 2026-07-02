@@ -1,6 +1,5 @@
 #include "SdModel.hpp"
 
-#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -8,7 +7,6 @@
 #include <optional>
 #include <sstream>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -82,76 +80,6 @@ void sdProgressCallback(int step, int steps, float /*time*/, void* /*data*/) {
 bool sdAbortCallback(void* /*data*/) {
   return g_abortModel && g_abortModel->isCancelRequested();
 }
-
-#ifndef QVAC_SD_HAS_CTX_BACKEND
-std::optional<std::string>
-vulkanDeviceIndexFromBackendName(const std::string& backendName) {
-  constexpr std::string_view kVulkanPrefix = "Vulkan";
-  if (backendName.rfind(kVulkanPrefix, 0) != 0 ||
-      backendName.size() == kVulkanPrefix.size()) {
-    return std::nullopt;
-  }
-
-  std::string index = backendName.substr(kVulkanPrefix.size());
-  for (char c : index) {
-    if (std::isdigit(static_cast<unsigned char>(c)) == 0) {
-      return std::nullopt;
-    }
-  }
-  return index;
-}
-
-class ScopedEnvVar {
-public:
-  ScopedEnvVar(std::string name, std::string value)
-      : name_(std::move(name)), oldValue_(read(name_)),
-        hadOldValue_(oldValue_.has_value()) {
-    set(name_, value);
-  }
-
-  ~ScopedEnvVar() {
-    if (hadOldValue_) {
-      set(name_, *oldValue_);
-    } else {
-      unset(name_);
-    }
-  }
-
-  ScopedEnvVar(const ScopedEnvVar&) = delete;
-  ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
-  ScopedEnvVar(ScopedEnvVar&&) = delete;
-  ScopedEnvVar& operator=(ScopedEnvVar&&) = delete;
-
-private:
-  static std::optional<std::string> read(const std::string& name) {
-    const char* value = std::getenv(name.c_str());
-    if (value == nullptr) {
-      return std::nullopt;
-    }
-    return std::string(value);
-  }
-
-  static void set(const std::string& name, const std::string& value) {
-#ifdef _WIN32
-    _putenv_s(name.c_str(), value.c_str());
-#else
-    setenv(name.c_str(), value.c_str(), 1);
-#endif
-  }
-
-  static void unset(const std::string& name) {
-#ifdef _WIN32
-    _putenv_s(name.c_str(), "");
-#else
-    unsetenv(name.c_str());
-#endif
-  }
-
-  std::string name_;
-  std::optional<std::string> oldValue_;
-  bool hadOldValue_;
-};
-#endif
 
 // RAII wrapper for the sd_image_t* array returned by generate_image().
 // Frees each image's pixel buffer and the array itself on destruction,
@@ -295,9 +223,6 @@ void SdModel::load() {
       sd_backend_selection::preferredGpuBackendForConfigDevice(config_.device);
 
   std::string mainGpuBackend;
-#ifndef QVAC_SD_HAS_CTX_BACKEND
-  std::optional<ScopedEnvVar> scopedVkDevice;
-#endif
   if (!config_.mainGpu.empty() &&
       sd_backend_selection::parseConfigDeviceString(config_.device) ==
           sd_backend_selection::ConfigDevice::Gpu) {
@@ -306,27 +231,10 @@ void SdModel::load() {
             sd_backend_selection::resolveMainGpuBackendName(*mainGpuSpec);
         resolved.has_value()) {
       mainGpuBackend = *resolved;
-#ifdef QVAC_SD_HAS_CTX_BACKEND
       params.backend = mainGpuBackend.c_str();
       QLOG_IF(
           qvac_lib_inference_addon_cpp::logger::Priority::INFO,
           "main-gpu pinning stable-diffusion backend '" + mainGpuBackend + "'");
-#else
-      if (auto vkIndex = vulkanDeviceIndexFromBackendName(mainGpuBackend);
-          vkIndex.has_value()) {
-        scopedVkDevice.emplace("SD_VK_DEVICE", *vkIndex);
-        QLOG_IF(
-            qvac_lib_inference_addon_cpp::logger::Priority::INFO,
-            "main-gpu using legacy SD_VK_DEVICE fallback for backend '" +
-                mainGpuBackend + "'");
-      } else {
-        QLOG_IF(
-            qvac_lib_inference_addon_cpp::logger::Priority::WARNING,
-            "main-gpu resolved to backend '" + mainGpuBackend +
-                "', but the installed stable-diffusion.cpp API cannot pin "
-                "explicit backend names; leaving backend default");
-      }
-#endif
     }
   } else if (!config_.mainGpu.empty()) {
     QLOG_IF(

@@ -73,14 +73,12 @@ test('main-gpu requests Vulkan0 on Windows multi-GPU runner', { timeout: 600000 
     const resolvedLog = await waitForLog(logs, (line) =>
       line.includes(`main-gpu resolved to backend '${targetName}'`)
     )
-    const directOrLegacyPinLog = await waitForLog(logs, (line) =>
-      line.includes(`main-gpu pinning stable-diffusion backend '${targetName}'`) ||
-      line.includes(`main-gpu using legacy SD_VK_DEVICE fallback for backend '${targetName}'`) ||
-      line.includes(`Selecting ${targetName} as main device by env var SD_VK_DEVICE`)
+    const backendPinLog = await waitForLog(logs, (line) =>
+      line.includes(`main-gpu pinning stable-diffusion backend '${targetName}'`)
     )
 
     t.ok(resolvedLog, `main-gpu resolved to ${targetName}`)
-    t.ok(directOrLegacyPinLog, `stable-diffusion.cpp was asked to use ${targetName}`)
+    t.ok(backendPinLog, `stable-diffusion.cpp was asked to use ${targetName}`)
   } finally {
     if (model) await model.unload().catch(() => {})
     releaseJsLogger(binding)
