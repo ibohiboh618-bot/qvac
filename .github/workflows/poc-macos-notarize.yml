@@ -63,7 +63,7 @@ jobs:
           # public npm scope (@qvac:registry=registry.npmjs.org) -- no auth needed
           npm install @qvac/llm-llamacpp@latest --no-audit --no-fund
           echo "installed version:"
-          node -e "console.log(require('@qvac/llm-llamacpp/package.json').version)"
+          node -e "console.log(JSON.parse(require('fs').readFileSync('node_modules/@qvac/llm-llamacpp/package.json','utf8')).version)"
 
       - name: Locate the darwin prebuild dir and .bare
         id: locate
