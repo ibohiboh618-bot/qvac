@@ -97,8 +97,10 @@ int threadsFromMap(
  * available ggml devices at runtime.
  *
  * Priority:
- *   Android Adreno -> CPU (OpenCL is unstable in native generation)
- *   Everything else -> GPU (Vulkan or other backend via init_backend)
+ *   Adreno / other GPU -> GPU (Adreno prefers OpenCL when available, see
+ *                              shouldPreferOpenClForAdreno; otherwise Vulkan
+ *                              or another backend)
+ *   User-requested CPU -> CPU
  *
  * Returns the resolved BackendDevice.
  */
@@ -106,10 +108,9 @@ BackendDevice resolveBackendForDevice(BackendDevice preferred);
 
 /**
  * Returns true when runtime device probing indicates that OpenCL should be
- * preferred for Adreno GPUs.
- *
- * This only applies when preferred is GPU. CPU preference always returns false,
- * and Android returns false because the OpenCL generation path is unstable.
+ * preferred for Adreno GPUs (an Adreno GPU and an OpenCL backend are both
+ * present). This only applies when preferred is GPU; CPU preference always
+ * returns false.
  */
 bool shouldPreferOpenClForAdreno(BackendDevice preferred);
 

@@ -18,7 +18,7 @@ using namespace qvac_errors;
 namespace {
 
 constexpr std::string_view K_ADRENO_TOKEN = "adreno";
-constexpr int K_ADRENO_CPU_FALLBACK_MIN_MODEL = 600;
+constexpr int K_ADRENO_GPU_MIN_MODEL = 600;
 
 unsigned char toLowerAscii(unsigned char character) {
   return static_cast<unsigned char>(std::tolower(character));
@@ -322,16 +322,9 @@ BackendDevice resolveBackendForDevice(BackendDevice preferred) {
           "Backend selection: Adreno model " + std::to_string(model));
     }
 
-    if (model >= K_ADRENO_CPU_FALLBACK_MIN_MODEL) {
-#if defined(__ANDROID__)
-      QLOG_IF(
-          Priority::INFO,
-          "Backend selection: Android Adreno -> CPU (OpenCL unstable)");
-      return BackendDevice::CPU;
-#else
+    if (model >= K_ADRENO_GPU_MIN_MODEL) {
       QLOG_IF(Priority::INFO, "Backend selection: Adreno -> GPU");
       return BackendDevice::GPU;
-#endif
     }
   }
 
@@ -346,12 +339,6 @@ bool shouldPreferOpenClForAdreno(BackendDevice preferred) {
     return false;
   }
 
-#if defined(__ANDROID__)
-  QLOG_IF(
-      Priority::INFO,
-      "Backend selection: Android Adreno OpenCL preference disabled");
-  return false;
-#else
   const size_t nDevices = ggml_backend_dev_count();
   bool hasAdrenoGpu = false;
   bool hasOpenClGpu = false;
@@ -368,7 +355,7 @@ bool shouldPreferOpenClForAdreno(BackendDevice preferred) {
     const std::string backendName = namePtr != nullptr ? namePtr : "";
 
     const int model = parseAdrenoModelFromGpuDevice(dev);
-    if (model >= K_ADRENO_CPU_FALLBACK_MIN_MODEL) {
+    if (model >= K_ADRENO_GPU_MIN_MODEL) {
       hasAdrenoGpu = true;
     }
 
@@ -385,7 +372,6 @@ bool shouldPreferOpenClForAdreno(BackendDevice preferred) {
         "prefer OpenCL");
   }
   return preferOpenCl;
-#endif
 }
 
 sd_backend_preference_t preferredGpuBackendForGpuLikeDevice() {
