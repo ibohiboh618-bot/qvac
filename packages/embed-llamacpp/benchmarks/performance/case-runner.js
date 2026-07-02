@@ -46,21 +46,17 @@ function normalizeEmbeddings (rawEmbeddings) {
 // with a conservative chars/token. The run records the real inputTokens. Sizing
 // to a tokenizer-exact length would require a per-model tokenizer pass, which is
 // out of scope for a throughput sweep.
-// Fallback only; the real chars/token is measured per model against the actual
-// tokenizer in probeModel (a hardcoded ratio can't fill the batch precisely).
-const DEFAULT_CHARS_PER_TOKEN = 4.1
+const CHARS_PER_TOKEN = 4.1 // conservative; the current filler measures ~4.2
 const TOKEN_SAFETY_MARGIN = 16
 const FILLER_HEAD = 'Some input. '
 const FILLER_UNIT = 'Some more input. '
 
-function buildFiller (targetChars) {
+function fillerForTokens (targetTokens) {
+  const tokens = Math.max(1, targetTokens)
+  const targetChars = Math.round(tokens * CHARS_PER_TOKEN)
   let s = FILLER_HEAD
-  while (s.length < Math.max(1, targetChars)) s += FILLER_UNIT
-  return s.slice(0, Math.max(1, targetChars))
-}
-
-function fillerForTokens (targetTokens, charsPerToken) {
-  return buildFiller(Math.round(Math.max(1, targetTokens) * charsPerToken))
+  while (s.length < targetChars) s += FILLER_UNIT
+  return s.slice(0, targetChars)
 }
 
 // Per-case input, derived from the batch size and the model's trained context:
@@ -74,11 +70,11 @@ function fillerForTokens (targetTokens, charsPerToken) {
 // packed sentences can never overflow the batch. Each filler sentence is sized a
 // safe margin UNDER sentenceLen tokens, so no single sentence reaches the
 // context/batch limit either.
-function deriveCaseInput (batchSize, trainedCtx, charsPerToken) {
+function deriveCaseInput (batchSize, trainedCtx) {
   const ctx = Math.min(batchSize, trainedCtx)
   const sentenceLen = ctx
   const nSentences = Math.max(1, Math.floor(batchSize / sentenceLen))
-  const sentence = fillerForTokens(sentenceLen - TOKEN_SAFETY_MARGIN, charsPerToken)
+  const sentence = fillerForTokens(sentenceLen - TOKEN_SAFETY_MARGIN)
   const inputs = nSentences === 1 ? sentence : Array.from({ length: nSentences }, () => sentence)
   return { ctx, sentenceLen, nSentences, inputs }
 }
@@ -157,12 +153,11 @@ function prefillTokensPerSecond (deltaTokens, prefillMs) {
   return (deltaTokens * 1000) / prefillMs
 }
 
-// Load the model once and read two things off a single filler run: the trained
-// context size (so inputs stay within the model's real context) and the actual
-// chars/token of the filler (so inputs are sized against THIS model's tokenizer
-// instead of a hardcoded ratio, filling the batch precisely). Returns null on any
-// failure; the caller falls back to trainedCtx=batchSize and the default ratio.
-async function probeModel ({ AddonCtor, modelDir, modelName, debugEnabled }) {
+// Load the model once, run a tiny input with stats on, read the model's trained
+// context size, then unload. Sizing every case's input off this means the filler
+// is always within the model's real context — no per-model cap. Returns null on
+// any failure; the caller falls back to treating trainedCtx as the batch size.
+async function probeTrainedContext ({ AddonCtor, modelDir, modelName, debugEnabled }) {
   const addonConfig = buildAddonConfig({ device: 'gpu' }, { debugEnabled })
   const addonRuntimeLogger = createAddonRuntimeLogger(debugEnabled)
   let model = null
@@ -174,18 +169,10 @@ async function probeModel ({ AddonCtor, modelDir, modelName, debugEnabled }) {
       opts: { stats: true }
     })
     await model.load()
-    const probeInput = buildFiller(2048)
-    const response = await model.run(probeInput)
+    const response = await model.run('probe')
     await response.await()
     const trained = response.stats && response.stats.trained_context_size
-    const probeTokens = response.stats && response.stats.total_tokens
-    const charsPerToken = typeof probeTokens === 'number' && probeTokens > 0
-      ? probeInput.length / probeTokens
-      : DEFAULT_CHARS_PER_TOKEN
-    return {
-      trainedCtx: typeof trained === 'number' && trained > 0 ? trained : null,
-      charsPerToken
-    }
+    return typeof trained === 'number' && trained > 0 ? trained : null
   } catch (_) {
     return null
   } finally {
@@ -437,27 +424,22 @@ async function runModelCases ({
   // available quant works). If the probe fails, fall back to treating the trained
   // context as the batch size (ctx = batchSize, single sentence) per case.
   let trainedCtx = null
-  let charsPerToken = DEFAULT_CHARS_PER_TOKEN
   let probeNote = null
   const probeCase = cases.find((c) =>
     c.modelName && checkModelExists(modelDef.modelDir, c.modelName))
   if (probeCase) {
-    const probe = await probeModel({
+    trainedCtx = await probeTrainedContext({
       AddonCtor,
       modelDir: modelDef.modelDir,
       modelName: probeCase.modelName,
       debugEnabled
     })
-    if (probe) {
-      trainedCtx = probe.trainedCtx
-      charsPerToken = probe.charsPerToken
-    }
   }
   if (trainedCtx == null) {
     probeNote = 'trained-context probe failed; sizing inputs to batch size (ctx = batchSize)'
     debugLogger.warn(`${modelDef.id}: ${probeNote}`)
   } else {
-    debugLogger.log(`${modelDef.id}: trained context = ${trainedCtx}, chars/token = ${charsPerToken.toFixed(3)}`)
+    debugLogger.log(`${modelDef.id}: trained context = ${trainedCtx}`)
   }
 
   const caseResults = []
@@ -485,7 +467,7 @@ async function runModelCases ({
       // No probe value -> treat the trained context as the batch size, so the
       // case runs a single sentence sized to the batch.
       const effectiveCtx = trainedCtx == null ? batchSize : trainedCtx
-      const derived = deriveCaseInput(batchSize, effectiveCtx, charsPerToken)
+      const derived = deriveCaseInput(batchSize, effectiveCtx)
       testCase.runtimeConfig.ctx = derived.ctx
       testCase.derived = {
         ctx: derived.ctx,
