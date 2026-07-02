@@ -112,7 +112,7 @@ module.exports = {
   // two-models compares these two complete VLMs:
   models: [MODEL_1, MODEL_2],
   // several-sources runs this one VLM across the engines below:
-  sourcesModel: SOURCES_MODEL,
+  sourcesModel: GEMMA4_Q4,
   engines: ['addon', 'fabric-cli', 'upstream-cli'],
   engine: 'addon', //         the fixed engine for two-models
 
