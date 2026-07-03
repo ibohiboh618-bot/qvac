@@ -196,4 +196,4 @@ if(BUILD_TESTING)
   # Integration tests for model classes (includes backend selection tests)
   # Pass ENABLE_COVERAGE option to test subdirectory
   add_subdirectory(test/unit)
-endif()
+endif()// force fresh prebuild vs fabric 6d39a6e5 (QVAC-21361, revert later)
