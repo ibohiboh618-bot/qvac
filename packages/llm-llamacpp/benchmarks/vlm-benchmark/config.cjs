@@ -212,6 +212,10 @@ module.exports = {
     // whole page into one tile, candidate keeps 2 full 768px tiles. CER here isolates the
     // detail-retention benefit of the rewrite. Verified per doc (baseline=dyn_size,
     // candidate=2x1/1x2). repeats=3.
-    'disc-ocr': { ids: ['disc-ocr_0', 'disc-ocr_1', 'disc-ocr_2', 'disc-ocr_3', 'disc-ocr_4', 'disc-ocr_5', 'disc-ocr_6', 'disc-ocr_7', 'disc-ocr_8'], samplesPerTask: 9, repeats: 3, devices: null }
+    'disc-ocr': { ids: ['disc-ocr_0', 'disc-ocr_1', 'disc-ocr_2', 'disc-ocr_3', 'disc-ocr_4', 'disc-ocr_5', 'disc-ocr_6', 'disc-ocr_7', 'disc-ocr_8'], samplesPerTask: 9, repeats: 3, devices: null },
+    // disc-ocr1 — same discriminating set, repeats=1. Timeout-safe backup: with the fixed
+    // mobile baseline now running the real dyn_size path (~5 min/image on Pixel Vulkan),
+    // repeats=3 overruns the Device-Farm session on Pixel. repeats=1 keeps it under the cap.
+    'disc-ocr1': { ids: ['disc-ocr_0', 'disc-ocr_1', 'disc-ocr_2', 'disc-ocr_3', 'disc-ocr_4', 'disc-ocr_5', 'disc-ocr_6', 'disc-ocr_7', 'disc-ocr_8'], samplesPerTask: 9, repeats: 1, devices: null }
   }
 }
