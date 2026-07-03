@@ -348,6 +348,13 @@ function runModel (spec) {
           seed: '42',
           ctx_size: spec.ctx_size,
           n_predict: String(nPredict),
+          // Pin the Qwen-VL image-token cap so both builds tile under the SAME budget.
+          // Without this both fall to the addon default (2048 on Qwen-VL), and the
+          // desktop-vs-mobile / baseline-vs-candidate tiling difference is confounded by
+          // the cap rather than isolating the grid-selection change. 4096 = full Qwen-VL
+          // budget, so the cap never limits tiling and the grid algorithm is the only
+          // variable. Parsed by the addon since llm-llamacpp #2887 (in 0.31.0+).
+          image_max_tokens: '4096',
           verbosity: '2', // surfaces `image slice encoded in N ms` on native stderr
           'reasoning-budget': '0', // disable Qwen3.5 thinking -> clean direct answers
           ...(BACKENDS_DIR ? { backendsDir: BACKENDS_DIR } : {}) // candidate/baseline build swap (scheduler)
