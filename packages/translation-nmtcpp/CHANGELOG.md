@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.0] - 2026-07-03
+
+### Fixed
+
+- Bumped the `qvac-lib-inference-addon-cpp` vcpkg dependency to `1.2.3` (JsLogger teardown / re-`setLogger` crash fix, QVAC-21544, tetherto/qvac#2932). Released as a **major** bump with no breaking API change: the released SDK 0.14.x pins `^6.3.0`, which resolves any 6.x, so 7.0.0 keeps the fix out of that SDK until it explicitly opts in.
+
 ## [6.3.1] - 2026-07-01
 
 ### Changed
