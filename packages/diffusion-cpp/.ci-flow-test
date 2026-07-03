@@ -1,0 +1,7 @@
+CI prebuild-reuse flow test marker (throwaway) — commit 1.
+
+Purpose: validate the full diffusion-cpp CI flow end-to-end —
+prebuild builds the matrix, prebuild-artifact-save writes the per-PR
+reuse marker, then a subsequent non-native push reuses it (prebuild
+skipped) while tests still run. Simulates the flow Nik exercised.
+Safe to delete.
