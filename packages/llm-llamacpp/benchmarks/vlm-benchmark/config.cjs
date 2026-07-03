@@ -204,6 +204,14 @@ module.exports = {
     // job (see benchmark-vlm-model-comparison.yml) — not part of the hand-curated S3 set.
     // repeats=5 for a real mean + spread per resolution, matching the ask for "several
     // repeats" + "images that actually force multi-tiling".
-    'tiling-perf': { ids: ['tiling-perf_0', 'tiling-perf_1', 'tiling-perf_2', 'tiling-perf_3', 'tiling-perf_4', 'tiling-perf_5', 'tiling-perf_6', 'tiling-perf_7'], samplesPerTask: 8, repeats: 5, devices: null }
+    'tiling-perf': { ids: ['tiling-perf_0', 'tiling-perf_1', 'tiling-perf_2', 'tiling-perf_3', 'tiling-perf_4', 'tiling-perf_5', 'tiling-perf_6', 'tiling-perf_7'], samplesPerTask: 8, repeats: 5, devices: null },
+    // disc-ocr — the DISCRIMINATING accuracy set. 9 real getomni-ai OCR docs scaled
+    // (aspect-preserved, no crop) into the resolution band where the OLD grid selection
+    // falls back to dyn_size (its best grid would upscale) but the NEW selection still
+    // tiles. This is the case the grid rewrite actually changes: baseline downscales the
+    // whole page into one tile, candidate keeps 2 full 768px tiles. CER here isolates the
+    // detail-retention benefit of the rewrite. Verified per doc (baseline=dyn_size,
+    // candidate=2x1/1x2). repeats=3.
+    'disc-ocr': { ids: ['disc-ocr_0', 'disc-ocr_1', 'disc-ocr_2', 'disc-ocr_3', 'disc-ocr_4', 'disc-ocr_5', 'disc-ocr_6', 'disc-ocr_7', 'disc-ocr_8'], samplesPerTask: 9, repeats: 3, devices: null }
   }
 }

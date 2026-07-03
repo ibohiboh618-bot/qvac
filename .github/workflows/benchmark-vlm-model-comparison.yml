@@ -451,12 +451,45 @@ jobs:
           aws s3 cp tiling-fixture/ s3://tether-ai-dev/vlm-benchmark/ --recursive
           echo "uploaded:"; aws s3 ls s3://tether-ai-dev/vlm-benchmark/ | grep tilingperf
 
+  # disc-ocr only: upload the 9 committed discriminating OCR images (real getomni-ai docs
+  # scaled aspect-preserved into the band where baseline falls back to dyn_size but candidate
+  # tiles) to the fixture store under vlmx-discocr_*.jpg keys — additive, like tiling-perf.
+  # These images ARE committed (benchmarks/vlm-benchmark/disc-fixture/) since they can't be
+  # regenerated from repo media; this job just copies them to S3 so desktop sync + mobile
+  # bootstrap pick them up.
+  prepare-disc-fixture:
+    needs: context
+    if: ${{ inputs.matrix_preset == 'disc-ocr' && (needs.context.outputs.desktop_count != '0' || needs.context.outputs.mobile_count != '0') }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout disc-fixture images
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          repository: ${{ needs.context.outputs.repository }}
+          ref: ${{ needs.context.outputs.ref }}
+          sparse-checkout: |
+            packages/llm-llamacpp/benchmarks/vlm-benchmark/disc-fixture
+          sparse-checkout-cone-mode: false
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-west-2
+      - name: Upload to fixture store (additive — new keys only)
+        shell: bash
+        run: |
+          aws s3 cp packages/llm-llamacpp/benchmarks/vlm-benchmark/disc-fixture/ s3://tether-ai-dev/vlm-benchmark/ --recursive --exclude "*" --include "vlmx-discocr_*.jpg"
+          echo "uploaded:"; aws s3 ls s3://tether-ai-dev/vlm-benchmark/ | grep discocr
+
   matrix-desktop:
-    needs: [context, prebuild-candidate, prepare-tiling-fixture]
-    # prebuild-candidate/prepare-tiling-fixture are skipped unless requested; a skipped
+    needs: [context, prebuild-candidate, prepare-tiling-fixture, prepare-disc-fixture]
+    # prepare-*-fixture jobs are skipped unless their preset is requested; a skipped
     # need would otherwise skip this job too. !cancelled() overrides that implicit skip
     # so the real gate is evaluated — bail only if a needed job actually failed.
-    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.desktop_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prepare-tiling-fixture.result != 'failure' }}
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.desktop_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prepare-tiling-fixture.result != 'failure' && needs.prepare-disc-fixture.result != 'failure' }}
     name: vlm-matrix-${{ matrix.host }}-${{ matrix.backend }}
     runs-on: ${{ matrix.runner }}
     # `release` environment exposes AWS_OIDC_ROLE_ARN and satisfies the role's OIDC
@@ -815,8 +848,8 @@ jobs:
     # status-function gate keeps this job running when a need is skipped (only a real
     # failure blocks it). The candidate mobile session bundles its freshly-built
     # prebuild artifact.
-    needs: [context, prebuild-candidate, prepare-tiling-fixture]
-    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prepare-tiling-fixture.result != 'failure' }}
+    needs: [context, prebuild-candidate, prepare-tiling-fixture, prepare-disc-fixture]
+    if: ${{ !cancelled() && needs.context.result == 'success' && needs.context.outputs.mobile_count != '0' && needs.prebuild-candidate.result != 'failure' && needs.prepare-tiling-fixture.result != 'failure' && needs.prepare-disc-fixture.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
