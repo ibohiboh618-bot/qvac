@@ -777,7 +777,13 @@ jobs:
       device_model: ${{ matrix.model }}
       # source_id/source_ref identify the build on this session (candidate = git:<sha>,
       # baseline = npm:<ver>); two-models legs have no matrix.source → falls back to addon.
-      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }};QVAC_VLM_SOURCE_ID=${{ matrix.source || 'addon' }};QVAC_VLM_SOURCE_REF=${{ matrix.source == 'addon@candidate' && format('git:{0}', needs.context.outputs.head_sha) || (matrix.source == 'addon@baseline' && format('npm:{0}', needs.context.outputs.baseline_npm) || '') }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}${{ needs.context.outputs.mobile_pertest_min != '' && format(';QVAC_VLM_TEST_TIMEOUT_MIN={0}', needs.context.outputs.mobile_pertest_min) || '' }}"
+      # A/B for the CPU vision-encoder repack: the mobile baseline leg runs the
+      # SAME on-device binary as candidate, so disabling the repack on baseline
+      # (MTMD_CLIP_NO_REPACK=1) makes it a true same-build repack-off vs
+      # repack-on comparison — the mmproj-encode delta then shows directly on the
+      # phone. No-op on builds whose fabric has no repack (env read only by the
+      # repack path).
+      device_env: "QVAC_VLM_DEVICES=${{ matrix.vlm_devices }};QVAC_VLM_MODE=${{ inputs.matrix_mode }};QVAC_VLM_PRESET=${{ inputs.matrix_preset }};QVAC_VLM_SOURCE_ID=${{ matrix.source || 'addon' }};QVAC_VLM_SOURCE_REF=${{ matrix.source == 'addon@candidate' && format('git:{0}', needs.context.outputs.head_sha) || (matrix.source == 'addon@baseline' && format('npm:{0}', needs.context.outputs.baseline_npm) || '') }}${{ inputs.matrix_samples != '' && format(';QVAC_VLM_SAMPLES={0}', inputs.matrix_samples) || '' }}${{ inputs.matrix_models != '' && format(';QVAC_VLM_MODELS=b64:{0}', needs.context.outputs.models_b64) || '' }}${{ needs.context.outputs.mobile_pertest_min != '' && format(';QVAC_VLM_TEST_TIMEOUT_MIN={0}', needs.context.outputs.mobile_pertest_min) || '' }}${{ matrix.source == 'addon@baseline' && ';MTMD_CLIP_NO_REPACK=1' || '' }}"
       # Suffix logs with the source tag (candidate/baseline) so the two sessions of a
       # build comparison upload distinct, identifiable artifacts.
       artifact_suffix: ${{ matrix.token }}${{ matrix.srctag != '' && format('-{0}', matrix.srctag) || '' }}
