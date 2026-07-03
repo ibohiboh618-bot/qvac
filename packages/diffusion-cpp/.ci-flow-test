@@ -5,3 +5,7 @@ prebuild builds the matrix, prebuild-artifact-save writes the per-PR
 reuse marker, then a subsequent non-native push reuses it (prebuild
 skipped) while tests still run. Simulates the flow Nik exercised.
 Safe to delete.
+
+Commit 2 — non-native change (simulates a js-only / merge-main push).
+Should reuse the prebuild from commit 1 and skip the prebuild matrix
+while tests still run.
